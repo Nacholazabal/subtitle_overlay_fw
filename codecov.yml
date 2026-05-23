@@ -1,0 +1,32 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 80%
+        threshold: 2%
+        if_ci_failed: error
+    patch:
+      default:
+        target: 80%
+        threshold: 5%
+        if_ci_failed: error
+
+comment:
+  layout: "reach,diff,flags,tree"
+  behavior: default
+  require_changes: false
+
+ignore:
+  - "build/**/*"
+  - "cmake-build-*/*"
+  - "external/**/*"
+  - "third_party/**/*"
+  - "vendor/**/*"
+  - "src/bsp/**/*"
+  - "src/xilinx_bsp/**/*"
+  - "test/**/*"
+  - "tests/**/*"
+  - "**/*_runner.c"
+  - "**/mock_*.c"
+  - "**/unity.c"
+  - "**/cmock.c"
