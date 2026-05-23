@@ -1,0 +1,60 @@
+BasedOnStyle: LLVM
+
+ColumnLimit: 100
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ContinuationIndentWidth: 4
+
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterCaseLabel: true
+  AfterControlStatement: Always
+  AfterEnum: true
+  AfterExternBlock: false
+  AfterFunction: true
+  AfterStruct: true
+  AfterUnion: true
+  BeforeElse: true
+  BeforeWhile: true
+  IndentBraces: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+
+AllowAllArgumentsOnNextLine: false
+AllowAllParametersOfDeclarationOnNextLine: false
+AllowShortBlocksOnASingleLine: Empty
+AllowShortEnumsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: false
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+BinPackArguments: false
+BinPackParameters: false
+
+AlignEscapedNewlines: Left
+AlignOperands: Align
+AlignTrailingComments: true
+BreakBeforeBinaryOperators: NonAssignment
+BreakStringLiterals: true
+
+DerivePointerAlignment: false
+PointerAlignment: Left
+
+IndentCaseLabels: false
+IndentPPDirectives: BeforeHash
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+
+SortIncludes: Never
+SpaceBeforeParens: ControlStatementsExceptControlMacros
+SpacesBeforeTrailingComments: 1
+
+PenaltyBreakAssignment: 13
+PenaltyBreakBeforeFirstCallParameter: 19
+PenaltyBreakComment: 300
+PenaltyBreakFirstLessLess: 120
+PenaltyBreakOpenParenthesis: 0
+PenaltyBreakString: 1000
+PenaltyExcessCharacter: 1000000
+PenaltyIndentedWhitespace: 0
+PenaltyReturnTypeOnItsOwnLine: 103
