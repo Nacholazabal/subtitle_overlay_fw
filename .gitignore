@@ -1,0 +1,15 @@
+# Local LLM / assistant context and tool state
+.llm_context/
+.agents/
+.codex/
+AGENTS.md
+CLAUDE.md
+.cursorrules
+.cursor/
+
+# Common editor-local files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
