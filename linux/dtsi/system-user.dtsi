@@ -1,0 +1,118 @@
+/*
+ * system-user.dtsi — PetaLinux user device-tree overlay
+ *
+ * Place this file at:
+ *   <petalinux-project>/project-spec/meta-user/recipes-bsp/device-tree/files/system-user.dtsi
+ *
+ * Key additions:
+ *   1. reserved-memory node: 32 MB DMA pool for hdmi-vdma framebuffers.
+ *      The kernel client allocates from this pool and exposes the buffers
+ *      to userspace with mmap().
+ *
+ *   2. VTC cores disabled: prevents the Linux VTC driver from probing
+ *      before DynClk is initialised (caused a kernel panic in PetaLinux 2018.3).
+ *
+ *   3. DynClk disabled: there is no useful Linux driver ownership here and
+ *      the userspace app reprograms the pixel clock directly.
+ *
+ *   4. VDMA node enabled: Linux owns AXI VDMA through the xilinx-vdma driver.
+ *      The hdmi-vdma client below exposes MM2S display and S2MM capture
+ *      paths to userspace.
+ */
+
+/include/ "system-conf.dtsi"
+
+/ {
+    /*
+     * Reserve 32 MB for three 1920x1080 RGB framebuffers.
+     *
+     * Linux 4.14 coherent allocations from reserved memory are rounded by
+     * allocation order.  Allocating each 6,220,800-byte frame separately can
+     * consume up to 8 MB per frame, so the pool is sized at 32 MB.
+     *
+     * Physical layout used by hdmi_demo:
+     *   Pool: 0x1D000000 – 0x1EFFFFFF  (32 MB)
+     *
+     * This location deliberately stays below the kernel CMA reservation
+     * seen at 0x1F000000 in boot logs, avoiding overlap with Linux-owned
+     * contiguous memory.
+     *
+     * no-map is intentional: on this PetaLinux 2018.3 kernel, the node was
+     * visible in /proc/device-tree without no-map but still appeared as
+     * System RAM in /proc/iomem. no-map forces Linux to remove this range
+     * from its normal linear RAM mapping/allocator.
+     */
+    reserved-memory {
+        #address-cells = <1>;
+        #size-cells    = <1>;
+        ranges;
+
+        framebuf_reserved: framebuf@1d000000 {
+            compatible = "shared-dma-pool";
+            reg = <0x1d000000 0x02000000>;
+            no-map;
+        };
+    };
+};
+
+/*
+ * Disable VTC cores so the vtc Linux driver does not probe them.
+ * The userspace application manages the VTC registers directly via /dev/mem.
+ */
+&v_tc_0 {
+    status = "disabled";
+};
+
+&v_tc_1 {
+    status = "disabled";
+};
+
+/*
+ * Disable DynClk as well. The display pipeline clock is managed directly by
+ * hdmi_demo, and probing before userspace configures it has already caused
+ * issues for this design.
+ */
+&axi_dynclk_0 {
+    status = "disabled";
+};
+
+/*
+ * Enable AXI VDMA for the Linux xilinx-vdma dmaengine provider.
+ */
+&{/amba_pl/dma@43000000} {
+    status = "okay";
+};
+
+/*
+ * Combined MM2S/S2MM kernel client.  If your generated PetaLinux label for the VDMA
+ * node differs, replace &axi_vdma_0 with that label in the VM copy.
+ */
+/ {
+    hdmi_vdma: hdmi-vdma {
+        compatible = "hdmi-demo,vdma-client-v1";
+        dmas = <&axi_vdma_0 0>, <&axi_vdma_0 1>;
+        dma-names = "mm2s", "s2mm";
+        memory-region = <&framebuf_reserved>;
+    };
+};
+
+/*
+ * Disable the AXI GPIO core.  The Linux gpio-xilinx driver probes this at
+ * boot, resets the tri-state register (all pins input), and arms an interrupt
+ * handler on the LOCKED input pin.  Our app owns the GPIO directly via
+ * /dev/mem (HPD output + LOCKED input polling), so the kernel driver must not
+ * retain ownership or fire interrupts on MMCM lock/unlock transitions that
+ * occur when the pixel clock is reconfigured.
+ */
+&axi_gpio_video {
+    status = "disabled";
+};
+
+/*
+ * Disable the AXI BRAM controller.  The xilinx-bram driver may initialise
+ * the BRAM to all-zeros at probe time, which would corrupt the subtitle
+ * bitmap written by the hdmi_demo app.
+ */
+&axi_bram_ctrl_0 {
+    status = "disabled";
+};
