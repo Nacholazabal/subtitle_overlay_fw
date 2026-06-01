@@ -40,9 +40,9 @@ typedef enum
 /// @brief Signals shared by the application active objects.
 typedef enum
 {
-    COMPONENT_INIT_SIG = Q_USER_SIG,  ///< Directed command: initialize the receiving component.
-    COMPONENT_READY_SIG,              ///< Directed response: one component finished initialization.
-    COMPONENT_ERROR_SIG,              ///< Directed error report containing an AppErrorEvt payload.
+    COMPONENT_INIT_SIG = Q_USER_SIG, ///< Directed command: initialize the receiving component.
+    COMPONENT_READY_SIG,             ///< Directed response: one component finished initialization.
+    COMPONENT_ERROR_SIG,             ///< Directed error report containing an AppErrorEvt payload.
 
     MAX_SIG
 } AppSignals;
@@ -65,7 +65,7 @@ typedef struct
 // === Public variable declarations ================================================================================ //
 
 /// @brief Opaque handle used to post events to SystemAO.
-extern QActive * const AO_System;
+extern QActive* const AO_System;
 
 // === Public function declarations ================================================================================ //
 

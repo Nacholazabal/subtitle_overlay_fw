@@ -32,10 +32,12 @@ BinPackArguments: false
 BinPackParameters: false
 
 AlignEscapedNewlines: Left
+AlignConsecutiveMacros: Consecutive
 AlignOperands: Align
 AlignTrailingComments: true
 BreakBeforeBinaryOperators: NonAssignment
 BreakStringLiterals: true
+ReflowComments: false
 
 DerivePointerAlignment: false
 PointerAlignment: Left

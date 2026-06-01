@@ -31,16 +31,16 @@ typedef struct
 // === Private variable declarations =============================================================================== //
 // === Private function declarations =============================================================================== //
 
-static QState SystemAO_initial(SystemAO * const me, void const * const par);
-static QState SystemAO_active(SystemAO * const me, QEvt const * const e);
-static QState SystemAO_init(SystemAO * const me, QEvt const * const e);
-static QState SystemAO_run(SystemAO * const me, QEvt const * const e);
-static QState SystemAO_error(SystemAO * const me, QEvt const * const e);
+static QState SystemAO_initial(SystemAO* const me, void const* const par);
+static QState SystemAO_active(SystemAO* const me, QEvt const* const e);
+static QState SystemAO_init(SystemAO* const me, QEvt const* const e);
+static QState SystemAO_run(SystemAO* const me, QEvt const* const e);
+static QState SystemAO_error(SystemAO* const me, QEvt const* const e);
 
-static void on_init(SystemAO * const me);
-static bool on_component_ready(SystemAO * const me, ComponentReadyEvt const * const e);
-static void on_run(SystemAO * const me);
-static void on_error(SystemAO * const me, AppErrorEvt const * const e);
+static void on_init(SystemAO* const me);
+static bool on_component_ready(SystemAO* const me, ComponentReadyEvt const* const e);
+static void on_run(SystemAO* const me);
+static void on_error(SystemAO* const me, AppErrorEvt const* const e);
 
 // === Public variable definitions ================================================================================= //
 // === Private variable definitions ================================================================================ //
@@ -49,11 +49,11 @@ static SystemAO SystemAO_inst;
 
 // === Public variable definitions ================================================================================= //
 
-QActive * const AO_System = Q_ACTIVE_UPCAST(&SystemAO_inst);
+QActive* const AO_System = Q_ACTIVE_UPCAST(&SystemAO_inst);
 
 // === Private function implementation ============================================================================= //
 
-static void on_init(SystemAO * const me)
+static void on_init(SystemAO* const me)
 {
     me->lastReadyComponent = COMPONENT_NONE;
 
@@ -65,7 +65,7 @@ static void on_init(SystemAO * const me)
      */
 }
 
-static bool on_component_ready(SystemAO * const me, ComponentReadyEvt const * const e)
+static bool on_component_ready(SystemAO* const me, ComponentReadyEvt const* const e)
 {
     me->lastReadyComponent = e->source;
 
@@ -81,14 +81,14 @@ static bool on_component_ready(SystemAO * const me, ComponentReadyEvt const * co
     return (e->source == COMPONENT_LED);
 }
 
-static void on_run(SystemAO * const me)
+static void on_run(SystemAO* const me)
 {
     Q_UNUSED_PAR(me);
 
     // TODO: Notify interested AOs that normal application operation can begin.
 }
 
-static void on_error(SystemAO * const me, AppErrorEvt const * const e)
+static void on_error(SystemAO* const me, AppErrorEvt const* const e)
 {
     me->errorSource = e->source;
     me->errorCode = e->code;
@@ -96,7 +96,7 @@ static void on_error(SystemAO * const me, AppErrorEvt const * const e)
     // TODO: Report the fault through logging and request an LED error indication.
 }
 
-static QState SystemAO_initial(SystemAO * const me, void const * const par)
+static QState SystemAO_initial(SystemAO* const me, void const* const par)
 {
     Q_UNUSED_PAR(me);
     Q_UNUSED_PAR(par);
@@ -104,11 +104,12 @@ static QState SystemAO_initial(SystemAO * const me, void const * const par)
     return Q_TRAN(&SystemAO_init);
 }
 
-static QState SystemAO_active(SystemAO * const me, QEvt const * const e)
+static QState SystemAO_active(SystemAO* const me, QEvt const* const e)
 {
     QState status;
 
-    switch (e->sig) {
+    switch (e->sig)
+    {
     case COMPONENT_ERROR_SIG:
         on_error(me, Q_EVT_CAST(AppErrorEvt));
         status = Q_TRAN(&SystemAO_error);
@@ -122,20 +123,24 @@ static QState SystemAO_active(SystemAO * const me, QEvt const * const e)
     return status;
 }
 
-static QState SystemAO_init(SystemAO * const me, QEvt const * const e)
+static QState SystemAO_init(SystemAO* const me, QEvt const* const e)
 {
     QState status;
 
-    switch (e->sig) {
+    switch (e->sig)
+    {
     case Q_ENTRY_SIG:
         on_init(me);
         status = Q_HANDLED();
         break;
 
     case COMPONENT_READY_SIG:
-        if (on_component_ready(me, Q_EVT_CAST(ComponentReadyEvt))) {
+        if (on_component_ready(me, Q_EVT_CAST(ComponentReadyEvt)))
+        {
             status = Q_TRAN(&SystemAO_run);
-        } else {
+        }
+        else
+        {
             status = Q_HANDLED();
         }
         break;
@@ -148,11 +153,12 @@ static QState SystemAO_init(SystemAO * const me, QEvt const * const e)
     return status;
 }
 
-static QState SystemAO_run(SystemAO * const me, QEvt const * const e)
+static QState SystemAO_run(SystemAO* const me, QEvt const* const e)
 {
     QState status;
 
-    switch (e->sig) {
+    switch (e->sig)
+    {
     case Q_ENTRY_SIG:
         on_run(me);
         status = Q_HANDLED();
@@ -166,7 +172,7 @@ static QState SystemAO_run(SystemAO * const me, QEvt const * const e)
     return status;
 }
 
-static QState SystemAO_error(SystemAO * const me, QEvt const * const e)
+static QState SystemAO_error(SystemAO* const me, QEvt const* const e)
 {
     Q_UNUSED_PAR(me);
     Q_UNUSED_PAR(e);
@@ -182,7 +188,7 @@ static QState SystemAO_error(SystemAO * const me, QEvt const * const e)
 
 void SystemAO_ctor(void)
 {
-    SystemAO * const me = &SystemAO_inst;
+    SystemAO* const me = &SystemAO_inst;
 
     QActive_ctor(&me->super, Q_STATE_CAST(&SystemAO_initial));
     me->lastReadyComponent = COMPONENT_NONE;

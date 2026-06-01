@@ -19,10 +19,10 @@ Some fancy copyright message here (if needed)
 
 // === Macros definitions ========================================================================================== //
 
-#define APP_TICKS_PER_SEC     (100U)
-#define APP_ERROR_POOL_LEN    (8U)
-#define SYSTEM_AO_QUEUE_LEN   (8U)
-#define SYSTEM_AO_PRIO        (1U)
+#define APP_TICKS_PER_SEC   (100U)
+#define APP_ERROR_POOL_LEN  (8U)
+#define SYSTEM_AO_QUEUE_LEN (8U)
+#define SYSTEM_AO_PRIO      (1U)
 
 // === Private data type declarations ============================================================================== //
 // === Private variable declarations =============================================================================== //
@@ -59,11 +59,12 @@ static void app_init(void)
     static QEvtPtr systemQueueSto[SYSTEM_AO_QUEUE_LEN];
     SystemAO_ctor();
     QActive_start(AO_System,
-        SYSTEM_AO_PRIO,
-        systemQueueSto,
-        Q_DIM(systemQueueSto),
-        (void *)0, 0U,
-        (void *)0);
+                  SYSTEM_AO_PRIO,
+                  systemQueueSto,
+                  Q_DIM(systemQueueSto),
+                  (void*)0,
+                  0U,
+                  (void*)0);
 
     /*
      * TODO: Construct and start VideoAO, USBAudioAO, SubtitlePipelineAO,
@@ -81,7 +82,7 @@ int main(void)
 
 // === QP/C POSIX callbacks ======================================================================================== //
 
-Q_NORETURN Q_onError(char const * const module, int_t const id)
+Q_NORETURN Q_onError(char const* const module, int_t const id)
 {
     fprintf(stderr, "QP/C assertion failed in %s:%d\n", module, id);
     exit(EXIT_FAILURE);
@@ -93,12 +94,11 @@ void QF_onStartup(void)
 }
 
 void QF_onCleanup(void)
-{
-}
+{}
 
 void QF_onClockTick(void)
 {
-    QTIMEEVT_TICK_X(0U, (void *)0);
+    QTIMEEVT_TICK_X(0U, (void*)0);
 }
 
 // === End of documentation ======================================================================================== //
