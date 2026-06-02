@@ -1,0 +1,48 @@
+#ifndef XPARAMETERS_LINUX_H_
+#define XPARAMETERS_LINUX_H_
+
+/*
+ * Linux userspace subset of the SDK-generated hardware parameters.
+ *
+ * Review these values whenever the Vivado address assignment or the
+ * SDK-generated xparameters.h changes. The addresses are physical AXI-Lite
+ * addresses; Linux userspace must map them before register access.
+ */
+
+#define XPAR_AXI_DYNCLK_0_BASEADDR 0x43C00000U
+#define XPAR_AXI_DYNCLK_0_HIGHADDR 0x43C0FFFFU
+
+#define XPAR_XVTC_NUM_INSTANCES 2U
+
+#define XPAR_V_TC_0_DEVICE_ID   0U
+#define XPAR_V_TC_0_BASEADDR    0x43C10000U
+#define XPAR_V_TC_0_HIGHADDR    0x43C1FFFFU
+#define XPAR_V_TC_0_GENERATE_EN 1U
+#define XPAR_V_TC_0_DETECT_EN   0U
+
+#define XPAR_V_TC_1_DEVICE_ID   1U
+#define XPAR_V_TC_1_BASEADDR    0x43C20000U
+#define XPAR_V_TC_1_HIGHADDR    0x43C2FFFFU
+#define XPAR_V_TC_1_GENERATE_EN 0U
+#define XPAR_V_TC_1_DETECT_EN   1U
+
+#define XPAR_VTC_0_DEVICE_ID XPAR_V_TC_0_DEVICE_ID
+#define XPAR_VTC_0_BASEADDR  XPAR_V_TC_0_BASEADDR
+#define XPAR_VTC_0_HIGHADDR  XPAR_V_TC_0_HIGHADDR
+#define XPAR_VTC_1_DEVICE_ID XPAR_V_TC_1_DEVICE_ID
+#define XPAR_VTC_1_BASEADDR  XPAR_V_TC_1_BASEADDR
+#define XPAR_VTC_1_HIGHADDR  XPAR_V_TC_1_HIGHADDR
+
+#define XPAR_AXIS_VIDEO_OVERLAY_R_0_BASEADDR 0x43C30000U
+#define XPAR_AXIS_VIDEO_OVERLAY_R_0_HIGHADDR 0x43C3FFFFU
+
+#define XPAR_AXI_BRAM_CTRL_0_S_AXI_BASEADDR 0x40000000U
+#define XPAR_AXI_BRAM_CTRL_0_S_AXI_HIGHADDR 0x40001FFFU
+
+#define XPAR_AXI_GPIO_VIDEO_DEVICE_ID         0U
+#define XPAR_AXI_GPIO_VIDEO_BASEADDR          0x41200000U
+#define XPAR_AXI_GPIO_VIDEO_HIGHADDR          0x4120FFFFU
+#define XPAR_AXI_GPIO_VIDEO_INTERRUPT_PRESENT 1U
+#define XPAR_AXI_GPIO_VIDEO_IS_DUAL           1U
+
+#endif /* XPARAMETERS_LINUX_H_ */
