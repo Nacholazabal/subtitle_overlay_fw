@@ -1,7 +1,22 @@
+/**********************************************************************************************************************
+Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
+
+Some fancy copyright message here (if needed)
+**********************************************************************************************************************/
+
+///
+/// @file video_gpio.c
+/// @brief Video GPIO HAL adapter implementation
+///
+
+// === Headers files inclusions ==================================================================================== //
+
 #include "video_gpio.h"
 
 #include "hw_platform.h"
 #include "xil_io.h"
+
+// === Macros definitions ========================================================================================== //
 
 #define XGPIO_DATA_OFFSET  0x000U
 #define XGPIO_TRI_OFFSET   0x004U
@@ -10,6 +25,14 @@
 
 #define HPD_MASK    0x00000001U
 #define LOCKED_MASK 0x00000001U
+
+// === Private data type declarations ============================================================================== //
+// === Private variable declarations =============================================================================== //
+// === Private function declarations =============================================================================== //
+// === Public variable definitions ================================================================================= //
+// === Private variable definitions ================================================================================ //
+// === Private function implementation ============================================================================= //
+// === Public function implementation ============================================================================== //
 
 /**
  * @brief Initialize the video GPIO and assert HDMI hot-plug detect.
@@ -67,3 +90,5 @@ int video_gpio_is_locked(video_gpio_t const* const gpio)
 
     return (Xil_In32(gpio->base + XGPIO_DATA2_OFFSET) & LOCKED_MASK) != 0U;
 }
+
+// === End of documentation ======================================================================================== //

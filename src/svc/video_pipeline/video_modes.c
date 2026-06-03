@@ -1,4 +1,21 @@
+/**********************************************************************************************************************
+Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
+
+Some fancy copyright message here (if needed)
+**********************************************************************************************************************/
+
+///
+/// @file video_modes.c
+/// @brief Supported video mode table implementation
+///
+
+// === Headers files inclusions ==================================================================================== //
+
 #include "video_modes.h"
+
+// === Macros definitions ========================================================================================== //
+// === Private data type declarations ============================================================================== //
+// === Private variable declarations =============================================================================== //
 
 static const video_pipeline_mode_t modes[] = {
     {
@@ -48,6 +65,12 @@ static const video_pipeline_mode_t modes[] = {
     },
 };
 
+// === Private function declarations =============================================================================== //
+// === Public variable definitions ================================================================================= //
+// === Private variable definitions ================================================================================ //
+// === Private function implementation ============================================================================= //
+// === Public function implementation ============================================================================== //
+
 /**
  * @brief Return the default display mode used by the video pipeline.
  * @param None.
@@ -93,3 +116,5 @@ video_pipeline_mode_t const* video_modes_all(size_t* const count)
 
     return modes;
 }
+
+// === End of documentation ======================================================================================== //

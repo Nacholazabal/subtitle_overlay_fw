@@ -1,3 +1,16 @@
+/**********************************************************************************************************************
+Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
+
+Some fancy copyright message here (if needed)
+**********************************************************************************************************************/
+
+///
+/// @file video_dma.c
+/// @brief HDMI VDMA HAL adapter implementation
+///
+
+// === Headers files inclusions ==================================================================================== //
+
 #include "video_dma.h"
 
 #include <errno.h>
@@ -9,6 +22,26 @@
 #include <unistd.h>
 
 #include "hdmi_vdma.h"
+
+// === Macros definitions ========================================================================================== //
+// === Private data type declarations ============================================================================== //
+// === Private variable declarations =============================================================================== //
+// === Private function declarations =============================================================================== //
+
+static int ioctl_noarg(video_dma_t* dma, unsigned long request, const char* name);
+static int configure_channel(video_dma_t* dma,
+                             unsigned long request,
+                             const char* name,
+                             uint32_t width,
+                             uint32_t height,
+                             uint32_t stride,
+                             uint32_t frame_index);
+static int select_channel(video_dma_t* dma, unsigned long request, const char* name, uint32_t frame_index);
+static uint32_t channel_status(video_dma_t* dma, unsigned long request);
+
+// === Public variable definitions ================================================================================= //
+// === Private variable definitions ================================================================================ //
+// === Private function implementation ============================================================================= //
 
 /**
  * @brief Issue a no-argument ioctl to the hdmi-vdma device.
@@ -127,6 +160,8 @@ static uint32_t channel_status(video_dma_t* const dma, unsigned long request)
 
     return (status.running != 0U) ? 0U : VIDEO_DMA_STATUS_IDLE;
 }
+
+// === Public function implementation ============================================================================== //
 
 /**
  * @brief Open /dev/hdmi-vdma and map coherent framebuffer slots.
@@ -351,3 +386,5 @@ uint32_t video_dma_status(video_dma_t* const dma, video_dma_channel_e channel)
 
     return VIDEO_DMA_STATUS_HALTED;
 }
+
+// === End of documentation ======================================================================================== //

@@ -1,4 +1,17 @@
+/**********************************************************************************************************************
+Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
+
+Some fancy copyright message here (if needed)
+**********************************************************************************************************************/
+
 #pragma once
+
+///
+/// @file video_pipeline.h
+/// @brief Video pipeline service interface
+///
+
+// === Headers files inclusions ==================================================================================== //
 
 #include <stdint.h>
 
@@ -6,15 +19,21 @@
 #include "video_io.h"
 #include "video_modes.h"
 
+// === C++ Guard =================================================================================================== //
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+// === Public macros definitions =================================================================================== //
 
 #define VIDEO_PIPELINE_FRAME_COUNT     3U
 #define VIDEO_PIPELINE_MAX_WIDTH       1920U
 #define VIDEO_PIPELINE_MAX_HEIGHT      1080U
 #define VIDEO_PIPELINE_BYTES_PER_PIXEL 3U
 #define VIDEO_PIPELINE_STRIDE          (VIDEO_PIPELINE_MAX_WIDTH * VIDEO_PIPELINE_BYTES_PER_PIXEL)
+
+// === Public data type declarations =============================================================================== //
 
 typedef enum
 {
@@ -49,11 +68,16 @@ typedef struct
     int platform_ready;
 } video_pipeline_t;
 
+// === Public variable declarations ================================================================================ //
+// === Public function declarations ================================================================================ //
+
 int video_pipeline_init(video_pipeline_t* pipeline);
 void video_pipeline_cleanup(video_pipeline_t* pipeline);
 video_pipeline_poll_result_e video_pipeline_poll(video_pipeline_t* pipeline, uint32_t now_ms);
 video_pipeline_state_e video_pipeline_get_state(video_pipeline_t const* pipeline);
 video_pipeline_mode_t const* video_pipeline_get_active_mode(video_pipeline_t const* pipeline);
+
+// === End of documentation ======================================================================================== //
 
 #ifdef __cplusplus
 }

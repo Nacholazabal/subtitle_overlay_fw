@@ -1,3 +1,16 @@
+/**********************************************************************************************************************
+Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
+
+Some fancy copyright message here (if needed)
+**********************************************************************************************************************/
+
+///
+/// @file video_dynclk.c
+/// @brief Dynamic pixel clock HAL adapter implementation
+///
+
+// === Headers files inclusions ==================================================================================== //
+
 #include "video_dynclk.h"
 
 #include <math.h>
@@ -5,6 +18,8 @@
 
 #include "hw_platform.h"
 #include "xil_io.h"
+
+// === Macros definitions ========================================================================================== //
 
 #define CLK_BIT_WEDGE   13U
 #define CLK_BIT_NOCOUNT 12U
@@ -26,6 +41,8 @@
 
 #define CLK_TIMEOUT_COUNT 0x00500000U
 
+// === Private data type declarations ============================================================================== //
+
 typedef struct
 {
     uint32_t clk0_l;
@@ -43,6 +60,8 @@ typedef struct
     uint32_t clkdiv;
     uint32_t maindiv;
 } clk_mode_t;
+
+// === Private variable declarations =============================================================================== //
 
 static const uint64_t lock_lookup[64] = {
     0b0011000110111110100011111010010000000001ULL,
@@ -129,6 +148,19 @@ static const uint32_t filter_lookup_low[64] = {
     0b0010100011U, 0b0010100011U, 0b0010100011U, 0b0010100011U,
     0b0010100011U, 0b0010100011U, 0b0010100011U, 0b0010100011U,
 };
+
+// === Private function declarations =============================================================================== //
+
+static uint32_t clk_divider(uint32_t divide);
+static uint32_t clk_count_calc(uint32_t divide);
+static int clk_find_reg(clk_config_t* reg_values, clk_mode_t const* clk_params);
+static double clk_find_params(double frequency_mhz, clk_mode_t* best_pick);
+static void clk_write_reg(uintptr_t base, clk_config_t const* reg_values);
+static int clk_start(uintptr_t base);
+
+// === Public variable definitions ================================================================================= //
+// === Private variable definitions ================================================================================ //
+// === Private function implementation ============================================================================= //
 
 /**
  * @brief Compute the MMCM divider register bitfield for an integer divider.
@@ -306,6 +338,8 @@ static int clk_start(uintptr_t base)
     return XST_SUCCESS;
 }
 
+// === Public function implementation ============================================================================== //
+
 /**
  * @brief Initialize a dynclk adapter from the mapped platform region.
  * @param dynclk Adapter to initialize.
@@ -385,3 +419,5 @@ int video_dynclk_configure(video_dynclk_t* const dynclk, double frequency_mhz)
     dynclk->actual_frequency_mhz = mode.freq;
     return XST_SUCCESS;
 }
+
+// === End of documentation ======================================================================================== //

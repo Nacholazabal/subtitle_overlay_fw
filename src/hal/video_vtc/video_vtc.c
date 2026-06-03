@@ -1,9 +1,31 @@
+/**********************************************************************************************************************
+Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
+
+Some fancy copyright message here (if needed)
+**********************************************************************************************************************/
+
+///
+/// @file video_vtc.c
+/// @brief Video Timing Controller HAL adapter implementation
+///
+
+// === Headers files inclusions ==================================================================================== //
+
 #include "video_vtc.h"
 
 #include <string.h>
 
 #include "hw_platform.h"
 #include "xvtc_hw.h"
+
+// === Macros definitions ========================================================================================== //
+// === Private data type declarations ============================================================================== //
+// === Private variable declarations =============================================================================== //
+// === Private function declarations =============================================================================== //
+// === Public variable definitions ================================================================================= //
+// === Private variable definitions ================================================================================ //
+// === Private function implementation ============================================================================= //
+// === Public function implementation ============================================================================== //
 
 /**
  * @brief Initialize an imported Xilinx VTC instance with a mapped EffectiveAddr.
@@ -103,6 +125,8 @@ int video_vtc_configure_generator(video_vtc_t* const vtc, video_vtc_mode_t const
 
     return XST_SUCCESS;
 }
+
+// === End of documentation ======================================================================================== //
 
 /**
  * @brief Enable the VTC generator and core.

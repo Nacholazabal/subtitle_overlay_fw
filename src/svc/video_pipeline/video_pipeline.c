@@ -1,9 +1,35 @@
+/**********************************************************************************************************************
+Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
+
+Some fancy copyright message here (if needed)
+**********************************************************************************************************************/
+
+///
+/// @file video_pipeline.c
+/// @brief Video pipeline service implementation
+///
+
+// === Headers files inclusions ==================================================================================== //
+
 #include "video_pipeline.h"
 
 #include <string.h>
 
 #include "hw_platform.h"
 #include "xstatus.h"
+
+// === Macros definitions ========================================================================================== //
+// === Private data type declarations ============================================================================== //
+// === Private variable declarations =============================================================================== //
+// === Private function declarations =============================================================================== //
+
+static void stop_transport(video_pipeline_t* pipeline);
+static video_pipeline_poll_result_e start_passthrough(video_pipeline_t* pipeline,
+                                                      video_pipeline_mode_t const* mode);
+
+// === Public variable definitions ================================================================================= //
+// === Private variable definitions ================================================================================ //
+// === Private function implementation ============================================================================= //
 
 /**
  * @brief Stop both capture and display sides and clear active timing state.
@@ -48,6 +74,8 @@ static video_pipeline_poll_result_e start_passthrough(video_pipeline_t* const pi
     pipeline->state = VIDEO_PIPELINE_STREAMING;
     return VIDEO_PIPELINE_POLL_STREAMING_STARTED;
 }
+
+// === Public function implementation ============================================================================== //
 
 /**
  * @brief Initialize platform mapping, shared DMA, and input/output helpers.
@@ -230,3 +258,5 @@ video_pipeline_mode_t const* video_pipeline_get_active_mode(video_pipeline_t con
 {
     return (pipeline != NULL) ? pipeline->active_mode : NULL;
 }
+
+// === End of documentation ======================================================================================== //
