@@ -43,6 +43,7 @@ typedef enum
     COMPONENT_INIT_SIG = Q_USER_SIG, ///< Directed command: initialize the receiving component.
     COMPONENT_READY_SIG,             ///< Directed response: one component finished initialization.
     COMPONENT_ERROR_SIG,             ///< Directed error report containing an app_error_evt_t payload.
+    VIDEO_POLL_SIG,                  ///< Private video AO timer signal used to poll the video pipeline.
 
     MAX_SIG
 } app_signal_e;

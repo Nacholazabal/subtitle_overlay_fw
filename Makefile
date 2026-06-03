@@ -11,6 +11,11 @@ VIDEO_PORT_CFLAGS := \
 	-Isrc/bsp/platform \
 	-Isrc/bsp/platform/linux \
 	-Isrc/bsp/vtc_v7_2/src \
+	-Isrc/qpc/include \
+	-Isrc/qpc/ports/posix-qv \
+	-Isrc/qpc/ports/config \
+	-Isrc/app \
+	-Isrc/svc/system \
 	-Isrc/hal/video_dma \
 	-Isrc/hal/video_dynclk \
 	-Isrc/hal/video_gpio \
@@ -28,6 +33,9 @@ VIDEO_PORT_SRCS := \
 	src/hal/video_dynclk/video_dynclk.c \
 	src/hal/video_gpio/video_gpio.c \
 	src/hal/video_vtc/video_vtc.c \
+	src/app/app.c \
+	src/svc/system/SystemAO.c \
+	src/svc/video_pipeline/VideoAO.c \
 	src/svc/video_pipeline/video_input.c \
 	src/svc/video_pipeline/video_modes.c \
 	src/svc/video_pipeline/video_output.c \

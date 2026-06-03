@@ -16,13 +16,17 @@ Some fancy copyright message here (if needed)
 
 #include "app.h"
 #include "SystemAO.h"
+#include "VideoAO.h"
 
 // === Macros definitions ========================================================================================== //
 
 #define APP_TICKS_PER_SEC   (100U)
 #define APP_ERROR_POOL_LEN  (8U)
+#define APP_READY_POOL_LEN  (8U)
 #define SYSTEM_AO_QUEUE_LEN (8U)
+#define VIDEO_AO_QUEUE_LEN  (8U)
 #define SYSTEM_AO_PRIO      (1U)
+#define VIDEO_AO_PRIO       (2U)
 
 // === Private data type declarations ============================================================================== //
 // === Private variable declarations =============================================================================== //
@@ -48,13 +52,22 @@ static void bsp_init_placeholder(void)
 
 static void app_init(void)
 {
-    /*
-     * Error reports are the first dynamic events in the application. Components
-     * can allocate one with Q_NEW(app_error_evt_t, COMPONENT_ERROR_SIG), fill its
-     * source and code fields, then post &event->super to AO_System.
-     */
+    /* QP/C event pools must be initialized in increasing event-size order. */
+    static QF_MPOOL_EL(component_ready_evt_t) app_ready_pool_sto[APP_READY_POOL_LEN];
+    QF_poolInit(app_ready_pool_sto, sizeof(app_ready_pool_sto), sizeof(app_ready_pool_sto[0]));
+
     static QF_MPOOL_EL(app_error_evt_t) app_error_pool_sto[APP_ERROR_POOL_LEN];
     QF_poolInit(app_error_pool_sto, sizeof(app_error_pool_sto), sizeof(app_error_pool_sto[0]));
+
+    static QEvtPtr video_queue_sto[VIDEO_AO_QUEUE_LEN];
+    video_ao_ctor();
+    QActive_start(AO_Video,
+                  VIDEO_AO_PRIO,
+                  video_queue_sto,
+                  Q_DIM(video_queue_sto),
+                  (void*)0,
+                  0U,
+                  (void*)0);
 
     static QEvtPtr system_queue_sto[SYSTEM_AO_QUEUE_LEN];
     system_ao_ctor();
@@ -67,8 +80,8 @@ static void app_init(void)
                   (void*)0);
 
     /*
-     * TODO: Construct and start VideoAO, USBAudioAO, SubtitlePipelineAO,
-     * ButtonsAO, and LEDAO here as they are implemented.
+     * TODO: Construct and start USBAudioAO, SubtitlePipelineAO, ButtonsAO, and
+     * LEDAO here as they are implemented.
      */
 }
 

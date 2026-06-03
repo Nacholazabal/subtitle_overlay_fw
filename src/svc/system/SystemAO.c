@@ -15,6 +15,7 @@ Some fancy copyright message here (if needed)
 
 #include "app.h"
 #include "SystemAO.h"
+#include "VideoAO.h"
 
 // === Macros definitions ========================================================================================== //
 // === Private data type declarations ============================================================================== //
@@ -55,14 +56,11 @@ QActive* const AO_System = Q_ACTIVE_UPCAST(&system_ao_inst);
 
 static void on_init(system_ao_t* const me)
 {
+    static QEvt const init_evt = QEVT_INITIALIZER(COMPONENT_INIT_SIG);
+
     me->last_ready_component = COMPONENT_NONE;
 
-    /*
-     * TODO: When VideoAO exists, post COMPONENT_INIT_SIG to AO_Video here.
-     * After each COMPONENT_READY_SIG, on_component_ready() will post the same
-     * command to the next AO. After the final component is ready, transition
-     * system_ao_t from system_ao_init to system_ao_run.
-     */
+    QACTIVE_POST(AO_Video, &init_evt, &me->super);
 }
 
 static bool on_component_ready(system_ao_t* const me, component_ready_evt_t const* const e)
@@ -70,15 +68,10 @@ static bool on_component_ready(system_ao_t* const me, component_ready_evt_t cons
     me->last_ready_component = e->source;
 
     /*
-     * TODO: Continue the sequential startup chain here:
-     * COMPONENT_VIDEO             -> post COMPONENT_INIT_SIG to AO_USBAudio
-     * COMPONENT_USB_AUDIO         -> post COMPONENT_INIT_SIG to AO_SubtitlePipeline
-     * COMPONENT_SUBTITLE_PIPELINE -> post COMPONENT_INIT_SIG to AO_Buttons
-     * COMPONENT_BUTTONS           -> post COMPONENT_INIT_SIG to AO_LED
-     * COMPONENT_LED               -> transition system_ao_t to system_ao_run
+     * Video is the only required startup component for this milestone. Extend
+     * this switch into the sequential startup chain when the remaining AOs land.
      */
-
-    return (e->source == COMPONENT_LED);
+    return (e->source == COMPONENT_VIDEO);
 }
 
 static void on_run(system_ao_t* const me)
