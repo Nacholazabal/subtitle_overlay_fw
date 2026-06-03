@@ -23,51 +23,51 @@ typedef struct
 {
     QActive super;
 
-    ComponentId lastReadyComponent;
-    ComponentId errorSource;
-    uint32_t errorCode;
-} SystemAO;
+    component_id_e last_ready_component;
+    component_id_e error_source;
+    uint32_t error_code;
+} system_ao_t;
 
 // === Private variable declarations =============================================================================== //
 // === Private function declarations =============================================================================== //
 
-static QState SystemAO_initial(SystemAO* const me, void const* const par);
-static QState SystemAO_active(SystemAO* const me, QEvt const* const e);
-static QState SystemAO_init(SystemAO* const me, QEvt const* const e);
-static QState SystemAO_run(SystemAO* const me, QEvt const* const e);
-static QState SystemAO_error(SystemAO* const me, QEvt const* const e);
+static QState system_ao_initial(system_ao_t* const me, void const* const par);
+static QState system_ao_active(system_ao_t* const me, QEvt const* const e);
+static QState system_ao_init(system_ao_t* const me, QEvt const* const e);
+static QState system_ao_run(system_ao_t* const me, QEvt const* const e);
+static QState system_ao_error(system_ao_t* const me, QEvt const* const e);
 
-static void on_init(SystemAO* const me);
-static bool on_component_ready(SystemAO* const me, ComponentReadyEvt const* const e);
-static void on_run(SystemAO* const me);
-static void on_error(SystemAO* const me, AppErrorEvt const* const e);
+static void on_init(system_ao_t* const me);
+static bool on_component_ready(system_ao_t* const me, component_ready_evt_t const* const e);
+static void on_run(system_ao_t* const me);
+static void on_error(system_ao_t* const me, app_error_evt_t const* const e);
 
 // === Public variable definitions ================================================================================= //
 // === Private variable definitions ================================================================================ //
 
-static SystemAO SystemAO_inst;
+static system_ao_t system_ao_inst;
 
 // === Public variable definitions ================================================================================= //
 
-QActive* const AO_System = Q_ACTIVE_UPCAST(&SystemAO_inst);
+QActive* const AO_System = Q_ACTIVE_UPCAST(&system_ao_inst);
 
 // === Private function implementation ============================================================================= //
 
-static void on_init(SystemAO* const me)
+static void on_init(system_ao_t* const me)
 {
-    me->lastReadyComponent = COMPONENT_NONE;
+    me->last_ready_component = COMPONENT_NONE;
 
     /*
      * TODO: When VideoAO exists, post COMPONENT_INIT_SIG to AO_Video here.
      * After each COMPONENT_READY_SIG, on_component_ready() will post the same
      * command to the next AO. After the final component is ready, transition
-     * SystemAO from SystemAO_init to SystemAO_run.
+     * system_ao_t from system_ao_init to system_ao_run.
      */
 }
 
-static bool on_component_ready(SystemAO* const me, ComponentReadyEvt const* const e)
+static bool on_component_ready(system_ao_t* const me, component_ready_evt_t const* const e)
 {
-    me->lastReadyComponent = e->source;
+    me->last_ready_component = e->source;
 
     /*
      * TODO: Continue the sequential startup chain here:
@@ -75,44 +75,44 @@ static bool on_component_ready(SystemAO* const me, ComponentReadyEvt const* cons
      * COMPONENT_USB_AUDIO         -> post COMPONENT_INIT_SIG to AO_SubtitlePipeline
      * COMPONENT_SUBTITLE_PIPELINE -> post COMPONENT_INIT_SIG to AO_Buttons
      * COMPONENT_BUTTONS           -> post COMPONENT_INIT_SIG to AO_LED
-     * COMPONENT_LED               -> transition SystemAO to SystemAO_run
+     * COMPONENT_LED               -> transition system_ao_t to system_ao_run
      */
 
     return (e->source == COMPONENT_LED);
 }
 
-static void on_run(SystemAO* const me)
+static void on_run(system_ao_t* const me)
 {
     Q_UNUSED_PAR(me);
 
     // TODO: Notify interested AOs that normal application operation can begin.
 }
 
-static void on_error(SystemAO* const me, AppErrorEvt const* const e)
+static void on_error(system_ao_t* const me, app_error_evt_t const* const e)
 {
-    me->errorSource = e->source;
-    me->errorCode = e->code;
+    me->error_source = e->source;
+    me->error_code = e->code;
 
     // TODO: Report the fault through logging and request an LED error indication.
 }
 
-static QState SystemAO_initial(SystemAO* const me, void const* const par)
+static QState system_ao_initial(system_ao_t* const me, void const* const par)
 {
     Q_UNUSED_PAR(me);
     Q_UNUSED_PAR(par);
 
-    return Q_TRAN(&SystemAO_init);
+    return Q_TRAN(&system_ao_init);
 }
 
-static QState SystemAO_active(SystemAO* const me, QEvt const* const e)
+static QState system_ao_active(system_ao_t* const me, QEvt const* const e)
 {
     QState status;
 
     switch (e->sig)
     {
     case COMPONENT_ERROR_SIG:
-        on_error(me, Q_EVT_CAST(AppErrorEvt));
-        status = Q_TRAN(&SystemAO_error);
+        on_error(me, Q_EVT_CAST(app_error_evt_t));
+        status = Q_TRAN(&system_ao_error);
         break;
 
     default:
@@ -123,7 +123,7 @@ static QState SystemAO_active(SystemAO* const me, QEvt const* const e)
     return status;
 }
 
-static QState SystemAO_init(SystemAO* const me, QEvt const* const e)
+static QState system_ao_init(system_ao_t* const me, QEvt const* const e)
 {
     QState status;
 
@@ -135,9 +135,9 @@ static QState SystemAO_init(SystemAO* const me, QEvt const* const e)
         break;
 
     case COMPONENT_READY_SIG:
-        if (on_component_ready(me, Q_EVT_CAST(ComponentReadyEvt)))
+        if (on_component_ready(me, Q_EVT_CAST(component_ready_evt_t)))
         {
-            status = Q_TRAN(&SystemAO_run);
+            status = Q_TRAN(&system_ao_run);
         }
         else
         {
@@ -146,14 +146,14 @@ static QState SystemAO_init(SystemAO* const me, QEvt const* const e)
         break;
 
     default:
-        status = Q_SUPER(&SystemAO_active);
+        status = Q_SUPER(&system_ao_active);
         break;
     }
 
     return status;
 }
 
-static QState SystemAO_run(SystemAO* const me, QEvt const* const e)
+static QState system_ao_run(system_ao_t* const me, QEvt const* const e)
 {
     QState status;
 
@@ -165,14 +165,14 @@ static QState SystemAO_run(SystemAO* const me, QEvt const* const e)
         break;
 
     default:
-        status = Q_SUPER(&SystemAO_active);
+        status = Q_SUPER(&system_ao_active);
         break;
     }
 
     return status;
 }
 
-static QState SystemAO_error(SystemAO* const me, QEvt const* const e)
+static QState system_ao_error(system_ao_t* const me, QEvt const* const e)
 {
     Q_UNUSED_PAR(me);
     Q_UNUSED_PAR(e);
@@ -186,14 +186,14 @@ static QState SystemAO_error(SystemAO* const me, QEvt const* const e)
 
 // === Public function implementation ============================================================================== //
 
-void SystemAO_ctor(void)
+void system_ao_ctor(void)
 {
-    SystemAO* const me = &SystemAO_inst;
+    system_ao_t* const me = &system_ao_inst;
 
-    QActive_ctor(&me->super, Q_STATE_CAST(&SystemAO_initial));
-    me->lastReadyComponent = COMPONENT_NONE;
-    me->errorSource = COMPONENT_NONE;
-    me->errorCode = 0U;
+    QActive_ctor(&me->super, Q_STATE_CAST(&system_ao_initial));
+    me->last_ready_component = COMPONENT_NONE;
+    me->error_source = COMPONENT_NONE;
+    me->error_code = 0U;
 }
 
 // === End of documentation ======================================================================================== //

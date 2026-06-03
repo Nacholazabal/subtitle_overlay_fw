@@ -13,6 +13,7 @@ Some fancy copyright message here (if needed)
 
 #include <assert.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -21,11 +22,11 @@ Some fancy copyright message here (if needed)
 // === Macros definitions ========================================================================================== //
 // === Private data type declarations ============================================================================== //
 
-/// @brief Structure that represents a subscriber. It will consist of a tuple function + LogLevel.
+/// @brief Structure that represents a subscriber. It will consist of a tuple function + log_level_e.
 typedef struct
 {
     log_function_t log_function;  ///< User-defined log function.
-    LogLevel threshold;           ///< Log level in which messsages will be printed out
+    log_level_e threshold;           ///< Log level in which messsages will be printed out
 } subscriber_t;
 
 // === Private variable declarations =============================================================================== //
@@ -42,7 +43,7 @@ static char log_message_buffer[LOG_MAX_MESSAGE_LENGTH] = {0};
 
 void log_init() { memset(log_subscribers, 0, sizeof(log_subscribers)); }
 
-LogError log_subscribe(log_function_t log_function, LogLevel threshold)
+log_error_e log_subscribe(log_function_t log_function, log_level_e threshold)
 {
     assert(log_function);
 
@@ -67,7 +68,7 @@ LogError log_subscribe(log_function_t log_function, LogLevel threshold)
     return LOG_ERROR_NONE;
 }
 
-LogError log_unsubscribe(log_function_t log_function)
+log_error_e log_unsubscribe(log_function_t log_function)
 {
     for (size_t i = 0; i < LOG_MAX_SUBSCRIBERS; i++) {
         if (log_subscribers[i].log_function == log_function) {
@@ -78,7 +79,7 @@ LogError log_unsubscribe(log_function_t log_function)
     return LOG_ERROR_NOT_SUBSCRIBED;
 }
 
-void log_message(LogLevel severity, const char* fmt, ...)
+void log_message(log_level_e severity, const char* fmt, ...)
 {
     va_list ap;
     va_start(ap, fmt);
@@ -94,7 +95,7 @@ void log_message(LogLevel severity, const char* fmt, ...)
     }
 }
 
-const char* log_level_to_str(const LogLevel severity)
+const char* log_level_to_str(const log_level_e severity)
 {
     switch (severity) {
     case LOG_LEVEL_TRACE:

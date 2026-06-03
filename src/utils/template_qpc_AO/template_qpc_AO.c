@@ -12,7 +12,7 @@ Some fancy copyright message here (if needed)
 // === Headers files inclusions ==================================================================================== //
 
 /*
- * Copy this file into src/svc/, rename TemplateAO consistently, and enable the
+ * Copy this file into src/svc/, rename template_ao_t consistently, and enable the
  * worksheet below. AO code should request hardware work through hal/ or bsp/
  * APIs instead of touching registers or Linux drivers directly.
  */
@@ -27,8 +27,8 @@ Some fancy copyright message here (if needed)
 // === Public function implementation ============================================================================== //
 
 #if 0
-#include "qpc.h"
-#include "app.h"
+    #include "qpc.h"
+    #include "app.h"
 // #include "hal/example_hal.h"  // Optional hardware adapter.
 
 // === Private data type declarations ============================================================================== //
@@ -38,55 +38,55 @@ typedef struct
     QActive super;
 
     // Add AO-owned state here.
-    // QTimeEvt timeEvt;  // Optional: construct in TemplateAO_ctor().
-} TemplateAO;
+    // QTimeEvt time_evt;  // Optional: construct in template_ao_ctor().
+} template_ao_t;
 
 // === Private function declarations =============================================================================== //
 
-static QState TemplateAO_initial(TemplateAO * const me, void const * const par);
-static QState TemplateAO_state(TemplateAO * const me, QEvt const * const e);
+static QState template_ao_initial(template_ao_t * const me, void const * const par);
+static QState template_ao_state(template_ao_t * const me, QEvt const * const e);
 
 // === Private variable definitions ================================================================================ //
 
-static TemplateAO TemplateAO_inst;
+static template_ao_t template_ao_inst;
 
 // === Public variable definitions ================================================================================= //
 
-QActive * const AO_Template = Q_ACTIVE_UPCAST(&TemplateAO_inst);
+QActive * const AO_Template = Q_ACTIVE_UPCAST(&template_ao_inst);
 
 // === Public function implementation ============================================================================== //
 
-void TemplateAO_ctor(void)
+void template_ao_ctor(void)
 {
-    TemplateAO * const me = &TemplateAO_inst;
+    template_ao_t * const me = &template_ao_inst;
 
-    QActive_ctor(&me->super, Q_STATE_CAST(&TemplateAO_initial));
+    QActive_ctor(&me->super, Q_STATE_CAST(&template_ao_initial));
 
     // Initialize AO-owned members here.
-    // QTimeEvt_ctorX(&me->timeEvt, &me->super, TEMPLATE_TIMEOUT_SIG, 0U);
+    // QTimeEvt_ctorX(&me->time_evt, &me->super, TEMPLATE_TIMEOUT_SIG, 0U);
 }
 
 // === Private function implementation ============================================================================= //
 
-static QState TemplateAO_initial(TemplateAO * const me, void const * const par)
+static QState template_ao_initial(template_ao_t * const me, void const * const par)
 {
     Q_UNUSED_PAR(me);
     Q_UNUSED_PAR(par);
 
     // Optional tracing dictionaries:
-    // QS_OBJ_DICTIONARY(&TemplateAO_inst);
-    // QS_FUN_DICTIONARY(&TemplateAO_state);
+    // QS_OBJ_DICTIONARY(&template_ao_inst);
+    // QS_FUN_DICTIONARY(&template_ao_state);
 
     // Optional subscriptions for published facts:
     // QActive_subscribe(Q_ACTIVE_UPCAST(me), APP_STARTED_SIG);
 
     // Optional timer startup; use interval 0U for one-shot timers:
-    // QTimeEvt_armX(&me->timeEvt, INITIAL_TICKS, PERIODIC_INTERVAL_TICKS);
+    // QTimeEvt_armX(&me->time_evt, INITIAL_TICKS, PERIODIC_INTERVAL_TICKS);
 
-    return Q_TRAN(&TemplateAO_state);
+    return Q_TRAN(&template_ao_state);
 }
 
-static QState TemplateAO_state(TemplateAO * const me, QEvt const * const e)
+static QState template_ao_state(template_ao_t * const me, QEvt const * const e)
 {
     QState status;
 
@@ -98,7 +98,7 @@ static QState TemplateAO_state(TemplateAO * const me, QEvt const * const e)
 
     case Q_EXIT_SIG:
         // Exit-state actions go here. Disarm state-scoped timers if needed.
-        // QTimeEvt_disarm(&me->timeEvt);
+        // QTimeEvt_disarm(&me->time_evt);
         status = Q_HANDLED();
         break;
 
@@ -106,7 +106,7 @@ static QState TemplateAO_state(TemplateAO * const me, QEvt const * const e)
         // Handle event data, post a directed command, publish a fact, or transition:
         // QACTIVE_POST(AO_Other, e, Q_ACTIVE_UPCAST(me));
         // QACTIVE_PUBLISH(e, Q_ACTIVE_UPCAST(me));
-        // status = Q_TRAN(&TemplateAO_otherState);
+        // status = Q_TRAN(&template_ao_other_state);
         status = Q_HANDLED();
         break;
 

@@ -13,12 +13,12 @@
 typedef struct
 {
     const char* name;
-    uint32_t physicalBase;
+    uint32_t physical_base;
     size_t size;
-    void* virtualBase;
-} HwPlatformMapping;
+    void* virtual_base;
+} hw_platform_mapping_t;
 
-static HwPlatformMapping mappings[HW_REGION_COUNT] = {
+static hw_platform_mapping_t mappings[HW_REGION_COUNT] = {
     [HW_REGION_DYNCLK] = {"DynClk", XPAR_AXI_DYNCLK_0_BASEADDR, 0x00010000U, NULL},
     [HW_REGION_VTC_OUTPUT] = {"VTC output", XPAR_V_TC_0_BASEADDR, 0x00010000U, NULL},
     [HW_REGION_VTC_INPUT] = {"VTC input", XPAR_V_TC_1_BASEADDR, 0x00010000U, NULL},
@@ -33,41 +33,41 @@ static HwPlatformMapping mappings[HW_REGION_COUNT] = {
     [HW_REGION_VIDEO_GPIO] = {"Video GPIO", XPAR_AXI_GPIO_VIDEO_BASEADDR, 0x00010000U, NULL},
 };
 
-static int devmemFd = -1;
+static int devmem_fd = -1;
 
-static void* map_region(HwPlatformMapping* const mapping)
+static void* map_region(hw_platform_mapping_t* const mapping)
 {
-    void* const virtualBase = mmap(NULL,
+    void* const virtual_base = mmap(NULL,
                                    mapping->size,
                                    PROT_READ | PROT_WRITE,
                                    MAP_SHARED,
-                                   devmemFd,
-                                   (off_t)mapping->physicalBase);
+                                   devmem_fd,
+                                   (off_t)mapping->physical_base);
 
-    if (virtualBase == MAP_FAILED)
+    if (virtual_base == MAP_FAILED)
     {
         fprintf(stderr,
                 "[hw_platform] mmap %s at 0x%08X failed: %s\n",
                 mapping->name,
-                mapping->physicalBase,
+                mapping->physical_base,
                 strerror(errno));
         return NULL;
     }
 
-    return virtualBase;
+    return virtual_base;
 }
 
 int hw_platform_init(void)
 {
-    HwPlatformRegion region;
+    hw_platform_region_e region;
 
-    if (devmemFd >= 0)
+    if (devmem_fd >= 0)
     {
         return 0;
     }
 
-    devmemFd = open("/dev/mem", O_RDWR | O_SYNC);
-    if (devmemFd < 0)
+    devmem_fd = open("/dev/mem", O_RDWR | O_SYNC);
+    if (devmem_fd < 0)
     {
         fprintf(stderr, "[hw_platform] open /dev/mem failed: %s\n", strerror(errno));
         return -1;
@@ -75,8 +75,8 @@ int hw_platform_init(void)
 
     for (region = HW_REGION_DYNCLK; region < HW_REGION_COUNT; region++)
     {
-        mappings[region].virtualBase = map_region(&mappings[region]);
-        if (mappings[region].virtualBase == NULL)
+        mappings[region].virtual_base = map_region(&mappings[region]);
+        if (mappings[region].virtual_base == NULL)
         {
             hw_platform_cleanup();
             return -1;
@@ -88,49 +88,49 @@ int hw_platform_init(void)
 
 void hw_platform_cleanup(void)
 {
-    HwPlatformRegion region;
+    hw_platform_region_e region;
 
     for (region = HW_REGION_DYNCLK; region < HW_REGION_COUNT; region++)
     {
-        if (mappings[region].virtualBase != NULL)
+        if (mappings[region].virtual_base != NULL)
         {
-            munmap(mappings[region].virtualBase, mappings[region].size);
-            mappings[region].virtualBase = NULL;
+            munmap(mappings[region].virtual_base, mappings[region].size);
+            mappings[region].virtual_base = NULL;
         }
     }
 
-    if (devmemFd >= 0)
+    if (devmem_fd >= 0)
     {
-        close(devmemFd);
-        devmemFd = -1;
+        close(devmem_fd);
+        devmem_fd = -1;
     }
 }
 
-uintptr_t hw_platform_base(HwPlatformRegion region)
+uintptr_t hw_platform_base(hw_platform_region_e region)
 {
     if ((region < HW_REGION_DYNCLK) || (region >= HW_REGION_COUNT))
     {
         return (uintptr_t)0;
     }
 
-    return (uintptr_t)mappings[region].virtualBase;
+    return (uintptr_t)mappings[region].virtual_base;
 }
 
 uintptr_t hw_platform_translate(uint32_t physical_address)
 {
-    HwPlatformRegion region;
+    hw_platform_region_e region;
 
     for (region = HW_REGION_DYNCLK; region < HW_REGION_COUNT; region++)
     {
-        HwPlatformMapping const* const mapping = &mappings[region];
+        hw_platform_mapping_t const* const mapping = &mappings[region];
 
-        if (physical_address >= mapping->physicalBase)
+        if (physical_address >= mapping->physical_base)
         {
-            uint32_t const offset = physical_address - mapping->physicalBase;
+            uint32_t const offset = physical_address - mapping->physical_base;
 
-            if ((offset < mapping->size) && (mapping->virtualBase != NULL))
+            if ((offset < mapping->size) && (mapping->virtual_base != NULL))
             {
-                return (uintptr_t)mapping->virtualBase + offset;
+                return (uintptr_t)mapping->virtual_base + offset;
             }
         }
     }

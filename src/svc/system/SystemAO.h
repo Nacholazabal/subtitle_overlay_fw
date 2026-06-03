@@ -23,8 +23,8 @@ extern "C" {
 // === Public variable declarations ================================================================================ //
 // === Public function declarations ================================================================================ //
 
-/// @brief Construct the SystemAO state machine before starting it.
-void SystemAO_ctor(void);
+/// @brief Construct the system_ao_t state machine before starting it.
+void system_ao_ctor(void);
 
 // === End of documentation ======================================================================================== //
 

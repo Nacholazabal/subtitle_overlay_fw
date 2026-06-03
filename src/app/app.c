@@ -28,14 +28,14 @@ Some fancy copyright message here (if needed)
 // === Private variable declarations =============================================================================== //
 // === Private function declarations =============================================================================== //
 
-static void BSP_init_placeholder(void);
+static void bsp_init_placeholder(void);
 static void app_init(void);
 
 // === Public variable definitions ================================================================================= //
 // === Private variable definitions ================================================================================ //
 // === Private function implementation ============================================================================= //
 
-static void BSP_init_placeholder(void)
+static void bsp_init_placeholder(void)
 {
     /*
      * TODO: Replace this placeholder with BSP_init() when the Linux BSP exists.
@@ -50,18 +50,18 @@ static void app_init(void)
 {
     /*
      * Error reports are the first dynamic events in the application. Components
-     * can allocate one with Q_NEW(AppErrorEvt, COMPONENT_ERROR_SIG), fill its
+     * can allocate one with Q_NEW(app_error_evt_t, COMPONENT_ERROR_SIG), fill its
      * source and code fields, then post &event->super to AO_System.
      */
-    static QF_MPOOL_EL(AppErrorEvt) appErrorPoolSto[APP_ERROR_POOL_LEN];
-    QF_poolInit(appErrorPoolSto, sizeof(appErrorPoolSto), sizeof(appErrorPoolSto[0]));
+    static QF_MPOOL_EL(app_error_evt_t) app_error_pool_sto[APP_ERROR_POOL_LEN];
+    QF_poolInit(app_error_pool_sto, sizeof(app_error_pool_sto), sizeof(app_error_pool_sto[0]));
 
-    static QEvtPtr systemQueueSto[SYSTEM_AO_QUEUE_LEN];
-    SystemAO_ctor();
+    static QEvtPtr system_queue_sto[SYSTEM_AO_QUEUE_LEN];
+    system_ao_ctor();
     QActive_start(AO_System,
                   SYSTEM_AO_PRIO,
-                  systemQueueSto,
-                  Q_DIM(systemQueueSto),
+                  system_queue_sto,
+                  Q_DIM(system_queue_sto),
                   (void*)0,
                   0U,
                   (void*)0);
@@ -75,7 +75,7 @@ static void app_init(void)
 int main(void)
 {
     QF_init();
-    BSP_init_placeholder();
+    bsp_init_placeholder();
     app_init();
     return QF_run();
 }

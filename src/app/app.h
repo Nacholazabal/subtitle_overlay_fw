@@ -26,7 +26,7 @@ extern "C" {
 // === Public macros definitions =================================================================================== //
 // === Public data type declarations =============================================================================== //
 
-/// @brief Components coordinated by SystemAO during application startup.
+/// @brief Components coordinated by system_ao_t during application startup.
 typedef enum
 {
     COMPONENT_NONE = 0,
@@ -35,36 +35,36 @@ typedef enum
     COMPONENT_SUBTITLE_PIPELINE,
     COMPONENT_BUTTONS,
     COMPONENT_LED,
-} ComponentId;
+} component_id_e;
 
 /// @brief Signals shared by the application active objects.
 typedef enum
 {
     COMPONENT_INIT_SIG = Q_USER_SIG, ///< Directed command: initialize the receiving component.
     COMPONENT_READY_SIG,             ///< Directed response: one component finished initialization.
-    COMPONENT_ERROR_SIG,             ///< Directed error report containing an AppErrorEvt payload.
+    COMPONENT_ERROR_SIG,             ///< Directed error report containing an app_error_evt_t payload.
 
     MAX_SIG
-} AppSignals;
+} app_signal_e;
 
-/// @brief Payload sent to SystemAO after a component finishes initializing.
+/// @brief Payload sent to system_ao_t after a component finishes initializing.
 typedef struct
 {
     QEvt super;
-    ComponentId source;
-} ComponentReadyEvt;
+    component_id_e source;
+} component_ready_evt_t;
 
-/// @brief Dynamically allocated payload sent to SystemAO when a component fails.
+/// @brief Dynamically allocated payload sent to system_ao_t when a component fails.
 typedef struct
 {
     QEvt super;
-    ComponentId source;
+    component_id_e source;
     uint32_t code;
-} AppErrorEvt;
+} app_error_evt_t;
 
 // === Public variable declarations ================================================================================ //
 
-/// @brief Opaque handle used to post events to SystemAO.
+/// @brief Opaque handle used to post events to system_ao_t.
 extern QActive* const AO_System;
 
 // === Public function declarations ================================================================================ //

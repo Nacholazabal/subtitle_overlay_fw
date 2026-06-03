@@ -1,0 +1,179 @@
+#include "video_input.h"
+
+#include <string.h>
+
+#include "xparameters.h"
+
+/**
+ * @brief Initialize input-side GPIO, VTC, and DMA composition state.
+ * @param input Input helper to initialize.
+ * @param dma Shared DMA adapter used for S2MM.
+ * @param stride Framebuffer line stride in bytes.
+ * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or a HAL error code on failure.
+ */
+int video_input_init(video_input_t* const input, video_dma_t* const dma, uint32_t stride)
+{
+    int status;
+
+    if ((input == NULL) || (dma == NULL) || (stride == 0U))
+    {
+        return XST_INVALID_PARAM;
+    }
+
+    memset(input, 0, sizeof(*input));
+    input->dma = dma;
+    input->stride = stride;
+
+    status = video_gpio_init(&input->gpio);
+    if (status != XST_SUCCESS)
+    {
+        return status;
+    }
+
+    status = video_vtc_init(&input->vtc, XPAR_V_TC_1_DEVICE_ID);
+    if (status != XST_SUCCESS)
+    {
+        return status;
+    }
+
+    return XST_SUCCESS;
+}
+
+/**
+ * @brief Query the HDMI input lock signal.
+ * @param input Initialized input helper.
+ * @return Nonzero when locked, zero otherwise.
+ */
+int video_input_locked(video_input_t const* const input)
+{
+    if (input == NULL)
+    {
+        return 0;
+    }
+
+    return video_gpio_is_locked(&input->gpio);
+}
+
+/**
+ * @brief Start input timing detection if it has not already started.
+ * @param input Initialized input helper.
+ * @param now_ms Current monotonic time in milliseconds, stored for future timeout policy.
+ * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or a HAL error code on failure.
+ */
+int video_input_start_detector(video_input_t* const input, uint32_t now_ms)
+{
+    int status;
+
+    if (input == NULL)
+    {
+        return XST_INVALID_PARAM;
+    }
+
+    if (input->detector_started)
+    {
+        return XST_SUCCESS;
+    }
+
+    status = video_vtc_start_detector(&input->vtc);
+    if (status == XST_SUCCESS)
+    {
+        input->detector_started = 1;
+        input->detector_started_ms = now_ms;
+    }
+
+    return status;
+}
+
+/**
+ * @brief Read detected HDMI input timing.
+ * @param input Initialized input helper.
+ * @param timing Output active width and height.
+ * @return XST_SUCCESS on valid timing, XST_NO_DATA when timing is not ready, or an error code on bad input/failure.
+ */
+int video_input_read_timing(video_input_t* const input, video_vtc_timing_t* const timing)
+{
+    int status;
+
+    if ((input == NULL) || (timing == NULL))
+    {
+        return XST_INVALID_PARAM;
+    }
+
+    status = video_vtc_read_detector_timing(&input->vtc, timing);
+    if (status == XST_SUCCESS)
+    {
+        input->timing = *timing;
+    }
+
+    return status;
+}
+
+/**
+ * @brief Start S2MM capture into the selected framebuffer.
+ * @param input Initialized input helper.
+ * @param mode Supported mode that matches the detected input timing.
+ * @param frame_index Framebuffer index to capture into.
+ * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or a HAL error code on failure.
+ */
+int video_input_start_capture(video_input_t* const input,
+                              video_pipeline_mode_t const* const mode,
+                              uint32_t frame_index)
+{
+    int status;
+
+    if ((input == NULL) || (mode == NULL) || (input->dma == NULL))
+    {
+        return XST_INVALID_PARAM;
+    }
+
+    if (input->running)
+    {
+        (void)video_input_stop(input);
+    }
+
+    status = video_dma_configure(input->dma,
+                                 VIDEO_DMA_CHANNEL_S2MM,
+                                 mode->timing.width,
+                                 mode->timing.height,
+                                 input->stride,
+                                 frame_index);
+    if (status != XST_SUCCESS)
+    {
+        return status;
+    }
+
+    status = video_dma_start(input->dma, VIDEO_DMA_CHANNEL_S2MM);
+    if (status != XST_SUCCESS)
+    {
+        return status;
+    }
+
+    input->frame_index = frame_index;
+    input->running = 1;
+
+    return XST_SUCCESS;
+}
+
+/**
+ * @brief Stop S2MM capture and reset input detection state.
+ * @param input Initialized input helper.
+ * @return XST_SUCCESS on success, or XST_INVALID_PARAM for bad input.
+ */
+int video_input_stop(video_input_t* const input)
+{
+    if (input == NULL)
+    {
+        return XST_INVALID_PARAM;
+    }
+
+    if (input->dma != NULL)
+    {
+        (void)video_dma_stop(input->dma, VIDEO_DMA_CHANNEL_S2MM);
+    }
+
+    input->running = 0;
+    input->detector_started = 0;
+    memset(&input->timing, 0, sizeof(input->timing));
+
+    return XST_SUCCESS;
+}

@@ -75,7 +75,7 @@ typedef enum
     LOG_LEVEL_INFO,       ///< Info Level
     LOG_LEVEL_WARNING,    ///< Warning Level
     LOG_LEVEL_ERROR,      ///< Error Level
-} LogLevel;
+} log_level_e;
 
 /// @brief Errors returned by this Log API
 typedef enum
@@ -83,10 +83,10 @@ typedef enum
     LOG_ERROR_NONE = 0,              ///< No error happened
     LOG_ERROR_NOT_SUBSCRIBED,        ///< We're trying to unsubscribe a not subscribed function
     LOG_ERROR_SUBSCRIBERS_EXCEEDED,  ///< Reached Subscribber limit. Consider increasing `LOG_MAX_SUBSCRIBERS`
-} LogError;
+} log_error_e;
 
 /// Prototype for Log subscribers. The log functions must follow this signature
-typedef void (*log_function_t)(const LogLevel severity, const char* msg);
+typedef void (*log_function_t)(const log_level_e severity, const char* msg);
 
 // === Public variable declarations ================================================================================ //
 // === Public function declarations ================================================================================ //
@@ -98,25 +98,25 @@ void log_init();
 /// @param log_function Function to register
 /// @param threshold Log level in which the log function should output mesages
 /// @return `LOG_ERROR_NONE` on success.
-LogError log_subscribe(log_function_t log_function, LogLevel threshold);
+log_error_e log_subscribe(log_function_t log_function, log_level_e threshold);
 
 /// @brief Unsubscribe the specified function from the log facility.
 /// @param log_function Function to unregister
 /// @return `LOG_ERROR_NONE` on success.
-LogError log_unsubscribe(log_function_t log_function);
+log_error_e log_unsubscribe(log_function_t log_function);
 
 /// @brief Helper function to get a printable version of the available Log levels. Useful for the client's
 /// implementations
 /// @param severity Log level to stringify
 /// @return stringified version of the passed log level, or "UNK" if its unrecognized.
-const char* log_level_to_str(const LogLevel severity);
+const char* log_level_to_str(const log_level_e severity);
 
 /// @brief Private implementation of the log facility, used to print messages. This function should not be called. Use
 /// the `LOG_X()` macros instead.
 /// @param severity Message severity
 /// @param fmt String to format
 /// @param
-void log_message(LogLevel severity, const char* fmt, ...);
+void log_message(log_level_e severity, const char* fmt, ...);
 
 // === End of documentation ======================================================================================== //
 

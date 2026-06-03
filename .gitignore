@@ -13,3 +13,6 @@ CLAUDE.md
 *.swp
 *.swo
 *~
+
+# Local build outputs
+build/

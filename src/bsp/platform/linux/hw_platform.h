@@ -22,7 +22,7 @@ typedef enum
     HW_REGION_SUBTITLE_BRAM,
     HW_REGION_VIDEO_GPIO,
     HW_REGION_COUNT
-} HwPlatformRegion;
+} hw_platform_region_e;
 
 /**
  * Open /dev/mem and map each userspace-owned AXI-Lite region.
@@ -41,7 +41,7 @@ void hw_platform_cleanup(void);
  *
  * @return The virtual base, or 0 if the region is invalid or not mapped.
  */
-uintptr_t hw_platform_base(HwPlatformRegion region);
+uintptr_t hw_platform_base(hw_platform_region_e region);
 
 /**
  * Translate a physical AXI-Lite address into its mapped virtual address.
