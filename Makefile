@@ -36,9 +36,8 @@ VIDEO_PORT_SRCS := \
 	src/app/app.c \
 	src/svc/system/SystemAO.c \
 	src/svc/video_pipeline/VideoAO.c \
-	src/svc/video_pipeline/video_input.c \
+	src/svc/video_pipeline/video_io.c \
 	src/svc/video_pipeline/video_modes.c \
-	src/svc/video_pipeline/video_output.c \
 	src/svc/video_pipeline/video_pipeline.c
 
 VIDEO_PORT_OBJS := $(VIDEO_PORT_SRCS:%.c=$(VIDEO_PORT_BUILD_DIR)/%.o)

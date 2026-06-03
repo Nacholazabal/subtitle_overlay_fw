@@ -50,7 +50,6 @@ static bool on_component_init(video_ao_t* const me);
 static bool on_video_poll(video_ao_t* const me);
 static void enter_error(video_ao_t* const me, uint32_t code);
 
-// === Public variable definitions ================================================================================= //
 // === Private variable definitions ================================================================================ //
 
 static video_ao_t video_ao_inst;

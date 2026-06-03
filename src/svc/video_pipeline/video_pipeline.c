@@ -25,7 +25,7 @@ static void stop_transport(video_pipeline_t* const pipeline)
  * @return Poll result indicating streaming start or an error.
  */
 static video_pipeline_poll_result_e start_passthrough(video_pipeline_t* const pipeline,
-                                                 video_pipeline_mode_t const* const mode)
+                                                      video_pipeline_mode_t const* const mode)
 {
     int status;
 
@@ -133,6 +133,7 @@ video_pipeline_poll_result_e video_pipeline_poll(video_pipeline_t* const pipelin
 {
     video_vtc_timing_t timing;
     video_pipeline_mode_t const* mode;
+    video_pipeline_poll_result_e result;
     int status;
 
     if ((pipeline == NULL) || (pipeline->state == VIDEO_PIPELINE_UNINITIALIZED))
@@ -142,59 +143,72 @@ video_pipeline_poll_result_e video_pipeline_poll(video_pipeline_t* const pipelin
 
     if (!video_input_locked(&pipeline->input))
     {
-        if (pipeline->state != VIDEO_PIPELINE_WAITING_FOR_SIGNAL)
+        switch (pipeline->state)
         {
+        case VIDEO_PIPELINE_WAITING_FOR_SIGNAL:
+            result = VIDEO_PIPELINE_POLL_UNCHANGED;
+            break;
+
+        default:
             stop_transport(pipeline);
             pipeline->state = VIDEO_PIPELINE_WAITING_FOR_SIGNAL;
-            return VIDEO_PIPELINE_POLL_SIGNAL_LOST;
+            result = VIDEO_PIPELINE_POLL_SIGNAL_LOST;
+            break;
         }
 
-        return VIDEO_PIPELINE_POLL_UNCHANGED;
+        return result;
     }
 
-    if (pipeline->state == VIDEO_PIPELINE_STREAMING)
+    switch (pipeline->state)
     {
-        return VIDEO_PIPELINE_POLL_UNCHANGED;
-    }
+    case VIDEO_PIPELINE_STREAMING:
+    case VIDEO_PIPELINE_UNSUPPORTED_INPUT:
+        result = VIDEO_PIPELINE_POLL_UNCHANGED;
+        break;
 
-    if (pipeline->state == VIDEO_PIPELINE_UNSUPPORTED_INPUT)
-    {
-        return VIDEO_PIPELINE_POLL_UNCHANGED;
-    }
+    case VIDEO_PIPELINE_ACQUIRING_TIMING:
+        status = video_input_read_timing(&pipeline->input, &timing);
+        if (status == XST_NO_DATA)
+        {
+            result = VIDEO_PIPELINE_POLL_UNCHANGED;
+            break;
+        }
+        if (status != XST_SUCCESS)
+        {
+            pipeline->state = VIDEO_PIPELINE_ERROR;
+            result = VIDEO_PIPELINE_POLL_ERROR;
+            break;
+        }
 
-    if (pipeline->state != VIDEO_PIPELINE_ACQUIRING_TIMING)
-    {
+        pipeline->input_timing = timing;
+        mode = video_modes_find(timing.width, timing.height);
+        if (mode == NULL)
+        {
+            pipeline->state = VIDEO_PIPELINE_UNSUPPORTED_INPUT;
+            result = VIDEO_PIPELINE_POLL_UNSUPPORTED_INPUT;
+            break;
+        }
+
+        result = start_passthrough(pipeline, mode);
+        break;
+
+    case VIDEO_PIPELINE_WAITING_FOR_SIGNAL:
+    case VIDEO_PIPELINE_ERROR:
+    default:
         status = video_input_start_detector(&pipeline->input, now_ms);
         if (status != XST_SUCCESS)
         {
             pipeline->state = VIDEO_PIPELINE_ERROR;
-            return VIDEO_PIPELINE_POLL_ERROR;
+            result = VIDEO_PIPELINE_POLL_ERROR;
+            break;
         }
 
         pipeline->state = VIDEO_PIPELINE_ACQUIRING_TIMING;
-        return VIDEO_PIPELINE_POLL_SIGNAL_DETECTED;
+        result = VIDEO_PIPELINE_POLL_SIGNAL_DETECTED;
+        break;
     }
 
-    status = video_input_read_timing(&pipeline->input, &timing);
-    if (status == XST_NO_DATA)
-    {
-        return VIDEO_PIPELINE_POLL_UNCHANGED;
-    }
-    if (status != XST_SUCCESS)
-    {
-        pipeline->state = VIDEO_PIPELINE_ERROR;
-        return VIDEO_PIPELINE_POLL_ERROR;
-    }
-
-    pipeline->input_timing = timing;
-    mode = video_modes_find(timing.width, timing.height);
-    if (mode == NULL)
-    {
-        pipeline->state = VIDEO_PIPELINE_UNSUPPORTED_INPUT;
-        return VIDEO_PIPELINE_POLL_UNSUPPORTED_INPUT;
-    }
-
-    return start_passthrough(pipeline, mode);
+    return result;
 }
 
 /**

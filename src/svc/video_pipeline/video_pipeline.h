@@ -3,9 +3,8 @@
 #include <stdint.h>
 
 #include "video_dma.h"
-#include "video_input.h"
+#include "video_io.h"
 #include "video_modes.h"
-#include "video_output.h"
 
 #ifdef __cplusplus
 extern "C" {
