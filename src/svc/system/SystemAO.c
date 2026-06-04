@@ -26,7 +26,7 @@ typedef struct
 
     component_id_e last_ready_component;
     component_id_e error_source;
-    uint32_t error_code;
+    int32_t error_code;
 } system_ao_t;
 
 // === Private variable declarations =============================================================================== //
@@ -39,7 +39,7 @@ static QState system_ao_run(system_ao_t* const me, QEvt const* const e);
 static QState system_ao_error(system_ao_t* const me, QEvt const* const e);
 
 static void on_init(system_ao_t* const me);
-static bool on_component_ready(system_ao_t* const me, component_ready_evt_t const* const e);
+static int on_component_ready(system_ao_t* const me, component_ready_evt_t const* const e);
 static void on_run(system_ao_t* const me);
 static void on_error(system_ao_t* const me, app_error_evt_t const* const e);
 
@@ -63,15 +63,22 @@ static void on_init(system_ao_t* const me)
     QACTIVE_POST(AO_Video, &init_evt, &me->super);
 }
 
-static bool on_component_ready(system_ao_t* const me, component_ready_evt_t const* const e)
+static int on_component_ready(system_ao_t* const me, component_ready_evt_t const* const e)
 {
+    int status = -EAGAIN;
+
     me->last_ready_component = e->source;
 
     /*
      * Video is the only required startup component for this milestone. Extend
      * this switch into the sequential startup chain when the remaining AOs land.
      */
-    return (e->source == COMPONENT_VIDEO);
+    if (e->source == COMPONENT_VIDEO)
+    {
+        status = 0;
+    }
+
+    return status;
 }
 
 static void on_run(system_ao_t* const me)
@@ -128,7 +135,7 @@ static QState system_ao_init(system_ao_t* const me, QEvt const* const e)
         break;
 
     case COMPONENT_READY_SIG:
-        if (on_component_ready(me, Q_EVT_CAST(component_ready_evt_t)))
+        if (on_component_ready(me, Q_EVT_CAST(component_ready_evt_t)) == 0)
         {
             status = Q_TRAN(&system_ao_run);
         }
@@ -186,7 +193,7 @@ void system_ao_ctor(void)
     QActive_ctor(&me->super, Q_STATE_CAST(&system_ao_initial));
     me->last_ready_component = COMPONENT_NONE;
     me->error_source = COMPONENT_NONE;
-    me->error_code = 0U;
+    me->error_code = 0;
 }
 
 // === End of documentation ======================================================================================== //

@@ -22,9 +22,6 @@ Some fancy copyright message here (if needed)
 #define VIDEO_AO_POLL_TICKS     (10U)
 #define VIDEO_AO_POLL_PERIOD_MS (100U)
 
-#define VIDEO_AO_ERROR_INIT_FAILED  (1U)
-#define VIDEO_AO_ERROR_POLL_FAILED  (2U)
-
 // === Private data type declarations ============================================================================== //
 
 typedef struct
@@ -34,7 +31,7 @@ typedef struct
 
     video_pipeline_t pipeline;
     uint32_t now_ms;
-    bool running;
+    int running;
 } video_ao_t;
 
 // === Private variable declarations =============================================================================== //
@@ -45,10 +42,10 @@ static QState video_ao_active(video_ao_t* const me, QEvt const* const e);
 static QState video_ao_error(video_ao_t* const me, QEvt const* const e);
 
 static void post_ready(video_ao_t* const me);
-static void post_error(video_ao_t* const me, uint32_t code);
-static bool on_component_init(video_ao_t* const me);
-static bool on_video_poll(video_ao_t* const me);
-static void enter_error(video_ao_t* const me, uint32_t code);
+static void post_error(video_ao_t* const me, int32_t code);
+static int on_component_init(video_ao_t* const me);
+static int on_video_poll(video_ao_t* const me);
+static void enter_error(video_ao_t* const me, int32_t code);
 
 // === Private variable definitions ================================================================================ //
 
@@ -78,10 +75,10 @@ static void post_ready(video_ao_t* const me)
 /**
  * @brief Post a component-error report to the system active object.
  * @param me Video active object sending the report.
- * @param code Video AO error code to include in the report.
+ * @param code Negative errorno_e value to include in the report.
  * @return None.
  */
-static void post_error(video_ao_t* const me, uint32_t code)
+static void post_error(video_ao_t* const me, int32_t code)
 {
     app_error_evt_t* const error_evt = Q_NEW(app_error_evt_t, COMPONENT_ERROR_SIG);
 
@@ -95,37 +92,37 @@ static void post_error(video_ao_t* const me, uint32_t code)
 /**
  * @brief Initialize the video pipeline and start periodic polling on success.
  * @param me Video active object receiving COMPONENT_INIT_SIG.
- * @return true when initialization succeeded, false when initialization failed.
+ * @return 0 on success, or a negative errorno_e value on failure.
  */
-static bool on_component_init(video_ao_t* const me)
+static int on_component_init(video_ao_t* const me)
 {
-    bool success = false;
+    int status = -EIO;
 
     if (video_pipeline_init(&me->pipeline) == 0)
     {
         me->now_ms = 0U;
-        me->running = true;
+        me->running = 1;
         post_ready(me);
         QTimeEvt_armX(&me->poll_time_evt, VIDEO_AO_POLL_TICKS, VIDEO_AO_POLL_TICKS);
-        success = true;
+        status = 0;
     }
     else
     {
-        enter_error(me, VIDEO_AO_ERROR_INIT_FAILED);
+        enter_error(me, -EIO);
     }
 
-    return success;
+    return status;
 }
 
 /**
  * @brief Poll the video pipeline and report a component error if the pipeline fails.
  * @param me Video active object receiving VIDEO_POLL_SIG.
- * @return true when polling should continue, false when the pipeline reported an error.
+ * @return 0 when polling should continue, or a negative errorno_e value on failure.
  */
-static bool on_video_poll(video_ao_t* const me)
+static int on_video_poll(video_ao_t* const me)
 {
     video_pipeline_poll_result_e poll_result;
-    bool success = true;
+    int status = 0;
 
     if (me->running)
     {
@@ -133,27 +130,27 @@ static bool on_video_poll(video_ao_t* const me)
         poll_result = video_pipeline_poll(&me->pipeline, me->now_ms);
         if (poll_result == VIDEO_PIPELINE_POLL_ERROR)
         {
-            enter_error(me, VIDEO_AO_ERROR_POLL_FAILED);
-            success = false;
+            enter_error(me, -EIO);
+            status = -EIO;
         }
     }
 
-    return success;
+    return status;
 }
 
 /**
  * @brief Stop periodic polling, clean up the pipeline, and report a video AO error.
  * @param me Video active object entering its terminal error state.
- * @param code Video AO error code to post to system_ao_t.
+ * @param code Negative errorno_e value to post to system_ao_t.
  * @return None.
  */
-static void enter_error(video_ao_t* const me, uint32_t code)
+static void enter_error(video_ao_t* const me, int32_t code)
 {
     if (me->running)
     {
         (void)QTimeEvt_disarm(&me->poll_time_evt);
         video_pipeline_cleanup(&me->pipeline);
-        me->running = false;
+        me->running = 0;
     }
 
     post_error(me, code);
@@ -186,7 +183,7 @@ static QState video_ao_active(video_ao_t* const me, QEvt const* const e)
     switch (e->sig)
     {
     case COMPONENT_INIT_SIG:
-        if (on_component_init(me))
+        if (on_component_init(me) == 0)
         {
             status = Q_HANDLED();
         }
@@ -197,7 +194,7 @@ static QState video_ao_active(video_ao_t* const me, QEvt const* const e)
         break;
 
     case VIDEO_POLL_SIG:
-        if (on_video_poll(me))
+        if (on_video_poll(me) == 0)
         {
             status = Q_HANDLED();
         }
@@ -243,7 +240,7 @@ void video_ao_ctor(void)
     QActive_ctor(&me->super, Q_STATE_CAST(&video_ao_initial));
     QTimeEvt_ctorX(&me->poll_time_evt, &me->super, VIDEO_POLL_SIG, 0U);
     me->now_ms = 0U;
-    me->running = false;
+    me->running = 0;
 }
 
 // === End of documentation ======================================================================================== //

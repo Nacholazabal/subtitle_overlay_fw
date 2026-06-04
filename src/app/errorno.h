@@ -7,16 +7,13 @@ Some fancy copyright message here (if needed)
 #pragma once
 
 ///
-/// @file app.h
-/// @brief Shared QP/C application contracts
+/// @file errorno.h
+/// @brief Shared application error numbers
 ///
 
 // === Headers files inclusions ==================================================================================== //
 
 #include <stdint.h>
-
-#include "errorno.h"
-#include "qpc.h"
 
 // === C++ Guard =================================================================================================== //
 
@@ -27,50 +24,17 @@ extern "C" {
 // === Public macros definitions =================================================================================== //
 // === Public data type declarations =============================================================================== //
 
-/// @brief Components coordinated by system_ao_t during application startup.
+/// @brief Positive application error numbers; return or store failures as negative values.
 typedef enum
 {
-    COMPONENT_NONE = 0,
-    COMPONENT_VIDEO,
-    COMPONENT_USB_AUDIO,
-    COMPONENT_SUBTITLE_PIPELINE,
-    COMPONENT_BUTTONS,
-    COMPONENT_LED,
-} component_id_e;
-
-/// @brief Signals shared by the application active objects.
-typedef enum
-{
-    COMPONENT_INIT_SIG = Q_USER_SIG, ///< Directed command: initialize the receiving component.
-    COMPONENT_READY_SIG,             ///< Directed response: one component finished initialization.
-    COMPONENT_ERROR_SIG,             ///< Directed error report containing an app_error_evt_t payload.
-    VIDEO_POLL_SIG,                  ///< Private video AO timer signal used to poll the video pipeline.
-
-    MAX_SIG
-} app_signal_e;
-
-/// @brief Payload sent to system_ao_t after a component finishes initializing.
-typedef struct
-{
-    QEvt super;
-    component_id_e source;
-} component_ready_evt_t;
-
-/// @brief Dynamically allocated payload sent to system_ao_t when a component fails.
-typedef struct
-{
-    QEvt super;
-    component_id_e source;
-    int32_t code;
-} app_error_evt_t;
+    EIO = 5,     ///< Generic input/output failure.
+    EAGAIN = 11, ///< Operation is not complete yet; try again later.
+    EINVAL = 22, ///< Invalid argument or unexpected input.
+    ESTATE = 32, ///< Unexpected state for the requested operation.
+} errorno_e;
 
 // === Public variable declarations ================================================================================ //
-
-/// @brief Opaque handle used to post events to system_ao_t.
-extern QActive* const AO_System;
-
 // === Public function declarations ================================================================================ //
-
 // === End of documentation ======================================================================================== //
 
 #ifdef __cplusplus
