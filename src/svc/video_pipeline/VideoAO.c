@@ -38,7 +38,8 @@ typedef struct
 // === Private function declarations =============================================================================== //
 
 static QState video_ao_initial(video_ao_t* const me, void const* const par);
-static QState video_ao_active(video_ao_t* const me, QEvt const* const e);
+static QState video_ao_idle(video_ao_t* const me, QEvt const* const e);
+static QState video_ao_running(video_ao_t* const me, QEvt const* const e);
 static QState video_ao_error(video_ao_t* const me, QEvt const* const e);
 
 static void post_ready(video_ao_t* const me);
@@ -167,16 +168,16 @@ static QState video_ao_initial(video_ao_t* const me, void const* const par)
     Q_UNUSED_PAR(me);
     Q_UNUSED_PAR(par);
 
-    return Q_TRAN(&video_ao_active);
+    return Q_TRAN(&video_ao_idle);
 }
 
 /**
- * @brief Handle initialization and periodic polling while the video pipeline is active.
+ * @brief Handle component initialization before the video pipeline is running.
  * @param me Video active object instance.
  * @param e Event dispatched by QP/C.
  * @return QP/C state handler result.
  */
-static QState video_ao_active(video_ao_t* const me, QEvt const* const e)
+static QState video_ao_idle(video_ao_t* const me, QEvt const* const e)
 {
     QState status;
 
@@ -185,7 +186,7 @@ static QState video_ao_active(video_ao_t* const me, QEvt const* const e)
     case COMPONENT_INIT_SIG:
         if (on_component_init(me) == 0)
         {
-            status = Q_HANDLED();
+            status = Q_TRAN(&video_ao_running);
         }
         else
         {
@@ -193,6 +194,26 @@ static QState video_ao_active(video_ao_t* const me, QEvt const* const e)
         }
         break;
 
+    default:
+        status = Q_SUPER(&QHsm_top);
+        break;
+    }
+
+    return status;
+}
+
+/**
+ * @brief Handle periodic video pipeline polling after initialization succeeds.
+ * @param me Video active object instance.
+ * @param e Event dispatched by QP/C.
+ * @return QP/C state handler result.
+ */
+static QState video_ao_running(video_ao_t* const me, QEvt const* const e)
+{
+    QState status;
+
+    switch (e->sig)
+    {
     case VIDEO_POLL_SIG:
         if (on_video_poll(me) == 0)
         {
