@@ -47,6 +47,7 @@ VIDEO_PORT_SRCS := \
 	src/hal/subtitle_overlay/subtitle_overlay.c \
 	src/app/app.c \
 	src/svc/system/SystemAO.c \
+	src/svc/subtitle_pipeline/SubtitleAO.c \
 	src/svc/subtitle_pipeline/subtitle_pipeline.c \
 	src/svc/video_pipeline/VideoAO.c \
 	src/svc/video_pipeline/video_io.c \

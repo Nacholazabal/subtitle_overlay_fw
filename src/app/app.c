@@ -15,18 +15,21 @@ Some fancy copyright message here (if needed)
 #include <stdlib.h>
 
 #include "app.h"
+#include "SubtitleAO.h"
 #include "SystemAO.h"
 #include "VideoAO.h"
 
 // === Macros definitions ========================================================================================== //
 
-#define APP_TICKS_PER_SEC   (100U)
-#define APP_ERROR_POOL_LEN  (8U)
-#define APP_READY_POOL_LEN  (8U)
-#define SYSTEM_AO_QUEUE_LEN (8U)
-#define VIDEO_AO_QUEUE_LEN  (8U)
-#define SYSTEM_AO_PRIO      (1U)
-#define VIDEO_AO_PRIO       (2U)
+#define APP_TICKS_PER_SEC     (100U)
+#define APP_ERROR_POOL_LEN    (8U)
+#define APP_READY_POOL_LEN    (8U)
+#define SYSTEM_AO_QUEUE_LEN   (8U)
+#define SUBTITLE_AO_QUEUE_LEN (8U)
+#define VIDEO_AO_QUEUE_LEN    (8U)
+#define SYSTEM_AO_PRIO        (1U)
+#define VIDEO_AO_PRIO         (2U)
+#define SUBTITLE_AO_PRIO      (3U)
 
 // === Private data type declarations ============================================================================== //
 // === Private variable declarations =============================================================================== //
@@ -69,6 +72,16 @@ static void app_init(void)
                   0U,
                   (void*)0);
 
+    static QEvtPtr subtitle_queue_sto[SUBTITLE_AO_QUEUE_LEN];
+    subtitle_ao_ctor();
+    QActive_start(AO_Subtitle,
+                  SUBTITLE_AO_PRIO,
+                  subtitle_queue_sto,
+                  Q_DIM(subtitle_queue_sto),
+                  (void*)0,
+                  0U,
+                  (void*)0);
+
     static QEvtPtr system_queue_sto[SYSTEM_AO_QUEUE_LEN];
     system_ao_ctor();
     QActive_start(AO_System,
@@ -80,8 +93,8 @@ static void app_init(void)
                   (void*)0);
 
     /*
-     * TODO: Construct and start USBAudioAO, SubtitlePipelineAO, ButtonsAO, and
-     * LEDAO here as they are implemented.
+     * TODO: Construct and start USBAudioAO, ButtonsAO, and LEDAO here as they
+     * are implemented.
      */
 }
 

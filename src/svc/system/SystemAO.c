@@ -14,6 +14,7 @@ Some fancy copyright message here (if needed)
 #include "qpc.h"
 
 #include "app.h"
+#include "SubtitleAO.h"
 #include "SystemAO.h"
 #include "VideoAO.h"
 
@@ -38,6 +39,7 @@ static QState system_ao_init(system_ao_t* const me, QEvt const* const e);
 static QState system_ao_run(system_ao_t* const me, QEvt const* const e);
 static QState system_ao_error(system_ao_t* const me, QEvt const* const e);
 
+static void post_component_init(system_ao_t* const me, QActive* const target);
 static void on_init(system_ao_t* const me);
 static int on_component_ready(system_ao_t* const me, component_ready_evt_t const* const e);
 static void on_run(system_ao_t* const me);
@@ -54,13 +56,20 @@ QActive* const AO_System = Q_ACTIVE_UPCAST(&system_ao_inst);
 
 // === Private function implementation ============================================================================= //
 
-static void on_init(system_ao_t* const me)
+static void post_component_init(system_ao_t* const me, QActive* const target)
 {
     static QEvt const init_evt = QEVT_INITIALIZER(COMPONENT_INIT_SIG);
 
+    Q_UNUSED_PAR(me);
+
+    QACTIVE_POST(target, &init_evt, &me->super);
+}
+
+static void on_init(system_ao_t* const me)
+{
     me->last_ready_component = COMPONENT_NONE;
 
-    QACTIVE_POST(AO_Video, &init_evt, &me->super);
+    post_component_init(me, AO_Video);
 }
 
 static int on_component_ready(system_ao_t* const me, component_ready_evt_t const* const e)
@@ -69,13 +78,18 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
 
     me->last_ready_component = e->source;
 
-    /*
-     * Video is the only required startup component for this milestone. Extend
-     * this switch into the sequential startup chain when the remaining AOs land.
-     */
-    if (e->source == COMPONENT_VIDEO)
+    switch (e->source)
     {
+    case COMPONENT_VIDEO:
+        post_component_init(me, AO_Subtitle);
+        break;
+
+    case COMPONENT_SUBTITLE_PIPELINE:
         status = 0;
+        break;
+
+    default:
+        break;
     }
 
     return status;
