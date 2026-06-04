@@ -14,6 +14,7 @@ Some fancy copyright message here (if needed)
 #include "qpc.h"
 
 #include "app.h"
+#include "log.h"
 #include "video_pipeline.h"
 #include "VideoAO.h"
 
@@ -99,16 +100,20 @@ static int on_component_init(video_ao_t* const me)
 {
     int status = -EIO;
 
+    LOG_INFO("video: initializing pipeline");
+
     if (video_pipeline_init(&me->pipeline) == 0)
     {
         me->now_ms = 0U;
         me->running = 1;
         post_ready(me);
         QTimeEvt_armX(&me->poll_time_evt, VIDEO_AO_POLL_TICKS, VIDEO_AO_POLL_TICKS);
+        LOG_INFO("video: pipeline running, poll period=%u ms", (unsigned)VIDEO_AO_POLL_PERIOD_MS);
         status = 0;
     }
     else
     {
+        LOG_ERROR("video: pipeline init failed");
         enter_error(me, -EIO);
     }
 
@@ -131,6 +136,7 @@ static int on_video_poll(video_ao_t* const me)
         poll_result = video_pipeline_poll(&me->pipeline, me->now_ms);
         if (poll_result == VIDEO_PIPELINE_POLL_ERROR)
         {
+            LOG_ERROR("video: pipeline poll failed at %lu ms", (unsigned long)me->now_ms);
             enter_error(me, -EIO);
             status = -EIO;
         }
@@ -149,9 +155,14 @@ static void enter_error(video_ao_t* const me, int32_t code)
 {
     if (me->running)
     {
+        LOG_WARNING("video: stopping pipeline after error code %ld", (long)code);
         (void)QTimeEvt_disarm(&me->poll_time_evt);
         video_pipeline_cleanup(&me->pipeline);
         me->running = 0;
+    }
+    else
+    {
+        LOG_ERROR("video: entering error state before pipeline was running, code=%ld", (long)code);
     }
 
     post_error(me, code);

@@ -14,6 +14,7 @@ Some fancy copyright message here (if needed)
 #include "qpc.h"
 
 #include "app.h"
+#include "log.h"
 #include "SubtitleAO.h"
 #include "subtitle_pipeline.h"
 #include "video_pipeline.h"
@@ -115,9 +116,12 @@ static int draw_startup_marker(subtitle_ao_t* const me)
 {
     int status;
 
+    LOG_INFO("subtitle: drawing startup marker");
+
     status = subtitle_pipeline_clear(&me->pipeline);
     if (status != 0)
     {
+        LOG_ERROR("subtitle: clear failed, code=%ld", (long)status);
         return status;
     }
 
@@ -129,19 +133,26 @@ static int draw_startup_marker(subtitle_ao_t* const me)
                                             SUBTITLE_AO_DONE_HEIGHT);
     if (status != 0)
     {
+        LOG_ERROR("subtitle: bitmap write failed, code=%ld", (long)status);
         return status;
     }
 
     status = subtitle_pipeline_enable(&me->pipeline, 1);
     if (status != 0)
     {
+        LOG_ERROR("subtitle: enable failed, code=%ld", (long)status);
         return status;
     }
 
     status = subtitle_pipeline_commit(&me->pipeline);
     if (status == -EAGAIN)
     {
+        LOG_WARNING("subtitle: commit reported no pending changes");
         status = 0;
+    }
+    else if (status != 0)
+    {
+        LOG_ERROR("subtitle: commit failed, code=%ld", (long)status);
     }
 
     return status;
@@ -156,6 +167,8 @@ static int on_component_init(subtitle_ao_t* const me)
 {
     int status;
 
+    LOG_INFO("subtitle: initializing pipeline");
+
     status = subtitle_pipeline_init(&me->pipeline,
                                     SUBTITLE_AO_DISPLAY_WIDTH,
                                     SUBTITLE_AO_DISPLAY_HEIGHT);
@@ -168,9 +181,11 @@ static int on_component_init(subtitle_ao_t* const me)
     {
         me->running = 1;
         post_ready(me);
+        LOG_INFO("subtitle: pipeline ready");
     }
     else
     {
+        LOG_ERROR("subtitle: initialization failed, code=%ld", (long)status);
         enter_error(me, status);
     }
 
@@ -185,6 +200,7 @@ static int on_component_init(subtitle_ao_t* const me)
  */
 static void enter_error(subtitle_ao_t* const me, int32_t code)
 {
+    LOG_WARNING("subtitle: cleaning up after error code %ld", (long)code);
     subtitle_pipeline_cleanup(&me->pipeline);
     me->running = 0;
 

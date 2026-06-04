@@ -15,6 +15,7 @@ Some fancy copyright message here (if needed)
 #include <stdlib.h>
 
 #include "app.h"
+#include "log.h"
 #include "SubtitleAO.h"
 #include "SystemAO.h"
 #include "VideoAO.h"
@@ -37,6 +38,7 @@ Some fancy copyright message here (if needed)
 
 static void bsp_init_placeholder(void);
 static void app_init(void);
+static void app_log_output(log_level_e severity, const char* msg);
 
 // === Public variable definitions ================================================================================= //
 // === Private variable definitions ================================================================================ //
@@ -51,10 +53,18 @@ static void bsp_init_placeholder(void)
      */
 }
 
+static void app_log_output(log_level_e severity, const char* msg)
+{
+    fprintf(stdout, "[%s] %s\n", log_level_to_str(severity), msg);
+    fflush(stdout);
+}
+
 // === Public function implementation ============================================================================== //
 
 static void app_init(void)
 {
+    LOG_INFO("app: initializing QP/C event pools and active objects");
+
     /* QP/C event pools must be initialized in increasing event-size order. */
     static QF_MPOOL_EL(component_ready_evt_t) app_ready_pool_sto[APP_READY_POOL_LEN];
     QF_poolInit(app_ready_pool_sto, sizeof(app_ready_pool_sto), sizeof(app_ready_pool_sto[0]));
@@ -92,6 +102,8 @@ static void app_init(void)
                   0U,
                   (void*)0);
 
+    LOG_INFO("app: active objects started");
+
     /*
      * TODO: Construct and start USBAudioAO, ButtonsAO, and LEDAO here as they
      * are implemented.
@@ -100,6 +112,10 @@ static void app_init(void)
 
 int main(void)
 {
+    log_init();
+    (void)log_subscribe(app_log_output, LOG_LEVEL_INFO);
+    LOG_INFO("app: starting subtitle overlay firmware");
+
     QF_init();
     bsp_init_placeholder();
     app_init();

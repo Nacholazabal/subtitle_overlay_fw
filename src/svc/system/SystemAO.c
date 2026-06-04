@@ -14,6 +14,7 @@ Some fancy copyright message here (if needed)
 #include "qpc.h"
 
 #include "app.h"
+#include "log.h"
 #include "SubtitleAO.h"
 #include "SystemAO.h"
 #include "VideoAO.h"
@@ -44,6 +45,7 @@ static void on_init(system_ao_t* const me);
 static int on_component_ready(system_ao_t* const me, component_ready_evt_t const* const e);
 static void on_run(system_ao_t* const me);
 static void on_error(system_ao_t* const me, app_error_evt_t const* const e);
+static const char* component_id_to_str(component_id_e component);
 
 // === Public variable definitions ================================================================================= //
 // === Private variable definitions ================================================================================ //
@@ -55,6 +57,31 @@ static system_ao_t system_ao_inst;
 QActive* const AO_System = Q_ACTIVE_UPCAST(&system_ao_inst);
 
 // === Private function implementation ============================================================================= //
+
+static const char* component_id_to_str(component_id_e component)
+{
+    switch (component)
+    {
+    case COMPONENT_VIDEO:
+        return "video";
+
+    case COMPONENT_USB_AUDIO:
+        return "usb-audio";
+
+    case COMPONENT_SUBTITLE_PIPELINE:
+        return "subtitle";
+
+    case COMPONENT_BUTTONS:
+        return "buttons";
+
+    case COMPONENT_LED:
+        return "led";
+
+    case COMPONENT_NONE:
+    default:
+        return "unknown";
+    }
+}
 
 static void post_component_init(system_ao_t* const me, QActive* const target)
 {
@@ -69,6 +96,7 @@ static void on_init(system_ao_t* const me)
 {
     me->last_ready_component = COMPONENT_NONE;
 
+    LOG_INFO("system: init sequence started");
     post_component_init(me, AO_Video);
 }
 
@@ -77,10 +105,12 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
     int status = -EAGAIN;
 
     me->last_ready_component = e->source;
+    LOG_INFO("system: component ready: %s", component_id_to_str(e->source));
 
     switch (e->source)
     {
     case COMPONENT_VIDEO:
+        LOG_INFO("system: requesting subtitle init");
         post_component_init(me, AO_Subtitle);
         break;
 
@@ -89,6 +119,7 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
         break;
 
     default:
+        LOG_WARNING("system: ignoring unexpected ready source: %d", (int)e->source);
         break;
     }
 
@@ -99,6 +130,8 @@ static void on_run(system_ao_t* const me)
 {
     Q_UNUSED_PAR(me);
 
+    LOG_INFO("system: all required components are running");
+
     // TODO: Notify interested AOs that normal application operation can begin.
 }
 
@@ -106,6 +139,8 @@ static void on_error(system_ao_t* const me, app_error_evt_t const* const e)
 {
     me->error_source = e->source;
     me->error_code = e->code;
+
+    LOG_ERROR("system: component error from %s: %ld", component_id_to_str(e->source), (long)e->code);
 
     // TODO: Report the fault through logging and request an LED error indication.
 }
@@ -188,14 +223,27 @@ static QState system_ao_run(system_ao_t* const me, QEvt const* const e)
 
 static QState system_ao_error(system_ao_t* const me, QEvt const* const e)
 {
-    Q_UNUSED_PAR(me);
-    Q_UNUSED_PAR(e);
+    QState status;
 
-    /*
-     * This is intentionally a terminal state for the first milestone. Add a
-     * reset or recovery signal later when the desired recovery policy exists.
-     */
-    return Q_SUPER(&QHsm_top);
+    switch (e->sig)
+    {
+    case Q_ENTRY_SIG:
+        LOG_ERROR("system: terminal error state source=%s code=%ld",
+                  component_id_to_str(me->error_source),
+                  (long)me->error_code);
+        status = Q_HANDLED();
+        break;
+
+    default:
+        /*
+         * This is intentionally a terminal state for the first milestone. Add a
+         * reset or recovery signal later when the desired recovery policy exists.
+         */
+        status = Q_SUPER(&QHsm_top);
+        break;
+    }
+
+    return status;
 }
 
 // === Public function implementation ============================================================================== //
