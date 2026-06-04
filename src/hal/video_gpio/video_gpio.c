@@ -66,14 +66,14 @@ int video_gpio_init(video_gpio_t* const gpio)
  * @param enabled Nonzero asserts HPD, zero deasserts it.
  * @return None.
  */
-void video_gpio_set_hpd(video_gpio_t* const gpio, int enabled)
+void video_gpio_set_hpd(video_gpio_t* const gpio, uint8_t enabled)
 {
     if ((gpio == NULL) || (gpio->base == (uintptr_t)0))
     {
         return;
     }
 
-    Xil_Out32(gpio->base + XGPIO_DATA_OFFSET, enabled ? HPD_MASK : 0U);
+    Xil_Out32(gpio->base + XGPIO_DATA_OFFSET, (enabled != 0U) ? HPD_MASK : 0U);
 }
 
 /**
@@ -81,14 +81,14 @@ void video_gpio_set_hpd(video_gpio_t* const gpio, int enabled)
  * @param gpio Initialized GPIO adapter.
  * @return Nonzero when the input clock is locked, zero otherwise.
  */
-int video_gpio_is_locked(video_gpio_t const* const gpio)
+uint8_t video_gpio_is_locked(video_gpio_t const* const gpio)
 {
     if ((gpio == NULL) || (gpio->base == (uintptr_t)0))
     {
-        return 0;
+        return 0U;
     }
 
-    return (Xil_In32(gpio->base + XGPIO_DATA2_OFFSET) & LOCKED_MASK) != 0U;
+    return ((Xil_In32(gpio->base + XGPIO_DATA2_OFFSET) & LOCKED_MASK) != 0U) ? 1U : 0U;
 }
 
 // === End of documentation ======================================================================================== //

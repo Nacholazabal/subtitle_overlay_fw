@@ -32,7 +32,7 @@ typedef struct
 
     video_pipeline_t pipeline;
     uint32_t now_ms;
-    int running;
+    uint8_t running;
 } video_ao_t;
 
 // === Private variable declarations =============================================================================== //
@@ -105,7 +105,7 @@ static int on_component_init(video_ao_t* const me)
     if (video_pipeline_init(&me->pipeline) == 0)
     {
         me->now_ms = 0U;
-        me->running = 1;
+        me->running = 1U;
         post_ready(me);
         QTimeEvt_armX(&me->poll_time_evt, VIDEO_AO_POLL_TICKS, VIDEO_AO_POLL_TICKS);
         LOG_INFO("video: pipeline running, poll period=%u ms", (unsigned)VIDEO_AO_POLL_PERIOD_MS);
@@ -158,7 +158,7 @@ static void enter_error(video_ao_t* const me, int32_t code)
         LOG_WARNING("video: stopping pipeline after error code %ld", (long)code);
         (void)QTimeEvt_disarm(&me->poll_time_evt);
         video_pipeline_cleanup(&me->pipeline);
-        me->running = 0;
+        me->running = 0U;
     }
     else
     {
@@ -272,7 +272,7 @@ void video_ao_ctor(void)
     QActive_ctor(&me->super, Q_STATE_CAST(&video_ao_initial));
     QTimeEvt_ctorX(&me->poll_time_evt, &me->super, VIDEO_POLL_SIG, 0U);
     me->now_ms = 0U;
-    me->running = 0;
+    me->running = 0U;
 }
 
 // === End of documentation ======================================================================================== //

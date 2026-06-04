@@ -38,8 +38,8 @@ typedef struct
     subtitle_overlay_config_t config;
     uint32_t display_width;
     uint32_t display_height;
-    int initialized;
-    int enabled;
+    uint8_t initialized;
+    uint8_t enabled;
 } subtitle_pipeline_t;
 
 // === Public variable declarations ================================================================================ //
@@ -52,12 +52,12 @@ void subtitle_pipeline_cleanup(subtitle_pipeline_t* pipeline);
 int subtitle_pipeline_clear(subtitle_pipeline_t* pipeline);
 int subtitle_pipeline_write_bitmap(subtitle_pipeline_t* pipeline,
                                    uint8_t const* src,
-                                   int x,
-                                   int y,
-                                   int width,
-                                   int height);
+                                   int32_t x,
+                                   int32_t y,
+                                   uint32_t width,
+                                   uint32_t height);
 int subtitle_pipeline_commit(subtitle_pipeline_t* pipeline);
-int subtitle_pipeline_enable(subtitle_pipeline_t* pipeline, int enabled);
+int subtitle_pipeline_enable(subtitle_pipeline_t* pipeline, uint8_t enabled);
 
 // === End of documentation ======================================================================================== //
 

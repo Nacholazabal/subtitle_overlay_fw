@@ -67,11 +67,11 @@ int video_input_init(video_input_t* const input, video_dma_t* const dma, uint32_
  * @param input Initialized input helper.
  * @return Nonzero when locked, zero otherwise.
  */
-int video_input_locked(video_input_t const* const input)
+uint8_t video_input_locked(video_input_t const* const input)
 {
     if (input == NULL)
     {
-        return 0;
+        return 0U;
     }
 
     return video_gpio_is_locked(&input->gpio);
@@ -100,7 +100,7 @@ int video_input_start_detector(video_input_t* const input, uint32_t now_ms)
     status = video_vtc_start_detector(&input->vtc);
     if (status == XST_SUCCESS)
     {
-        input->detector_started = 1;
+        input->detector_started = 1U;
         input->detector_started_ms = now_ms;
     }
 
@@ -172,7 +172,7 @@ int video_input_start_capture(video_input_t* const input,
     }
 
     input->frame_index = frame_index;
-    input->running = 1;
+    input->running = 1U;
 
     return XST_SUCCESS;
 }
@@ -194,8 +194,8 @@ int video_input_stop(video_input_t* const input)
         (void)video_dma_stop(input->dma, VIDEO_DMA_CHANNEL_S2MM);
     }
 
-    input->running = 0;
-    input->detector_started = 0;
+    input->running = 0U;
+    input->detector_started = 0U;
     memset(&input->timing, 0, sizeof(input->timing));
 
     return XST_SUCCESS;
@@ -298,7 +298,7 @@ int video_output_start(video_output_t* const output,
 
     output->mode = mode;
     output->frame_index = frame_index;
-    output->running = 1;
+    output->running = 1U;
 
     return XST_SUCCESS;
 }
@@ -321,7 +321,7 @@ int video_output_stop(video_output_t* const output)
         (void)video_dma_stop(output->dma, VIDEO_DMA_CHANNEL_MM2S);
     }
 
-    output->running = 0;
+    output->running = 0U;
     output->mode = NULL;
     return XST_SUCCESS;
 }

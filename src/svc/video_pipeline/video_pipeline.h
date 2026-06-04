@@ -65,7 +65,7 @@ typedef struct
     video_vtc_timing_t input_timing;
     video_pipeline_state_e state;
     uint32_t active_frame;
-    int platform_ready;
+    uint8_t platform_ready;
 } video_pipeline_t;
 
 // === Public variable declarations ================================================================================ //

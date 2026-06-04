@@ -25,7 +25,7 @@ Some fancy copyright message here (if needed)
 
 static int validate_bram(subtitle_bram_t const* bram);
 static volatile uint32_t* bram_words(subtitle_bram_t const* bram);
-static int pixel_is_in_range(int x, int y);
+static uint8_t pixel_is_in_range(int32_t x, int32_t y);
 
 // === Public variable definitions ================================================================================= //
 // === Private variable definitions ================================================================================ //
@@ -67,11 +67,11 @@ static volatile uint32_t* bram_words(subtitle_bram_t const* const bram)
  * @param y Pixel y coordinate.
  * @return Nonzero when in range, zero otherwise.
  */
-static int pixel_is_in_range(int x, int y)
+static uint8_t pixel_is_in_range(int32_t x, int32_t y)
 {
     return ((x >= 0) && (y >= 0) &&
             ((uint32_t)x < SUBTITLE_BRAM_MASK_WIDTH) &&
-            ((uint32_t)y < SUBTITLE_BRAM_MASK_HEIGHT));
+            ((uint32_t)y < SUBTITLE_BRAM_MASK_HEIGHT)) ? 1U : 0U;
 }
 
 // === Public function implementation ============================================================================== //
@@ -126,7 +126,7 @@ int subtitle_bram_clear(subtitle_bram_t* const bram)
  * @param y Pixel y coordinate.
  * @return 0 on success or clipped out-of-range pixel, or a negative errorno_e value on failure.
  */
-int subtitle_bram_set_pixel(subtitle_bram_t* const bram, int x, int y)
+int subtitle_bram_set_pixel(subtitle_bram_t* const bram, int32_t x, int32_t y)
 {
     volatile uint32_t* words;
     uint32_t word_index;
@@ -158,7 +158,7 @@ int subtitle_bram_set_pixel(subtitle_bram_t* const bram, int x, int y)
  * @param y Pixel y coordinate.
  * @return 0 on success or clipped out-of-range pixel, or a negative errorno_e value on failure.
  */
-int subtitle_bram_clear_pixel(subtitle_bram_t* const bram, int x, int y)
+int subtitle_bram_clear_pixel(subtitle_bram_t* const bram, int32_t x, int32_t y)
 {
     volatile uint32_t* words;
     uint32_t word_index;
@@ -195,15 +195,15 @@ int subtitle_bram_clear_pixel(subtitle_bram_t* const bram, int x, int y)
  */
 int subtitle_bram_write_bitmap(subtitle_bram_t* const bram,
                                uint8_t const* const src,
-                               int x,
-                               int y,
-                               int width,
-                               int height)
+                               int32_t x,
+                               int32_t y,
+                               uint32_t width,
+                               uint32_t height)
 {
     volatile uint32_t* words;
-    int row;
-    int col;
-    int src_stride;
+    uint32_t row;
+    uint32_t col;
+    uint32_t src_stride;
     int status = validate_bram(bram);
 
     if (status != 0)
@@ -211,30 +211,30 @@ int subtitle_bram_write_bitmap(subtitle_bram_t* const bram,
         return status;
     }
 
-    if ((src == NULL) || (width <= 0) || (height <= 0))
+    if ((src == NULL) || (width == 0U) || (height == 0U))
     {
         return -EINVAL;
     }
 
     words = bram_words(bram);
-    src_stride = (width + 7) / 8;
+    src_stride = (width + 7U) / 8U;
 
-    for (row = 0; row < height; row++)
+    for (row = 0U; row < height; row++)
     {
-        int const dst_y = y + row;
+        int32_t const dst_y = y + (int32_t)row;
 
-        if ((dst_y < 0) || (dst_y >= (int)SUBTITLE_BRAM_MASK_HEIGHT))
+        if ((dst_y < 0) || ((uint32_t)dst_y >= SUBTITLE_BRAM_MASK_HEIGHT))
         {
             continue;
         }
 
-        for (col = 0; col < width; col++)
+        for (col = 0U; col < width; col++)
         {
-            int const dst_x = x + col;
-            uint8_t const src_byte = src[(row * src_stride) + (col / 8)];
-            uint32_t const src_bit = (uint32_t)((src_byte >> (7 - (col % 8))) & 1U);
+            int32_t const dst_x = x + (int32_t)col;
+            uint8_t const src_byte = src[(row * src_stride) + (col / 8U)];
+            uint32_t const src_bit = (uint32_t)((src_byte >> (7U - (col % 8U))) & 1U);
 
-            if ((dst_x < 0) || (dst_x >= (int)SUBTITLE_BRAM_MASK_WIDTH))
+            if ((dst_x < 0) || ((uint32_t)dst_x >= SUBTITLE_BRAM_MASK_WIDTH))
             {
                 continue;
             }

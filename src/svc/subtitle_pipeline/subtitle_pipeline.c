@@ -38,7 +38,7 @@ Some fancy copyright message here (if needed)
 // === Private function declarations =============================================================================== //
 
 static subtitle_overlay_config_t default_config(uint32_t display_width, uint32_t display_height);
-static int pipeline_is_initialized(subtitle_pipeline_t const* pipeline);
+static uint8_t pipeline_is_initialized(subtitle_pipeline_t const* pipeline);
 
 // === Public variable definitions ================================================================================= //
 // === Private variable definitions ================================================================================ //
@@ -84,9 +84,9 @@ static subtitle_overlay_config_t default_config(uint32_t display_width, uint32_t
  * @param pipeline Pipeline instance to validate.
  * @return Nonzero when initialized, zero otherwise.
  */
-static int pipeline_is_initialized(subtitle_pipeline_t const* const pipeline)
+static uint8_t pipeline_is_initialized(subtitle_pipeline_t const* const pipeline)
 {
-    return ((pipeline != NULL) && (pipeline->initialized != 0));
+    return ((pipeline != NULL) && (pipeline->initialized != 0U)) ? 1U : 0U;
 }
 
 // === Public function implementation ============================================================================== //
@@ -144,8 +144,8 @@ int subtitle_pipeline_init(subtitle_pipeline_t* const pipeline,
         return status;
     }
 
-    pipeline->initialized = 1;
-    pipeline->enabled = 0;
+    pipeline->initialized = 1U;
+    pipeline->enabled = 0U;
     return 0;
 }
 
@@ -196,10 +196,10 @@ int subtitle_pipeline_clear(subtitle_pipeline_t* const pipeline)
  */
 int subtitle_pipeline_write_bitmap(subtitle_pipeline_t* const pipeline,
                                    uint8_t const* const src,
-                                   int x,
-                                   int y,
-                                   int width,
-                                   int height)
+                                   int32_t x,
+                                   int32_t y,
+                                   uint32_t width,
+                                   uint32_t height)
 {
     if (!pipeline_is_initialized(pipeline))
     {
@@ -239,7 +239,7 @@ int subtitle_pipeline_commit(subtitle_pipeline_t* const pipeline)
  * @param enabled Nonzero enables overlay, zero disables overlay passthrough.
  * @return 0 on success, or a negative errorno_e value on failure.
  */
-int subtitle_pipeline_enable(subtitle_pipeline_t* const pipeline, int enabled)
+int subtitle_pipeline_enable(subtitle_pipeline_t* const pipeline, uint8_t enabled)
 {
     int status;
 
@@ -251,7 +251,7 @@ int subtitle_pipeline_enable(subtitle_pipeline_t* const pipeline, int enabled)
     status = subtitle_overlay_enable(&pipeline->overlay, enabled);
     if (status == 0)
     {
-        pipeline->enabled = (enabled != 0) ? 1 : 0;
+        pipeline->enabled = (enabled != 0U) ? 1U : 0U;
     }
 
     return status;

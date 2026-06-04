@@ -37,7 +37,7 @@ typedef struct
     QActive super;
 
     subtitle_pipeline_t pipeline;
-    int running;
+    uint8_t running;
 } subtitle_ao_t;
 
 // === Private variable declarations =============================================================================== //
@@ -137,7 +137,7 @@ static int draw_startup_marker(subtitle_ao_t* const me)
         return status;
     }
 
-    status = subtitle_pipeline_enable(&me->pipeline, 1);
+    status = subtitle_pipeline_enable(&me->pipeline, 1U);
     if (status != 0)
     {
         LOG_ERROR("subtitle: enable failed, code=%ld", (long)status);
@@ -179,7 +179,7 @@ static int on_component_init(subtitle_ao_t* const me)
 
     if (status == 0)
     {
-        me->running = 1;
+        me->running = 1U;
         post_ready(me);
         LOG_INFO("subtitle: pipeline ready");
     }
@@ -202,7 +202,7 @@ static void enter_error(subtitle_ao_t* const me, int32_t code)
 {
     LOG_WARNING("subtitle: cleaning up after error code %ld", (long)code);
     subtitle_pipeline_cleanup(&me->pipeline);
-    me->running = 0;
+    me->running = 0U;
 
     post_error(me, code);
 }
@@ -295,7 +295,7 @@ void subtitle_ao_ctor(void)
     subtitle_ao_t* const me = &subtitle_ao_inst;
 
     QActive_ctor(&me->super, Q_STATE_CAST(&subtitle_ao_initial));
-    me->running = 0;
+    me->running = 0U;
 }
 
 // === End of documentation ======================================================================================== //

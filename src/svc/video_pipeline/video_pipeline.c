@@ -100,7 +100,7 @@ int video_pipeline_init(video_pipeline_t* const pipeline)
         pipeline->state = VIDEO_PIPELINE_ERROR;
         return XST_FAILURE;
     }
-    pipeline->platform_ready = 1;
+    pipeline->platform_ready = 1U;
 
     status = video_dma_init(&pipeline->dma, pipeline->frames, VIDEO_PIPELINE_FRAME_COUNT);
     if (status != XST_SUCCESS)
@@ -163,7 +163,7 @@ video_pipeline_poll_result_e video_pipeline_poll(video_pipeline_t* const pipelin
     video_pipeline_mode_t const* mode;
     video_pipeline_poll_result_e result;
     int status = 0;
-    int locked;
+    uint8_t locked;
 
     if ((pipeline == NULL) || (pipeline->state == VIDEO_PIPELINE_UNINITIALIZED))
     {

@@ -39,8 +39,8 @@ typedef struct
     uint32_t stride;
     uint32_t frame_index;
     uint32_t detector_started_ms;
-    int detector_started;
-    int running;
+    uint8_t detector_started;
+    uint8_t running;
 } video_input_t;
 
 typedef struct
@@ -51,14 +51,14 @@ typedef struct
     video_pipeline_mode_t const* mode;
     uint32_t stride;
     uint32_t frame_index;
-    int running;
+    uint8_t running;
 } video_output_t;
 
 // === Public variable declarations ================================================================================ //
 // === Public function declarations ================================================================================ //
 
 int video_input_init(video_input_t* input, video_dma_t* dma, uint32_t stride);
-int video_input_locked(video_input_t const* input);
+uint8_t video_input_locked(video_input_t const* input);
 int video_input_start_detector(video_input_t* input, uint32_t now_ms);
 int video_input_read_timing(video_input_t* input, video_vtc_timing_t* timing);
 int video_input_start_capture(video_input_t* input, video_pipeline_mode_t const* mode, uint32_t frame_index);
