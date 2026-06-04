@@ -17,12 +17,8 @@ Some fancy copyright message here (if needed)
 #include "log.h"
 #include "SubtitleAO.h"
 #include "subtitle_pipeline.h"
-#include "video_pipeline.h"
 
 // === Macros definitions ========================================================================================== //
-
-#define SUBTITLE_AO_DISPLAY_WIDTH  VIDEO_PIPELINE_MAX_WIDTH
-#define SUBTITLE_AO_DISPLAY_HEIGHT VIDEO_PIPELINE_MAX_HEIGHT
 
 #define SUBTITLE_AO_DONE_WIDTH         (32)
 #define SUBTITLE_AO_DONE_HEIGHT        (8)
@@ -50,7 +46,7 @@ static QState subtitle_ao_error(subtitle_ao_t* const me, QEvt const* const e);
 
 static void post_ready(subtitle_ao_t* const me);
 static void post_error(subtitle_ao_t* const me, int32_t code);
-static int on_component_init(subtitle_ao_t* const me);
+static int on_component_init(subtitle_ao_t* const me, component_init_evt_t const* const e);
 static int draw_startup_marker(subtitle_ao_t* const me);
 static void enter_error(subtitle_ao_t* const me, int32_t code);
 
@@ -84,9 +80,9 @@ static void post_ready(subtitle_ao_t* const me)
 {
     component_ready_evt_t* const ready_evt = Q_NEW(component_ready_evt_t, COMPONENT_READY_SIG);
 
-    Q_UNUSED_PAR(me);
-
     ready_evt->source = COMPONENT_SUBTITLE_PIPELINE;
+    ready_evt->width = me->pipeline.display_width;
+    ready_evt->height = me->pipeline.display_height;
     QACTIVE_POST(AO_System, &ready_evt->super, &me->super);
 }
 
@@ -144,37 +140,34 @@ static int draw_startup_marker(subtitle_ao_t* const me)
         return status;
     }
 
-    status = subtitle_pipeline_commit(&me->pipeline);
-    if (status == -EAGAIN)
-    {
-        LOG_WARNING("subtitle: commit reported no pending changes");
-        status = 0;
-    }
-    else if (status != 0)
-    {
-        LOG_ERROR("subtitle: commit failed, code=%ld", (long)status);
-    }
-
-    return status;
+    return 0;
 }
 
 /**
  * @brief Initialize the subtitle pipeline and display a temporary DONE marker.
  * @param me Subtitle active object receiving COMPONENT_INIT_SIG.
+ * @param e Initialization event carrying the active video dimensions.
  * @return 0 on success, or a negative errorno_e value on failure.
  */
-static int on_component_init(subtitle_ao_t* const me)
+static int on_component_init(subtitle_ao_t* const me, component_init_evt_t const* const e)
 {
     int status;
 
-    LOG_INFO("subtitle: initializing pipeline");
-
-    status = subtitle_pipeline_init(&me->pipeline,
-                                    SUBTITLE_AO_DISPLAY_WIDTH,
-                                    SUBTITLE_AO_DISPLAY_HEIGHT);
-    if (status == 0)
+    if ((e == NULL) || (e->width == 0U) || (e->height == 0U))
     {
-        status = draw_startup_marker(me);
+        status = -EINVAL;
+    }
+    else
+    {
+        LOG_INFO("subtitle: initializing pipeline for %lux%lu",
+                 (unsigned long)e->width,
+                 (unsigned long)e->height);
+
+        status = subtitle_pipeline_init(&me->pipeline, e->width, e->height);
+        if (status == 0)
+        {
+            status = draw_startup_marker(me);
+        }
     }
 
     if (status == 0)
@@ -234,7 +227,7 @@ static QState subtitle_ao_idle(subtitle_ao_t* const me, QEvt const* const e)
     switch (e->sig)
     {
     case COMPONENT_INIT_SIG:
-        if (on_component_init(me) == 0)
+        if (on_component_init(me, Q_EVT_CAST(component_init_evt_t)) == 0)
         {
             status = Q_TRAN(&subtitle_ao_ready);
         }
