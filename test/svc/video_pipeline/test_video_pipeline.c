@@ -63,7 +63,7 @@ void test_video_pipeline_init_success_sets_waiting_for_signal(void)
     TEST_ASSERT_EQUAL(VIDEO_PIPELINE_WAITING_FOR_SIGNAL, video_pipeline_get_state(&pipeline));
     TEST_ASSERT_NULL(video_pipeline_get_active_mode(&pipeline));
     TEST_ASSERT_EQUAL_UINT32(0U, pipeline.active_frame);
-    TEST_ASSERT_EQUAL_INT(1, pipeline.platform_ready);
+    TEST_ASSERT_EQUAL_UINT8(1U, pipeline.platform_ready);
 }
 
 void test_video_pipeline_init_reports_platform_failure(void)
@@ -114,7 +114,7 @@ void test_video_pipeline_cleanup_ignores_null_pipeline(void)
 
 void test_video_pipeline_cleanup_stops_transport_dma_and_platform(void)
 {
-    pipeline.platform_ready = 1;
+    pipeline.platform_ready = 1U;
     pipeline.active_mode = &mode_720p;
     pipeline.input_timing.width = 1280U;
     pipeline.state = VIDEO_PIPELINE_STREAMING;
@@ -127,7 +127,7 @@ void test_video_pipeline_cleanup_stops_transport_dma_and_platform(void)
 
     TEST_ASSERT_EQUAL(VIDEO_PIPELINE_UNINITIALIZED, video_pipeline_get_state(&pipeline));
     TEST_ASSERT_NULL(video_pipeline_get_active_mode(&pipeline));
-    TEST_ASSERT_EQUAL_INT(0, pipeline.platform_ready);
+    TEST_ASSERT_EQUAL_UINT8(0U, pipeline.platform_ready);
 }
 
 void test_video_pipeline_poll_rejects_null_or_uninitialized_pipeline(void)
@@ -141,7 +141,7 @@ void test_video_pipeline_poll_rejects_null_or_uninitialized_pipeline(void)
 void test_video_pipeline_poll_keeps_waiting_when_input_is_unlocked(void)
 {
     pipeline.state = VIDEO_PIPELINE_WAITING_FOR_SIGNAL;
-    video_input_locked_ExpectAnyArgsAndReturn(0);
+    video_input_locked_ExpectAnyArgsAndReturn(0U);
 
     TEST_ASSERT_EQUAL(VIDEO_PIPELINE_POLL_UNCHANGED, video_pipeline_poll(&pipeline, 100U));
     TEST_ASSERT_EQUAL(VIDEO_PIPELINE_WAITING_FOR_SIGNAL, video_pipeline_get_state(&pipeline));
@@ -153,7 +153,7 @@ void test_video_pipeline_poll_reports_signal_lost_and_stops_transport(void)
     pipeline.active_mode = &mode_720p;
     pipeline.input_timing.width = 1280U;
 
-    video_input_locked_ExpectAnyArgsAndReturn(0);
+    video_input_locked_ExpectAnyArgsAndReturn(0U);
     expect_transport_stop();
 
     TEST_ASSERT_EQUAL(VIDEO_PIPELINE_POLL_SIGNAL_LOST, video_pipeline_poll(&pipeline, 100U));
@@ -166,7 +166,7 @@ void test_video_pipeline_poll_starts_detector_when_signal_is_detected(void)
 {
     pipeline.state = VIDEO_PIPELINE_WAITING_FOR_SIGNAL;
 
-    video_input_locked_ExpectAnyArgsAndReturn(1);
+    video_input_locked_ExpectAnyArgsAndReturn(1U);
     video_input_start_detector_ExpectAnyArgsAndReturn(XST_SUCCESS);
 
     TEST_ASSERT_EQUAL(VIDEO_PIPELINE_POLL_SIGNAL_DETECTED, video_pipeline_poll(&pipeline, 250U));
@@ -177,7 +177,7 @@ void test_video_pipeline_poll_enters_error_when_detector_start_fails(void)
 {
     pipeline.state = VIDEO_PIPELINE_WAITING_FOR_SIGNAL;
 
-    video_input_locked_ExpectAnyArgsAndReturn(1);
+    video_input_locked_ExpectAnyArgsAndReturn(1U);
     video_input_start_detector_ExpectAnyArgsAndReturn(XST_FAILURE);
 
     TEST_ASSERT_EQUAL(VIDEO_PIPELINE_POLL_ERROR, video_pipeline_poll(&pipeline, 250U));
@@ -188,7 +188,7 @@ void test_video_pipeline_poll_waits_when_timing_is_not_ready(void)
 {
     pipeline.state = VIDEO_PIPELINE_ACQUIRING_TIMING;
 
-    video_input_locked_ExpectAnyArgsAndReturn(1);
+    video_input_locked_ExpectAnyArgsAndReturn(1U);
     video_input_read_timing_ExpectAnyArgsAndReturn(XST_NO_DATA);
 
     TEST_ASSERT_EQUAL(VIDEO_PIPELINE_POLL_UNCHANGED, video_pipeline_poll(&pipeline, 300U));
@@ -199,7 +199,7 @@ void test_video_pipeline_poll_enters_error_when_read_timing_fails(void)
 {
     pipeline.state = VIDEO_PIPELINE_ACQUIRING_TIMING;
 
-    video_input_locked_ExpectAnyArgsAndReturn(1);
+    video_input_locked_ExpectAnyArgsAndReturn(1U);
     video_input_read_timing_ExpectAnyArgsAndReturn(XST_FAILURE);
 
     TEST_ASSERT_EQUAL(VIDEO_PIPELINE_POLL_ERROR, video_pipeline_poll(&pipeline, 300U));
@@ -214,7 +214,7 @@ void test_video_pipeline_poll_reports_unsupported_timing(void)
     timing.height = 768U;
     pipeline.state = VIDEO_PIPELINE_ACQUIRING_TIMING;
 
-    video_input_locked_ExpectAnyArgsAndReturn(1);
+    video_input_locked_ExpectAnyArgsAndReturn(1U);
     video_input_read_timing_ExpectAnyArgsAndReturn(XST_SUCCESS);
     video_input_read_timing_ReturnThruPtr_timing(&timing);
     video_modes_find_ExpectAndReturn(timing.width, timing.height, NULL);
@@ -234,7 +234,7 @@ void test_video_pipeline_poll_starts_passthrough_for_supported_timing(void)
     pipeline.state = VIDEO_PIPELINE_ACQUIRING_TIMING;
     pipeline.active_frame = 2U;
 
-    video_input_locked_ExpectAnyArgsAndReturn(1);
+    video_input_locked_ExpectAnyArgsAndReturn(1U);
     video_input_read_timing_ExpectAnyArgsAndReturn(XST_SUCCESS);
     video_input_read_timing_ReturnThruPtr_timing(&timing);
     video_modes_find_ExpectAndReturn(timing.width, timing.height, &mode_720p);
@@ -255,7 +255,7 @@ void test_video_pipeline_poll_enters_error_when_output_start_fails(void)
     timing.height = 720U;
     pipeline.state = VIDEO_PIPELINE_ACQUIRING_TIMING;
 
-    video_input_locked_ExpectAnyArgsAndReturn(1);
+    video_input_locked_ExpectAnyArgsAndReturn(1U);
     video_input_read_timing_ExpectAnyArgsAndReturn(XST_SUCCESS);
     video_input_read_timing_ReturnThruPtr_timing(&timing);
     video_modes_find_ExpectAndReturn(timing.width, timing.height, &mode_720p);
@@ -274,7 +274,7 @@ void test_video_pipeline_poll_stops_output_when_input_capture_fails(void)
     timing.height = 720U;
     pipeline.state = VIDEO_PIPELINE_ACQUIRING_TIMING;
 
-    video_input_locked_ExpectAnyArgsAndReturn(1);
+    video_input_locked_ExpectAnyArgsAndReturn(1U);
     video_input_read_timing_ExpectAnyArgsAndReturn(XST_SUCCESS);
     video_input_read_timing_ReturnThruPtr_timing(&timing);
     video_modes_find_ExpectAndReturn(timing.width, timing.height, &mode_720p);
@@ -290,12 +290,12 @@ void test_video_pipeline_poll_stops_output_when_input_capture_fails(void)
 void test_video_pipeline_poll_is_unchanged_while_streaming_or_unsupported_with_lock(void)
 {
     pipeline.state = VIDEO_PIPELINE_STREAMING;
-    video_input_locked_ExpectAnyArgsAndReturn(1);
+    video_input_locked_ExpectAnyArgsAndReturn(1U);
     TEST_ASSERT_EQUAL(VIDEO_PIPELINE_POLL_UNCHANGED, video_pipeline_poll(&pipeline, 400U));
     TEST_ASSERT_EQUAL(VIDEO_PIPELINE_STREAMING, video_pipeline_get_state(&pipeline));
 
     pipeline.state = VIDEO_PIPELINE_UNSUPPORTED_INPUT;
-    video_input_locked_ExpectAnyArgsAndReturn(1);
+    video_input_locked_ExpectAnyArgsAndReturn(1U);
     TEST_ASSERT_EQUAL(VIDEO_PIPELINE_POLL_UNCHANGED, video_pipeline_poll(&pipeline, 500U));
     TEST_ASSERT_EQUAL(VIDEO_PIPELINE_UNSUPPORTED_INPUT, video_pipeline_get_state(&pipeline));
 }

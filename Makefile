@@ -88,7 +88,7 @@ APP_SRCS := \
 
 APP_OBJS := $(APP_SRCS:%.c=$(APP_BUILD_DIR)/%.o)
 
-.PHONY: app clean-app test coverage video-port-check clean-video-port-check
+.PHONY: app clean-app test coverage clang-tidy video-port-check clean-video-port-check
 
 video-port-check: $(VIDEO_PORT_BUILD_DIR)/video-port-check.o
 	@echo "video-port-check: compiled and linked $(words $(VIDEO_PORT_OBJS)) objects"
@@ -102,6 +102,9 @@ test:
 
 coverage:
 	scripts/coverage.sh
+
+clang-tidy:
+	scripts/run_clang_tidy.sh
 
 $(VIDEO_PORT_BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)

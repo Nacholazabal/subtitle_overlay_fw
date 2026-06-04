@@ -50,8 +50,8 @@ void test_video_input_init_sets_dma_stride_and_initializes_hal(void)
     TEST_ASSERT_EQUAL_INT(XST_SUCCESS, video_input_init(&input, &dma, 5760U));
     TEST_ASSERT_EQUAL_PTR(&dma, input.dma);
     TEST_ASSERT_EQUAL_UINT32(5760U, input.stride);
-    TEST_ASSERT_EQUAL_INT(0, input.running);
-    TEST_ASSERT_EQUAL_INT(0, input.detector_started);
+    TEST_ASSERT_EQUAL_UINT8(0U, input.running);
+    TEST_ASSERT_EQUAL_UINT8(0U, input.detector_started);
 }
 
 void test_video_input_init_returns_gpio_error(void)
@@ -71,20 +71,20 @@ void test_video_input_init_returns_vtc_error(void)
 
 void test_video_input_locked_returns_zero_for_null_or_gpio_lock_state(void)
 {
-    TEST_ASSERT_EQUAL_INT(0, video_input_locked(NULL));
+    TEST_ASSERT_EQUAL_UINT8(0U, video_input_locked(NULL));
 
-    video_gpio_is_locked_ExpectAnyArgsAndReturn(1);
-    TEST_ASSERT_EQUAL_INT(1, video_input_locked(&input));
+    video_gpio_is_locked_ExpectAnyArgsAndReturn(1U);
+    TEST_ASSERT_EQUAL_UINT8(1U, video_input_locked(&input));
 
-    video_gpio_is_locked_ExpectAnyArgsAndReturn(0);
-    TEST_ASSERT_EQUAL_INT(0, video_input_locked(&input));
+    video_gpio_is_locked_ExpectAnyArgsAndReturn(0U);
+    TEST_ASSERT_EQUAL_UINT8(0U, video_input_locked(&input));
 }
 
 void test_video_input_start_detector_rejects_null_and_is_idempotent(void)
 {
     TEST_ASSERT_EQUAL_INT(XST_INVALID_PARAM, video_input_start_detector(NULL, 100U));
 
-    input.detector_started = 1;
+    input.detector_started = 1U;
     input.detector_started_ms = 50U;
     TEST_ASSERT_EQUAL_INT(XST_SUCCESS, video_input_start_detector(&input, 100U));
     TEST_ASSERT_EQUAL_UINT32(50U, input.detector_started_ms);
@@ -95,7 +95,7 @@ void test_video_input_start_detector_stores_start_time_on_success(void)
     video_vtc_start_detector_ExpectAnyArgsAndReturn(XST_SUCCESS);
 
     TEST_ASSERT_EQUAL_INT(XST_SUCCESS, video_input_start_detector(&input, 1234U));
-    TEST_ASSERT_EQUAL_INT(1, input.detector_started);
+    TEST_ASSERT_EQUAL_UINT8(1U, input.detector_started);
     TEST_ASSERT_EQUAL_UINT32(1234U, input.detector_started_ms);
 }
 
@@ -104,7 +104,7 @@ void test_video_input_start_detector_returns_hal_error_without_marking_started(v
     video_vtc_start_detector_ExpectAnyArgsAndReturn(XST_FAILURE);
 
     TEST_ASSERT_EQUAL_INT(XST_FAILURE, video_input_start_detector(&input, 1234U));
-    TEST_ASSERT_EQUAL_INT(0, input.detector_started);
+    TEST_ASSERT_EQUAL_UINT8(0U, input.detector_started);
 }
 
 void test_video_input_read_timing_rejects_invalid_arguments(void)
@@ -162,7 +162,7 @@ void test_video_input_start_capture_stops_existing_capture_then_starts_s2mm_dma(
 {
     input.dma = &dma;
     input.stride = 5760U;
-    input.running = 1;
+    input.running = 1U;
 
     video_dma_stop_ExpectAndReturn(&dma, VIDEO_DMA_CHANNEL_S2MM, XST_SUCCESS);
     video_dma_configure_ExpectAndReturn(&dma,
@@ -175,7 +175,7 @@ void test_video_input_start_capture_stops_existing_capture_then_starts_s2mm_dma(
     video_dma_start_ExpectAndReturn(&dma, VIDEO_DMA_CHANNEL_S2MM, XST_SUCCESS);
 
     TEST_ASSERT_EQUAL_INT(XST_SUCCESS, video_input_start_capture(&input, &mode_720p, 2U));
-    TEST_ASSERT_EQUAL_INT(1, input.running);
+    TEST_ASSERT_EQUAL_UINT8(1U, input.running);
     TEST_ASSERT_EQUAL_UINT32(2U, input.frame_index);
 }
 
@@ -193,7 +193,7 @@ void test_video_input_start_capture_returns_configure_error(void)
                                         XST_DMA_ERROR);
 
     TEST_ASSERT_EQUAL_INT(XST_DMA_ERROR, video_input_start_capture(&input, &mode_720p, 1U));
-    TEST_ASSERT_EQUAL_INT(0, input.running);
+    TEST_ASSERT_EQUAL_UINT8(0U, input.running);
 }
 
 void test_video_input_start_capture_returns_start_error(void)
@@ -211,7 +211,7 @@ void test_video_input_start_capture_returns_start_error(void)
     video_dma_start_ExpectAndReturn(&dma, VIDEO_DMA_CHANNEL_S2MM, XST_DMA_ERROR);
 
     TEST_ASSERT_EQUAL_INT(XST_DMA_ERROR, video_input_start_capture(&input, &mode_720p, 1U));
-    TEST_ASSERT_EQUAL_INT(0, input.running);
+    TEST_ASSERT_EQUAL_UINT8(0U, input.running);
 }
 
 void test_video_input_stop_rejects_null_and_resets_state(void)
@@ -219,27 +219,27 @@ void test_video_input_stop_rejects_null_and_resets_state(void)
     TEST_ASSERT_EQUAL_INT(XST_INVALID_PARAM, video_input_stop(NULL));
 
     input.dma = &dma;
-    input.running = 1;
-    input.detector_started = 1;
+    input.running = 1U;
+    input.detector_started = 1U;
     input.timing.width = 1280U;
 
     video_dma_stop_ExpectAndReturn(&dma, VIDEO_DMA_CHANNEL_S2MM, XST_SUCCESS);
 
     TEST_ASSERT_EQUAL_INT(XST_SUCCESS, video_input_stop(&input));
-    TEST_ASSERT_EQUAL_INT(0, input.running);
-    TEST_ASSERT_EQUAL_INT(0, input.detector_started);
+    TEST_ASSERT_EQUAL_UINT8(0U, input.running);
+    TEST_ASSERT_EQUAL_UINT8(0U, input.detector_started);
     TEST_ASSERT_EQUAL_UINT32(0U, input.timing.width);
 }
 
 void test_video_input_stop_allows_null_dma(void)
 {
     input.dma = NULL;
-    input.running = 1;
-    input.detector_started = 1;
+    input.running = 1U;
+    input.detector_started = 1U;
 
     TEST_ASSERT_EQUAL_INT(XST_SUCCESS, video_input_stop(&input));
-    TEST_ASSERT_EQUAL_INT(0, input.running);
-    TEST_ASSERT_EQUAL_INT(0, input.detector_started);
+    TEST_ASSERT_EQUAL_UINT8(0U, input.running);
+    TEST_ASSERT_EQUAL_UINT8(0U, input.detector_started);
 }
 
 void test_video_output_init_rejects_invalid_arguments(void)
@@ -257,7 +257,7 @@ void test_video_output_init_sets_dma_stride_and_initializes_hal(void)
     TEST_ASSERT_EQUAL_INT(XST_SUCCESS, video_output_init(&output, &dma, 5760U));
     TEST_ASSERT_EQUAL_PTR(&dma, output.dma);
     TEST_ASSERT_EQUAL_UINT32(5760U, output.stride);
-    TEST_ASSERT_EQUAL_INT(0, output.running);
+    TEST_ASSERT_EQUAL_UINT8(0U, output.running);
 }
 
 void test_video_output_init_returns_dynclk_error(void)
@@ -290,7 +290,7 @@ void test_video_output_start_stops_existing_output_then_starts_mm2s_dma(void)
 {
     output.dma = &dma;
     output.stride = 5760U;
-    output.running = 1;
+    output.running = 1U;
 
     video_vtc_stop_generator_ExpectAnyArgs();
     video_dma_stop_ExpectAndReturn(&dma, VIDEO_DMA_CHANNEL_MM2S, XST_SUCCESS);
@@ -308,7 +308,7 @@ void test_video_output_start_stops_existing_output_then_starts_mm2s_dma(void)
     video_dma_select_frame_ExpectAndReturn(&dma, VIDEO_DMA_CHANNEL_MM2S, 2U, XST_SUCCESS);
 
     TEST_ASSERT_EQUAL_INT(XST_SUCCESS, video_output_start(&output, &mode_720p, 2U));
-    TEST_ASSERT_EQUAL_INT(1, output.running);
+    TEST_ASSERT_EQUAL_UINT8(1U, output.running);
     TEST_ASSERT_EQUAL_PTR(&mode_720p, output.mode);
     TEST_ASSERT_EQUAL_UINT32(2U, output.frame_index);
 }
@@ -320,7 +320,7 @@ void test_video_output_start_returns_dynclk_error(void)
     video_dynclk_configure_ExpectAndReturn(&output.dynclk, mode_720p.timing.pixel_clock_mhz, XST_FAILURE);
 
     TEST_ASSERT_EQUAL_INT(XST_FAILURE, video_output_start(&output, &mode_720p, 0U));
-    TEST_ASSERT_EQUAL_INT(0, output.running);
+    TEST_ASSERT_EQUAL_UINT8(0U, output.running);
 }
 
 void test_video_output_start_returns_vtc_configure_error(void)
@@ -331,7 +331,7 @@ void test_video_output_start_returns_vtc_configure_error(void)
     video_vtc_configure_generator_ExpectAnyArgsAndReturn(XST_FAILURE);
 
     TEST_ASSERT_EQUAL_INT(XST_FAILURE, video_output_start(&output, &mode_720p, 0U));
-    TEST_ASSERT_EQUAL_INT(0, output.running);
+    TEST_ASSERT_EQUAL_UINT8(0U, output.running);
 }
 
 void test_video_output_start_returns_dma_configure_error_after_starting_generator(void)
@@ -351,7 +351,7 @@ void test_video_output_start_returns_dma_configure_error_after_starting_generato
                                         XST_DMA_ERROR);
 
     TEST_ASSERT_EQUAL_INT(XST_DMA_ERROR, video_output_start(&output, &mode_720p, 0U));
-    TEST_ASSERT_EQUAL_INT(0, output.running);
+    TEST_ASSERT_EQUAL_UINT8(0U, output.running);
 }
 
 void test_video_output_start_returns_dma_start_error(void)
@@ -372,7 +372,7 @@ void test_video_output_start_returns_dma_start_error(void)
     video_dma_start_ExpectAndReturn(&dma, VIDEO_DMA_CHANNEL_MM2S, XST_DMA_ERROR);
 
     TEST_ASSERT_EQUAL_INT(XST_DMA_ERROR, video_output_start(&output, &mode_720p, 0U));
-    TEST_ASSERT_EQUAL_INT(0, output.running);
+    TEST_ASSERT_EQUAL_UINT8(0U, output.running);
 }
 
 void test_video_output_start_returns_select_frame_error(void)
@@ -394,7 +394,7 @@ void test_video_output_start_returns_select_frame_error(void)
     video_dma_select_frame_ExpectAndReturn(&dma, VIDEO_DMA_CHANNEL_MM2S, 0U, XST_DMA_ERROR);
 
     TEST_ASSERT_EQUAL_INT(XST_DMA_ERROR, video_output_start(&output, &mode_720p, 0U));
-    TEST_ASSERT_EQUAL_INT(0, output.running);
+    TEST_ASSERT_EQUAL_UINT8(0U, output.running);
 }
 
 void test_video_output_stop_rejects_null_and_resets_state(void)
@@ -402,26 +402,26 @@ void test_video_output_stop_rejects_null_and_resets_state(void)
     TEST_ASSERT_EQUAL_INT(XST_INVALID_PARAM, video_output_stop(NULL));
 
     output.dma = &dma;
-    output.running = 1;
+    output.running = 1U;
     output.mode = &mode_720p;
 
     video_vtc_stop_generator_ExpectAnyArgs();
     video_dma_stop_ExpectAndReturn(&dma, VIDEO_DMA_CHANNEL_MM2S, XST_SUCCESS);
 
     TEST_ASSERT_EQUAL_INT(XST_SUCCESS, video_output_stop(&output));
-    TEST_ASSERT_EQUAL_INT(0, output.running);
+    TEST_ASSERT_EQUAL_UINT8(0U, output.running);
     TEST_ASSERT_NULL(output.mode);
 }
 
 void test_video_output_stop_allows_null_dma(void)
 {
     output.dma = NULL;
-    output.running = 1;
+    output.running = 1U;
     output.mode = &mode_720p;
 
     video_vtc_stop_generator_ExpectAnyArgs();
 
     TEST_ASSERT_EQUAL_INT(XST_SUCCESS, video_output_stop(&output));
-    TEST_ASSERT_EQUAL_INT(0, output.running);
+    TEST_ASSERT_EQUAL_UINT8(0U, output.running);
     TEST_ASSERT_NULL(output.mode);
 }
