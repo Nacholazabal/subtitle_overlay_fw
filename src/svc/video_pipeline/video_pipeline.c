@@ -163,19 +163,20 @@ video_pipeline_poll_result_e video_pipeline_poll(video_pipeline_t* const pipelin
     video_pipeline_mode_t const* mode;
     video_pipeline_poll_result_e result;
     int status = 0;
+    int locked;
 
     if ((pipeline == NULL) || (pipeline->state == VIDEO_PIPELINE_UNINITIALIZED))
     {
         return VIDEO_PIPELINE_POLL_ERROR;
     }
 
-    if (!video_input_locked(&pipeline->input)
-        && (pipeline->state == VIDEO_PIPELINE_WAITING_FOR_SIGNAL))
+    locked = video_input_locked(&pipeline->input);
+    if (!locked && (pipeline->state == VIDEO_PIPELINE_WAITING_FOR_SIGNAL))
     {
         return VIDEO_PIPELINE_POLL_UNCHANGED;
     }
 
-    if (!video_input_locked(&pipeline->input))
+    if (!locked)
     {
         stop_transport(pipeline);
         pipeline->state = VIDEO_PIPELINE_WAITING_FOR_SIGNAL;

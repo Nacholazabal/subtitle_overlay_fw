@@ -20,10 +20,13 @@ COMMON_CFLAGS := \
 	-Isrc/qpc/ports/config \
 	-Isrc/app \
 	-Isrc/svc/system \
+	-Isrc/hal/subtitle_bram \
+	-Isrc/hal/subtitle_overlay \
 	-Isrc/hal/video_dma \
 	-Isrc/hal/video_dynclk \
 	-Isrc/hal/video_gpio \
 	-Isrc/hal/video_vtc \
+	-Isrc/svc/subtitle_pipeline \
 	-Isrc/svc/video_pipeline
 
 VIDEO_PORT_CFLAGS := \
@@ -40,8 +43,12 @@ VIDEO_PORT_SRCS := \
 	src/hal/video_dynclk/video_dynclk.c \
 	src/hal/video_gpio/video_gpio.c \
 	src/hal/video_vtc/video_vtc.c \
+	src/hal/subtitle_bram/subtitle_bram.c \
+	src/hal/subtitle_overlay/subtitle_overlay.c \
 	src/app/app.c \
 	src/svc/system/SystemAO.c \
+	src/svc/subtitle_pipeline/SubtitleAO.c \
+	src/svc/subtitle_pipeline/subtitle_pipeline.c \
 	src/svc/video_pipeline/VideoAO.c \
 	src/svc/video_pipeline/video_io.c \
 	src/svc/video_pipeline/video_modes.c \

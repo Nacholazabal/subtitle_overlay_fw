@@ -15,6 +15,9 @@
   :test:
     - test/**
   :source:
+    - src/hal/subtitle_bram/**
+    - src/hal/subtitle_overlay/**
+    - src/svc/subtitle_pipeline/**
     - src/svc/video_pipeline/**
   :include:
     - linux/include/uapi
@@ -22,10 +25,14 @@
     - src/bsp/platform
     - src/bsp/platform/linux
     - src/bsp/vtc_v7_2/src
+    - src/app
+    - src/hal/subtitle_bram
+    - src/hal/subtitle_overlay
     - src/hal/video_dma
     - src/hal/video_dynclk
     - src/hal/video_gpio
     - src/hal/video_vtc
+    - src/svc/subtitle_pipeline
     - src/svc/video_pipeline
 
 :defines:
