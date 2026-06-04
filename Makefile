@@ -1,8 +1,11 @@
 CC ?= gcc
+STRIP ?= strip
 
 VIDEO_PORT_BUILD_DIR := build/video-port-check
+APP_BUILD_DIR := build/app
+APP_TARGET := subtitle_overlay_fw
 
-VIDEO_PORT_CFLAGS := \
+COMMON_CFLAGS := \
 	-std=gnu99 \
 	-Wall \
 	-Wextra \
@@ -21,6 +24,9 @@ VIDEO_PORT_CFLAGS := \
 	-Isrc/hal/video_gpio \
 	-Isrc/hal/video_vtc \
 	-Isrc/svc/video_pipeline
+
+VIDEO_PORT_CFLAGS := \
+	$(COMMON_CFLAGS)
 
 VIDEO_PORT_SRCS := \
 	src/bsp/platform/linux/hw_platform.c \
@@ -42,10 +48,42 @@ VIDEO_PORT_SRCS := \
 
 VIDEO_PORT_OBJS := $(VIDEO_PORT_SRCS:%.c=$(VIDEO_PORT_BUILD_DIR)/%.o)
 
-.PHONY: video-port-check clean-video-port-check
+APP_ARCH_FLAGS ?= \
+	-mcpu=cortex-a9 \
+	-mfpu=neon \
+	-mfloat-abi=hard
+
+APP_CFLAGS := \
+	$(COMMON_CFLAGS) \
+	-D_POSIX_C_SOURCE=200809L \
+	$(APP_ARCH_FLAGS)
+
+APP_LDFLAGS := -pthread -lm
+
+APP_QPC_SRCS := \
+	src/qpc/ports/posix-qv/qf_port.c \
+	src/qpc/src/qf/qep_hsm.c \
+	src/qpc/src/qf/qf_act.c \
+	src/qpc/src/qf/qf_actq.c \
+	src/qpc/src/qf/qf_dyn.c \
+	src/qpc/src/qf/qf_mem.c \
+	src/qpc/src/qf/qf_qact.c \
+	src/qpc/src/qf/qf_qeq.c \
+	src/qpc/src/qf/qf_time.c
+
+APP_SRCS := \
+	$(VIDEO_PORT_SRCS) \
+	$(APP_QPC_SRCS)
+
+APP_OBJS := $(APP_SRCS:%.c=$(APP_BUILD_DIR)/%.o)
+
+.PHONY: app clean-app video-port-check clean-video-port-check
 
 video-port-check: $(VIDEO_PORT_BUILD_DIR)/video-port-check.o
 	@echo "video-port-check: compiled and linked $(words $(VIDEO_PORT_OBJS)) objects"
+
+app: $(APP_BUILD_DIR)/$(APP_TARGET)
+	@echo "app: built $<"
 
 $(VIDEO_PORT_BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -59,5 +97,22 @@ $(VIDEO_PORT_BUILD_DIR)/src/bsp/vtc_v7_2/src/%.o: VIDEO_PORT_CFLAGS += \
 $(VIDEO_PORT_BUILD_DIR)/video-port-check.o: $(VIDEO_PORT_OBJS)
 	$(CC) -r -o $@ $^
 
+$(APP_BUILD_DIR)/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(APP_CFLAGS) -c -o $@ $<
+
+$(APP_BUILD_DIR)/src/bsp/vtc_v7_2/src/%.o: APP_CFLAGS += \
+	-Wno-cast-function-type \
+	-Wno-sign-compare \
+	-Wno-tautological-compare
+
+$(APP_BUILD_DIR)/$(APP_TARGET): $(APP_OBJS)
+	@mkdir -p $(dir $@)
+	$(CC) $(APP_CFLAGS) -o $@ $^ $(APP_LDFLAGS)
+	$(STRIP) $@
+
 clean-video-port-check:
 	rm -rf $(VIDEO_PORT_BUILD_DIR)
+
+clean-app:
+	rm -rf $(APP_BUILD_DIR)
