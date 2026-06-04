@@ -169,22 +169,16 @@ video_pipeline_poll_result_e video_pipeline_poll(video_pipeline_t* const pipelin
         return VIDEO_PIPELINE_POLL_ERROR;
     }
 
+    if (!video_input_locked(&pipeline->input) && (pipeline->state == VIDEO_PIPELINE_WAITING_FOR_SIGNAL))
+    {
+        return VIDEO_PIPELINE_POLL_UNCHANGED;
+    }
+
     if (!video_input_locked(&pipeline->input))
     {
-        switch (pipeline->state)
-        {
-        case VIDEO_PIPELINE_WAITING_FOR_SIGNAL:
-            result = VIDEO_PIPELINE_POLL_UNCHANGED;
-            break;
-
-        default:
-            stop_transport(pipeline);
-            pipeline->state = VIDEO_PIPELINE_WAITING_FOR_SIGNAL;
-            result = VIDEO_PIPELINE_POLL_SIGNAL_LOST;
-            break;
-        }
-
-        return result;
+        stop_transport(pipeline);
+        pipeline->state = VIDEO_PIPELINE_WAITING_FOR_SIGNAL;
+        return VIDEO_PIPELINE_POLL_SIGNAL_LOST;
     }
 
     switch (pipeline->state)
