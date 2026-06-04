@@ -1,0 +1,72 @@
+---
+
+:project:
+  :use_exceptions: FALSE
+  :use_test_preprocessor: :none
+  :use_auxiliary_dependencies: TRUE
+  :build_root: build/ceedling
+  :release_build: FALSE
+  :test_file_prefix: test_
+
+:extension:
+  :executable: .out
+
+:paths:
+  :test:
+    - test/**
+  :source:
+    - src/svc/video_pipeline/**
+  :include:
+    - linux/include/uapi
+    - src/bsp/bsp_compat
+    - src/bsp/platform
+    - src/bsp/platform/linux
+    - src/bsp/vtc_v7_2/src
+    - src/hal/video_dma
+    - src/hal/video_dynclk
+    - src/hal/video_gpio
+    - src/hal/video_vtc
+    - src/svc/video_pipeline
+
+:defines:
+  :common: &common_defines []
+  :test:
+    - *common_defines
+    - TEST
+
+:cmock:
+  :mock_prefix: mock_
+  :when_no_prototypes: :warn
+  :enforce_strict_ordering: TRUE
+  :plugins:
+    - :ignore
+    - :callback
+    - :expect_any_args
+    - :return_thru_ptr
+
+:flags:
+  :test:
+    :compile:
+      :*:
+        - -std=gnu99
+        - -Wall
+        - -Wextra
+        - -fprofile-arcs
+        - -ftest-coverage
+    :link:
+      :*:
+        - -fprofile-arcs
+        - -ftest-coverage
+        - -lgcov
+
+:plugins:
+  :enabled:
+    - gcov
+
+:gcov:
+  :reports:
+    - HtmlDetailed
+    - Text
+  :gcovr:
+    :html_medium_threshold: 75
+    :html_high_threshold: 90

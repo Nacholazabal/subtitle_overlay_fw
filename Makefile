@@ -1,5 +1,6 @@
 CC ?= gcc
 STRIP ?= strip
+CEEDLING ?= $(shell if command -v bundle >/dev/null 2>&1; then echo "bundle exec ceedling"; else echo "ceedling"; fi)
 
 VIDEO_PORT_BUILD_DIR := build/video-port-check
 APP_BUILD_DIR := build/app
@@ -77,13 +78,20 @@ APP_SRCS := \
 
 APP_OBJS := $(APP_SRCS:%.c=$(APP_BUILD_DIR)/%.o)
 
-.PHONY: app clean-app video-port-check clean-video-port-check
+.PHONY: app clean-app test coverage video-port-check clean-video-port-check
 
 video-port-check: $(VIDEO_PORT_BUILD_DIR)/video-port-check.o
 	@echo "video-port-check: compiled and linked $(words $(VIDEO_PORT_OBJS)) objects"
 
 app: $(APP_BUILD_DIR)/$(APP_TARGET)
 	@echo "app: built $<"
+
+test:
+	$(CEEDLING) clean
+	$(CEEDLING) test:all
+
+coverage:
+	scripts/coverage.sh
 
 $(VIDEO_PORT_BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
