@@ -23,8 +23,7 @@ Some fancy copyright message here (if needed)
 // === Macros definitions ========================================================================================== //
 
 #define APP_TICKS_PER_SEC     (100U)
-#define APP_ERROR_POOL_LEN    (8U)
-#define APP_READY_POOL_LEN    (8U)
+#define APP_EVENT_POOL_LEN    (16U)
 #define SYSTEM_AO_QUEUE_LEN   (8U)
 #define SUBTITLE_AO_QUEUE_LEN (8U)
 #define VIDEO_AO_QUEUE_LEN    (8U)
@@ -65,12 +64,8 @@ static void app_init(void)
 {
     LOG_INFO("app: initializing QP/C event pools and active objects");
 
-    /* QP/C event pools must be initialized in increasing event-size order. */
-    static QF_MPOOL_EL(component_ready_evt_t) app_ready_pool_sto[APP_READY_POOL_LEN];
-    QF_poolInit(app_ready_pool_sto, sizeof(app_ready_pool_sto), sizeof(app_ready_pool_sto[0]));
-
-    static QF_MPOOL_EL(app_error_evt_t) app_error_pool_sto[APP_ERROR_POOL_LEN];
-    QF_poolInit(app_error_pool_sto, sizeof(app_error_pool_sto), sizeof(app_error_pool_sto[0]));
+    static QF_MPOOL_EL(component_init_evt_t) app_event_pool_sto[APP_EVENT_POOL_LEN];
+    QF_poolInit(app_event_pool_sto, sizeof(app_event_pool_sto), sizeof(app_event_pool_sto[0]));
 
     static QEvtPtr video_queue_sto[VIDEO_AO_QUEUE_LEN];
     video_ao_ctor();

@@ -29,6 +29,8 @@ typedef struct
     component_id_e last_ready_component;
     component_id_e error_source;
     int32_t error_code;
+    uint32_t active_video_width;
+    uint32_t active_video_height;
 } system_ao_t;
 
 // === Private variable declarations =============================================================================== //
@@ -40,7 +42,11 @@ static QState system_ao_init(system_ao_t* const me, QEvt const* const e);
 static QState system_ao_run(system_ao_t* const me, QEvt const* const e);
 static QState system_ao_error(system_ao_t* const me, QEvt const* const e);
 
-static void post_component_init(system_ao_t* const me, QActive* const target);
+static void post_component_init(system_ao_t* const me,
+                                QActive* const target,
+                                component_id_e source,
+                                uint32_t width,
+                                uint32_t height);
 static void on_init(system_ao_t* const me);
 static int on_component_ready(system_ao_t* const me, component_ready_evt_t const* const e);
 static void on_run(system_ao_t* const me);
@@ -83,21 +89,30 @@ static const char* component_id_to_str(component_id_e component)
     }
 }
 
-static void post_component_init(system_ao_t* const me, QActive* const target)
+static void post_component_init(system_ao_t* const me,
+                                QActive* const target,
+                                component_id_e source,
+                                uint32_t width,
+                                uint32_t height)
 {
-    static QEvt const init_evt = QEVT_INITIALIZER(COMPONENT_INIT_SIG);
+    component_init_evt_t* const init_evt = Q_NEW(component_init_evt_t, COMPONENT_INIT_SIG);
 
     Q_UNUSED_PAR(me);
 
-    QACTIVE_POST(target, &init_evt, &me->super);
+    init_evt->source = source;
+    init_evt->width = width;
+    init_evt->height = height;
+    QACTIVE_POST(target, &init_evt->super, &me->super);
 }
 
 static void on_init(system_ao_t* const me)
 {
     me->last_ready_component = COMPONENT_NONE;
+    me->active_video_width = 0U;
+    me->active_video_height = 0U;
 
     LOG_INFO("system: init sequence started");
-    post_component_init(me, AO_Video);
+    post_component_init(me, AO_Video, COMPONENT_NONE, 0U, 0U);
 }
 
 static int on_component_ready(system_ao_t* const me, component_ready_evt_t const* const e)
@@ -110,8 +125,23 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
     switch (e->source)
     {
     case COMPONENT_VIDEO:
-        LOG_INFO("system: requesting subtitle init");
-        post_component_init(me, AO_Subtitle);
+        if ((e->width == 0U) || (e->height == 0U))
+        {
+            me->error_source = COMPONENT_VIDEO;
+            me->error_code = -EINVAL;
+            LOG_ERROR("system: video ready event has invalid dimensions %lux%lu",
+                      (unsigned long)e->width,
+                      (unsigned long)e->height);
+            status = -EINVAL;
+            break;
+        }
+
+        me->active_video_width = e->width;
+        me->active_video_height = e->height;
+        LOG_INFO("system: requesting subtitle init for %lux%lu",
+                 (unsigned long)e->width,
+                 (unsigned long)e->height);
+        post_component_init(me, AO_Subtitle, COMPONENT_VIDEO, e->width, e->height);
         break;
 
     case COMPONENT_SUBTITLE_PIPELINE:
@@ -140,7 +170,9 @@ static void on_error(system_ao_t* const me, app_error_evt_t const* const e)
     me->error_source = e->source;
     me->error_code = e->code;
 
-    LOG_ERROR("system: component error from %s: %ld", component_id_to_str(e->source), (long)e->code);
+    LOG_ERROR("system: component error from %s: %ld",
+              component_id_to_str(e->source),
+              (long)e->code);
 
     // TODO: Report the fault through logging and request an LED error indication.
 }
@@ -184,15 +216,23 @@ static QState system_ao_init(system_ao_t* const me, QEvt const* const e)
         break;
 
     case COMPONENT_READY_SIG:
-        if (on_component_ready(me, Q_EVT_CAST(component_ready_evt_t)) == 0)
+    {
+        int const ready_status = on_component_ready(me, Q_EVT_CAST(component_ready_evt_t));
+
+        if (ready_status == 0)
         {
             status = Q_TRAN(&system_ao_run);
         }
-        else
+        else if (ready_status == -EAGAIN)
         {
             status = Q_HANDLED();
         }
+        else
+        {
+            status = Q_TRAN(&system_ao_error);
+        }
         break;
+    }
 
     default:
         status = Q_SUPER(&system_ao_active);
@@ -256,6 +296,8 @@ void system_ao_ctor(void)
     me->last_ready_component = COMPONENT_NONE;
     me->error_source = COMPONENT_NONE;
     me->error_code = 0;
+    me->active_video_width = 0U;
+    me->active_video_height = 0U;
 }
 
 // === End of documentation ======================================================================================== //

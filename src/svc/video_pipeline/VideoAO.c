@@ -33,6 +33,7 @@ typedef struct
     video_pipeline_t pipeline;
     uint32_t now_ms;
     uint8_t running;
+    uint8_t ready_posted;
 } video_ao_t;
 
 // === Private variable declarations =============================================================================== //
@@ -67,9 +68,15 @@ QActive* const AO_Video = Q_ACTIVE_UPCAST(&video_ao_inst);
 static void post_ready(video_ao_t* const me)
 {
     component_ready_evt_t* const ready_evt = Q_NEW(component_ready_evt_t, COMPONENT_READY_SIG);
+    video_pipeline_mode_t const* const mode = video_pipeline_get_active_mode(&me->pipeline);
 
-    Q_UNUSED_PAR(me);
-
+    ready_evt->width = 0U;
+    ready_evt->height = 0U;
+    if (mode != NULL)
+    {
+        ready_evt->width = mode->timing.width;
+        ready_evt->height = mode->timing.height;
+    }
     ready_evt->source = COMPONENT_VIDEO;
     QACTIVE_POST(AO_System, &ready_evt->super, &me->super);
 }
@@ -106,7 +113,7 @@ static int on_component_init(video_ao_t* const me)
     {
         me->now_ms = 0U;
         me->running = 1U;
-        post_ready(me);
+        me->ready_posted = 0U;
         QTimeEvt_armX(&me->poll_time_evt, VIDEO_AO_POLL_TICKS, VIDEO_AO_POLL_TICKS);
         LOG_INFO("video: pipeline running, poll period=%u ms", (unsigned)VIDEO_AO_POLL_PERIOD_MS);
         status = 0;
@@ -140,6 +147,25 @@ static int on_video_poll(video_ao_t* const me)
             enter_error(me, -EIO);
             status = -EIO;
         }
+        else if ((poll_result == VIDEO_PIPELINE_POLL_STREAMING_STARTED) && !me->ready_posted)
+        {
+            video_pipeline_mode_t const* const mode = video_pipeline_get_active_mode(&me->pipeline);
+
+            if (mode == NULL)
+            {
+                LOG_ERROR("video: pipeline reported streaming without active mode");
+                enter_error(me, -EIO);
+                status = -EIO;
+            }
+            else
+            {
+                me->ready_posted = 1U;
+                post_ready(me);
+                LOG_INFO("video: passthrough streaming %lux%lu",
+                         (unsigned long)mode->timing.width,
+                         (unsigned long)mode->timing.height);
+            }
+        }
     }
 
     return status;
@@ -159,6 +185,7 @@ static void enter_error(video_ao_t* const me, int32_t code)
         (void)QTimeEvt_disarm(&me->poll_time_evt);
         video_pipeline_cleanup(&me->pipeline);
         me->running = 0U;
+        me->ready_posted = 0U;
     }
     else
     {
@@ -273,6 +300,7 @@ void video_ao_ctor(void)
     QTimeEvt_ctorX(&me->poll_time_evt, &me->super, VIDEO_POLL_SIG, 0U);
     me->now_ms = 0U;
     me->running = 0U;
+    me->ready_posted = 0U;
 }
 
 // === End of documentation ======================================================================================== //
