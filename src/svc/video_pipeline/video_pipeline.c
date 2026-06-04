@@ -162,14 +162,15 @@ video_pipeline_poll_result_e video_pipeline_poll(video_pipeline_t* const pipelin
     video_vtc_timing_t timing;
     video_pipeline_mode_t const* mode;
     video_pipeline_poll_result_e result;
-    int status;
+    int status = 0;
 
     if ((pipeline == NULL) || (pipeline->state == VIDEO_PIPELINE_UNINITIALIZED))
     {
         return VIDEO_PIPELINE_POLL_ERROR;
     }
 
-    if (!video_input_locked(&pipeline->input) && (pipeline->state == VIDEO_PIPELINE_WAITING_FOR_SIGNAL))
+    if (!video_input_locked(&pipeline->input)
+        && (pipeline->state == VIDEO_PIPELINE_WAITING_FOR_SIGNAL))
     {
         return VIDEO_PIPELINE_POLL_UNCHANGED;
     }
