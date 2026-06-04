@@ -20,5 +20,5 @@ printf '\nCoverage text report: build/ceedling/artifacts/gcov/gcovr/coverage.txt
 printf 'Coverage HTML report: build/ceedling/artifacts/gcov/gcovr/GcovCoverageResults.html\n'
 
 printf '\nProduction service coverage:\n'
-grep -E '^src/svc/video_pipeline/(video_modes|video_pipeline)\.c[[:space:]]' \
+grep -E '^src/svc/video_pipeline/(video_io|video_modes|video_pipeline)\.c[[:space:]]' \
     build/ceedling/artifacts/gcov/gcovr/coverage.txt
