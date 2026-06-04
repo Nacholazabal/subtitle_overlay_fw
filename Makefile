@@ -10,6 +10,7 @@ COMMON_CFLAGS := \
 	-std=gnu99 \
 	-Wall \
 	-Wextra \
+	-DCONFIG_LOG_ENABLED \
 	-Ilinux/include/uapi \
 	-Isrc/bsp/bsp_compat \
 	-Isrc/bsp/platform \
@@ -19,6 +20,7 @@ COMMON_CFLAGS := \
 	-Isrc/qpc/ports/posix-qv \
 	-Isrc/qpc/ports/config \
 	-Isrc/app \
+	-Isrc/utils/log \
 	-Isrc/svc/system \
 	-Isrc/hal/subtitle_bram \
 	-Isrc/hal/subtitle_overlay \
@@ -45,6 +47,7 @@ VIDEO_PORT_SRCS := \
 	src/hal/video_vtc/video_vtc.c \
 	src/hal/subtitle_bram/subtitle_bram.c \
 	src/hal/subtitle_overlay/subtitle_overlay.c \
+	src/utils/log/log.c \
 	src/app/app.c \
 	src/svc/system/SystemAO.c \
 	src/svc/subtitle_pipeline/SubtitleAO.c \
