@@ -22,7 +22,7 @@ step() {
 
 if [ ! -f "${LOCAL_BINARY}" ]; then
     echo "Missing binary: ${LOCAL_BINARY}" >&2
-    echo "Run scripts/build_on_vm.sh first, or set LOCAL_BINARY=/path/to/${APP_TARGET}." >&2
+    echo "Run scripts/build.sh first, or set LOCAL_BINARY=/path/to/${APP_TARGET}." >&2
     exit 2
 fi
 
