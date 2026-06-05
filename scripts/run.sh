@@ -27,11 +27,6 @@ LOCAL_BINARY="${LOCAL_BINARY:-${LOCAL_ARTIFACT_DIR}/${APP_TARGET}}"
 
 SKIP_BUILD=0
 
-SSH_COMPAT_OPTS=(
-    -o HostKeyAlgorithms=+ssh-rsa
-    -o PubkeyAcceptedAlgorithms=+ssh-rsa
-)
-
 usage() {
     cat <<EOF
 Usage: ${0##*/} [-x]
@@ -132,8 +127,8 @@ if [[ ! -f "${LOCAL_BINARY}" ]]; then
 fi
 
 step "Copying ${LOCAL_BINARY} to ${BOARD_HOST}:${BOARD_DEPLOY_DIR}/"
-scp -O "${SSH_COMPAT_OPTS[@]}" "${LOCAL_BINARY}" "${BOARD_HOST}:${BOARD_DEPLOY_DIR}/"
+scp -O "${LOCAL_BINARY}" "${BOARD_HOST}:${BOARD_DEPLOY_DIR}/"
 
 step "Running ${APP_TARGET} on ${BOARD_HOST}"
-ssh -t "${SSH_COMPAT_OPTS[@]}" "${BOARD_HOST}" \
+ssh -t "${BOARD_HOST}" \
     "cd '${BOARD_DEPLOY_DIR}' && chmod +x '${APP_TARGET}' && ./'${APP_TARGET}'"
