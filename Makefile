@@ -104,7 +104,7 @@ coverage:
 	scripts/coverage.sh
 
 clang-tidy:
-	scripts/run_clang_tidy.sh
+	scripts/clang_tidy.sh
 
 $(VIDEO_PORT_BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
