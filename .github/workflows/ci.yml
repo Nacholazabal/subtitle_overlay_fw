@@ -32,6 +32,8 @@ jobs:
   coverage:
     name: coverage
     runs-on: ubuntu-latest
+    env:
+      HAS_CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN != '' }}
 
     steps:
       - name: Checkout
@@ -66,10 +68,14 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload coverage to Codecov
+        if: env.HAS_CODECOV_TOKEN == 'true'
         uses: codecov/codecov-action@v6
         with:
           files: build/coverage/coverage.xml
           fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
           verbose: true
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Skip Codecov upload
+        if: env.HAS_CODECOV_TOKEN != 'true'
+        run: echo "Skipping Codecov upload because CODECOV_TOKEN is not configured."

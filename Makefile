@@ -1,6 +1,6 @@
 CC ?= gcc
 STRIP ?= strip
-CEEDLING ?= $(shell if command -v bundle >/dev/null 2>&1; then echo "bundle exec ceedling"; else echo "ceedling"; fi)
+CEEDLING ?= $(shell if command -v bundle >/dev/null 2>&1 && [ -f Gemfile ]; then echo "bundle exec ceedling"; else echo "ceedling"; fi)
 
 VIDEO_PORT_BUILD_DIR := build/video-port-check
 APP_BUILD_DIR := build/app
