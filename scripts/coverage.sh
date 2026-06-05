@@ -6,7 +6,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 cd "${REPO_ROOT}"
 
-if command -v bundle >/dev/null 2>&1; then
+if command -v bundle >/dev/null 2>&1 && [ -f Gemfile ]; then
     CEEDLING=(bundle exec ceedling)
 else
     CEEDLING=(ceedling)
