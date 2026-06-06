@@ -23,6 +23,14 @@
 /include/ "system-conf.dtsi"
 
 / {
+    usb_phy0: usb_phy@0 {
+        compatible = "ulpi-phy";
+        #phy-cells = <0>;
+        reg = <0xe0002000 0x1000>;
+        view-port = <0x0170>;
+        drv-vbus;
+    };
+
     /*
      * Reserve 32 MB for three 1920x1080 RGB framebuffers.
      *
@@ -53,6 +61,16 @@
             no-map;
         };
     };
+};
+
+/*
+ * USB0 is used as a host port for a standard USB Audio Class sound card.
+ * Linux owns enumeration and the snd-usb-audio ALSA capture device.
+ */
+&usb0 {
+    usb-phy = <&usb_phy0>;
+    dr_mode = "host";
+    /delete-property/ usb-reset;
 };
 
 /*

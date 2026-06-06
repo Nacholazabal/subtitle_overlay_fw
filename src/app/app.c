@@ -18,6 +18,7 @@ Some fancy copyright message here (if needed)
 #include "log.h"
 #include "SubtitleAO.h"
 #include "SystemAO.h"
+#include "USBAudioAO.h"
 #include "VideoAO.h"
 
 // === Macros definitions ========================================================================================== //
@@ -26,10 +27,12 @@ Some fancy copyright message here (if needed)
 #define APP_EVENT_POOL_LEN    (16U)
 #define SYSTEM_AO_QUEUE_LEN   (8U)
 #define SUBTITLE_AO_QUEUE_LEN (8U)
+#define USB_AUDIO_AO_QUEUE_LEN (8U)
 #define VIDEO_AO_QUEUE_LEN    (8U)
 #define SYSTEM_AO_PRIO        (1U)
 #define VIDEO_AO_PRIO         (2U)
-#define SUBTITLE_AO_PRIO      (3U)
+#define USB_AUDIO_AO_PRIO     (3U)
+#define SUBTITLE_AO_PRIO      (4U)
 
 // === Private data type declarations ============================================================================== //
 // === Private variable declarations =============================================================================== //
@@ -77,6 +80,16 @@ static void app_init(void)
                   0U,
                   (void*)0);
 
+    static QEvtPtr usb_audio_queue_sto[USB_AUDIO_AO_QUEUE_LEN];
+    usb_audio_ao_ctor();
+    QActive_start(AO_USBAudio,
+                  USB_AUDIO_AO_PRIO,
+                  usb_audio_queue_sto,
+                  Q_DIM(usb_audio_queue_sto),
+                  (void*)0,
+                  0U,
+                  (void*)0);
+
     static QEvtPtr subtitle_queue_sto[SUBTITLE_AO_QUEUE_LEN];
     subtitle_ao_ctor();
     QActive_start(AO_Subtitle,
@@ -100,8 +113,8 @@ static void app_init(void)
     LOG_INFO("app: active objects started");
 
     /*
-     * TODO: Construct and start USBAudioAO, ButtonsAO, and LEDAO here as they
-     * are implemented.
+     * TODO: Construct and start ButtonsAO and LEDAO here as they are
+     * implemented.
      */
 }
 

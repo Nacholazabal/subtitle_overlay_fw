@@ -1,0 +1,296 @@
+/**********************************************************************************************************************
+Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
+
+Some fancy copyright message here (if needed)
+**********************************************************************************************************************/
+
+///
+/// @file usb_audio_capture.c
+/// @brief ALSA USB audio capture adapter implementation
+///
+
+// === Headers files inclusions ==================================================================================== //
+
+#include "usb_audio_capture.h"
+
+#include <string.h>
+
+#include "errorno.h"
+
+#ifdef CONFIG_USB_AUDIO_ALSA
+    #include <alsa/asoundlib.h>
+#endif
+
+// === Macros definitions ========================================================================================== //
+
+#define USB_AUDIO_CAPTURE_SAMPLE_BYTES (2U)
+#define USB_AUDIO_CAPTURE_BUFFER_PERIODS (8U)
+
+// === Private data type declarations ============================================================================== //
+// === Private variable declarations =============================================================================== //
+// === Private function declarations =============================================================================== //
+
+#ifdef CONFIG_USB_AUDIO_ALSA
+static int configure_pcm(snd_pcm_t* pcm, usb_audio_capture_config_t const* config);
+static int recover_pcm(snd_pcm_t* pcm, int err);
+#endif
+
+// === Public variable definitions ================================================================================= //
+// === Private variable definitions ================================================================================ //
+// === Private function implementation ============================================================================= //
+
+#ifdef CONFIG_USB_AUDIO_ALSA
+/**
+ * @brief Configure ALSA hardware parameters for STT-ready PCM capture.
+ * @param pcm Open ALSA PCM handle.
+ * @param config Requested capture configuration.
+ * @return 0 on success, or a negative errorno_e value on failure.
+ */
+static int configure_pcm(snd_pcm_t* const pcm, usb_audio_capture_config_t const* const config)
+{
+    snd_pcm_hw_params_t* params;
+    snd_pcm_uframes_t period_frames = config->samples_per_chunk;
+    snd_pcm_uframes_t buffer_frames = config->samples_per_chunk * USB_AUDIO_CAPTURE_BUFFER_PERIODS;
+    unsigned int rate = config->sample_rate_hz;
+    int status;
+
+    snd_pcm_hw_params_alloca(&params);
+
+    status = snd_pcm_hw_params_any(pcm, params);
+    if (status < 0)
+    {
+        return -EIO;
+    }
+
+    status = snd_pcm_hw_params_set_access(pcm, params, SND_PCM_ACCESS_RW_INTERLEAVED);
+    if (status < 0)
+    {
+        return -EIO;
+    }
+
+    status = snd_pcm_hw_params_set_format(pcm, params, SND_PCM_FORMAT_S16_LE);
+    if (status < 0)
+    {
+        return -EIO;
+    }
+
+    status = snd_pcm_hw_params_set_channels(pcm, params, config->channels);
+    if (status < 0)
+    {
+        return -EIO;
+    }
+
+    status = snd_pcm_hw_params_set_rate_near(pcm, params, &rate, NULL);
+    if ((status < 0) || (rate != config->sample_rate_hz))
+    {
+        return -EIO;
+    }
+
+    status = snd_pcm_hw_params_set_period_size_near(pcm, params, &period_frames, NULL);
+    if (status < 0)
+    {
+        return -EIO;
+    }
+
+    status = snd_pcm_hw_params_set_buffer_size_near(pcm, params, &buffer_frames);
+    if (status < 0)
+    {
+        return -EIO;
+    }
+
+    status = snd_pcm_hw_params(pcm, params);
+    if (status < 0)
+    {
+        return -EIO;
+    }
+
+    status = snd_pcm_prepare(pcm);
+    return (status < 0) ? -EIO : 0;
+}
+
+/**
+ * @brief Recover ALSA capture from transient overrun/suspend states.
+ * @param pcm Open ALSA PCM handle.
+ * @param err ALSA error code returned by a read operation.
+ * @return 0 when recovered, or a negative errorno_e value on failure.
+ */
+static int recover_pcm(snd_pcm_t* const pcm, int err)
+{
+    int status;
+
+    if (err == -EPIPE)
+    {
+        status = snd_pcm_prepare(pcm);
+        return (status < 0) ? -EIO : 0;
+    }
+
+    if (err == -ESTRPIPE)
+    {
+        do
+        {
+            status = snd_pcm_resume(pcm);
+        } while (status == -EAGAIN);
+
+        if (status < 0)
+        {
+            status = snd_pcm_prepare(pcm);
+        }
+
+        return (status < 0) ? -EIO : 0;
+    }
+
+    return -EIO;
+}
+#endif
+
+// === Public function implementation ============================================================================== //
+
+/**
+ * @brief Initialize USB audio capture through ALSA.
+ * @param capture Capture adapter instance.
+ * @param config Requested capture configuration.
+ * @return 0 on success, or a negative errorno_e value on failure.
+ */
+int usb_audio_capture_init(usb_audio_capture_t* const capture,
+                           usb_audio_capture_config_t const* const config)
+{
+    if ((capture == NULL) || (config == NULL) || (config->device[0] == '\0') ||
+        (config->sample_rate_hz == 0U) || (config->channels == 0U) ||
+        (config->samples_per_chunk == 0U))
+    {
+        return -EINVAL;
+    }
+
+#ifdef CONFIG_USB_AUDIO_ALSA
+    snd_pcm_t* pcm = NULL;
+    int status;
+
+    memset(capture, 0, sizeof(*capture));
+    capture->config = *config;
+    capture->bytes_per_frame = config->channels * USB_AUDIO_CAPTURE_SAMPLE_BYTES;
+
+    status = snd_pcm_open(&pcm, config->device, SND_PCM_STREAM_CAPTURE, 0);
+    if (status < 0)
+    {
+        return -EIO;
+    }
+
+    status = configure_pcm(pcm, config);
+    if (status != 0)
+    {
+        snd_pcm_close(pcm);
+        return status;
+    }
+
+    capture->pcm_handle = pcm;
+    capture->initialized = 1U;
+    return 0;
+#else
+    (void)capture;
+    (void)config;
+    return -EIO;
+#endif
+}
+
+/**
+ * @brief Read exactly one configured PCM chunk from ALSA.
+ * @param capture Initialized capture adapter.
+ * @param dst Destination buffer.
+ * @param dst_size Destination buffer length in bytes.
+ * @param bytes_read Written with bytes captured on success.
+ * @return 0 on success, or a negative errorno_e value on failure.
+ */
+int usb_audio_capture_read_chunk(usb_audio_capture_t* const capture,
+                                 uint8_t* const dst,
+                                 size_t dst_size,
+                                 size_t* const bytes_read)
+{
+    if ((capture == NULL) || (dst == NULL) || (bytes_read == NULL) ||
+        (capture->initialized == 0U))
+    {
+        return -EINVAL;
+    }
+
+#ifdef CONFIG_USB_AUDIO_ALSA
+    snd_pcm_t* const pcm = (snd_pcm_t*)capture->pcm_handle;
+    size_t const expected_bytes = (size_t)capture->config.samples_per_chunk * capture->bytes_per_frame;
+    snd_pcm_sframes_t frames_done = 0;
+
+    if (dst_size < expected_bytes)
+    {
+        return -EINVAL;
+    }
+
+    while ((uint32_t)frames_done < capture->config.samples_per_chunk)
+    {
+        uint8_t* const write_ptr = &dst[(size_t)frames_done * capture->bytes_per_frame];
+        snd_pcm_uframes_t const frames_left = capture->config.samples_per_chunk - (uint32_t)frames_done;
+        snd_pcm_sframes_t const got = snd_pcm_readi(pcm, write_ptr, frames_left);
+
+        if (got > 0)
+        {
+            frames_done += got;
+        }
+        else if (got == -EAGAIN)
+        {
+            continue;
+        }
+        else if (recover_pcm(pcm, (int)got) != 0)
+        {
+            return -EIO;
+        }
+    }
+
+    *bytes_read = expected_bytes;
+    return 0;
+#else
+    (void)capture;
+    (void)dst;
+    (void)dst_size;
+    (void)bytes_read;
+    return -EIO;
+#endif
+}
+
+/**
+ * @brief Abort a blocking ALSA read so a service can stop promptly.
+ * @param capture Capture adapter instance.
+ * @return None.
+ */
+void usb_audio_capture_abort(usb_audio_capture_t* const capture)
+{
+#ifdef CONFIG_USB_AUDIO_ALSA
+    if ((capture != NULL) && (capture->pcm_handle != NULL))
+    {
+        snd_pcm_drop((snd_pcm_t*)capture->pcm_handle);
+    }
+#else
+    (void)capture;
+#endif
+}
+
+/**
+ * @brief Release ALSA capture resources.
+ * @param capture Capture adapter instance.
+ * @return None.
+ */
+void usb_audio_capture_cleanup(usb_audio_capture_t* const capture)
+{
+#ifdef CONFIG_USB_AUDIO_ALSA
+    if (capture == NULL)
+    {
+        return;
+    }
+
+    if (capture->pcm_handle != NULL)
+    {
+        snd_pcm_close((snd_pcm_t*)capture->pcm_handle);
+    }
+
+    memset(capture, 0, sizeof(*capture));
+#else
+    (void)capture;
+#endif
+}
+
+// === End of documentation ======================================================================================== //

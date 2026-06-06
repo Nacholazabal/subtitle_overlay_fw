@@ -17,6 +17,7 @@ Some fancy copyright message here (if needed)
 #include "log.h"
 #include "SubtitleAO.h"
 #include "SystemAO.h"
+#include "USBAudioAO.h"
 #include "VideoAO.h"
 
 // === Macros definitions ========================================================================================== //
@@ -138,10 +139,21 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
 
         me->active_video_width = e->width;
         me->active_video_height = e->height;
-        LOG_INFO("system: requesting subtitle init for %lux%lu",
+        LOG_INFO("system: requesting USB audio init before subtitle init for %lux%lu",
                  (unsigned long)e->width,
                  (unsigned long)e->height);
-        post_component_init(me, AO_Subtitle, COMPONENT_VIDEO, e->width, e->height);
+        post_component_init(me, AO_USBAudio, COMPONENT_VIDEO, e->width, e->height);
+        break;
+
+    case COMPONENT_USB_AUDIO:
+        LOG_INFO("system: requesting subtitle init for %lux%lu",
+                 (unsigned long)me->active_video_width,
+                 (unsigned long)me->active_video_height);
+        post_component_init(me,
+                            AO_Subtitle,
+                            COMPONENT_USB_AUDIO,
+                            me->active_video_width,
+                            me->active_video_height);
         break;
 
     case COMPONENT_SUBTITLE_PIPELINE:
