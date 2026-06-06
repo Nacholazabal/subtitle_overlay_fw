@@ -1,5 +1,6 @@
 # Local LLM / assistant context and tool state
 .llm_context/
+.localdev/
 .agents/
 .codex/
 AGENTS.md
