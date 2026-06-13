@@ -5,6 +5,8 @@ CEEDLING ?= $(shell if command -v bundle >/dev/null 2>&1 && [ -f Gemfile ]; then
 VIDEO_PORT_BUILD_DIR := build/video-port-check
 APP_BUILD_DIR := build/app
 APP_TARGET := subtitle_overlay_fw
+PETALINUX_PROJECT ?= /home/tesislinux/tesis/hdmi-overlay
+ALSA_SYSROOT_COMPONENT ?= $(PETALINUX_PROJECT)/build/tmp/sysroots-components/cortexa9hf-neon/alsa-lib
 
 COMMON_CFLAGS := \
 	-std=gnu99 \
@@ -33,10 +35,13 @@ COMMON_CFLAGS := \
 	-Isrc/svc/usb_audio \
 	-Isrc/svc/video_pipeline
 
-USB_AUDIO_ENABLE_ALSA ?= 0
+USB_AUDIO_ENABLE_ALSA ?= 1
 
 ifeq ($(USB_AUDIO_ENABLE_ALSA),1)
 COMMON_CFLAGS += -DCONFIG_USB_AUDIO_ALSA
+COMMON_CFLAGS += -I$(ALSA_SYSROOT_COMPONENT)/usr/include
+APP_LDLIBS += -L$(ALSA_SYSROOT_COMPONENT)/usr/lib
+APP_LDLIBS += -Wl,-rpath-link,$(ALSA_SYSROOT_COMPONENT)/usr/lib
 APP_LDLIBS += -lasound
 endif
 

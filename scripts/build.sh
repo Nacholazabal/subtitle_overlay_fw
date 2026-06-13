@@ -9,11 +9,11 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 VM_HOST="${VM_HOST:-petalinux-vm}"
 VM_PROJECT_ROOT="${VM_PROJECT_ROOT:-/home/tesislinux/tesis}"
+VM_PETALINUX_PROJECT="${VM_PETALINUX_PROJECT:-/home/tesislinux/tesis/hdmi-overlay}"
 REMOTE_PROJECT_NAME="${REMOTE_PROJECT_NAME:-subtitle_overlay_fw}"
 REMOTE_SETTINGS="${REMOTE_SETTINGS:-/home/tesislinux/tesis/settings.sh}"
 REMOTE_CC="${REMOTE_CC:-arm-linux-gnueabihf-gcc}"
 REMOTE_STRIP="${REMOTE_STRIP:-arm-linux-gnueabihf-strip}"
-USB_AUDIO_ENABLE_ALSA="${USB_AUDIO_ENABLE_ALSA:-0}"
 
 APP_TARGET="${APP_TARGET:-subtitle_overlay_fw}"
 LOCAL_ARTIFACT_DIR="${LOCAL_ARTIFACT_DIR:-${REPO_ROOT}/build/vm-artifacts}"
@@ -59,7 +59,7 @@ set -u
 echo \"PATH=\${PATH}\"
 command -v '${REMOTE_CC}' || true
 make clean-app
-make app CC='${REMOTE_CC}' STRIP='${REMOTE_STRIP}' USB_AUDIO_ENABLE_ALSA='${USB_AUDIO_ENABLE_ALSA}'
+make app CC='${REMOTE_CC}' STRIP='${REMOTE_STRIP}' PETALINUX_PROJECT='${VM_PETALINUX_PROJECT}'
 if command -v readelf >/dev/null 2>&1; then
     readelf -V '${REMOTE_BINARY}' | grep GLIBC || true
 fi

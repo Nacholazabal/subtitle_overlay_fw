@@ -8,10 +8,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-USB_AUDIO_ENABLE_ALSA="${USB_AUDIO_ENABLE_ALSA:-0}"
+USB_AUDIO_TCP_HOST="${USB_AUDIO_TCP_HOST:-192.168.1.20}"
+USB_AUDIO_TCP_PORT="${USB_AUDIO_TCP_PORT:-5000}"
+USB_AUDIO_PCM_DEVICE="${USB_AUDIO_PCM_DEVICE:-hw:0,0}"
 
-BOARD_HOST="${BOARD_HOST:-hdmi-overlay}"
+BOARD_HOST="hdmi-overlay"
 BOARD_DEPLOY_DIR="${BOARD_DEPLOY_DIR:-/home/root}"
+BOARD_SSH_TARGET="${BOARD_HOST}"
+BOARD_SSH_OPTS=()
 
 APP_TARGET="${APP_TARGET:-subtitle_overlay_fw}"
 LOCAL_ARTIFACT_DIR="${LOCAL_ARTIFACT_DIR:-${REPO_ROOT}/build/vm-artifacts}"
@@ -32,6 +36,13 @@ EOF
 
 step() {
     printf '\n==> %s\n' "$1"
+}
+
+shell_quote() {
+    local value
+
+    value="${1//\'/\'\\\'\'}"
+    printf "'%s'" "${value}"
 }
 
 while getopts ":xh" opt; do
@@ -66,7 +77,7 @@ fi
 
 if [[ "${SKIP_BUILD}" -eq 0 ]]; then
     step "Refreshing VM build artifact"
-    USB_AUDIO_ENABLE_ALSA="${USB_AUDIO_ENABLE_ALSA}" "${SCRIPT_DIR}/build.sh"
+    "${SCRIPT_DIR}/build.sh"
 else
     step "Using latest local artifact"
 fi
@@ -77,9 +88,9 @@ if [[ ! -f "${LOCAL_BINARY}" ]]; then
     exit 2
 fi
 
-step "Copying ${LOCAL_BINARY} to ${BOARD_HOST}:${BOARD_DEPLOY_DIR}/"
-scp -O "${LOCAL_BINARY}" "${BOARD_HOST}:${BOARD_DEPLOY_DIR}/"
+step "Copying ${LOCAL_BINARY} to ${BOARD_SSH_TARGET}:${BOARD_DEPLOY_DIR}/"
+scp -O "${BOARD_SSH_OPTS[@]}" "${LOCAL_BINARY}" "${BOARD_SSH_TARGET}:${BOARD_DEPLOY_DIR}/"
 
 step "Running ${APP_TARGET} on ${BOARD_HOST}"
-ssh -t "${BOARD_HOST}" \
-    "cd '${BOARD_DEPLOY_DIR}' && chmod +x '${APP_TARGET}' && ./'${APP_TARGET}'"
+ssh "${BOARD_SSH_OPTS[@]}" -t "${BOARD_SSH_TARGET}" \
+    "cd $(shell_quote "${BOARD_DEPLOY_DIR}") && chmod +x $(shell_quote "${APP_TARGET}") && USB_AUDIO_PCM_DEVICE=$(shell_quote "${USB_AUDIO_PCM_DEVICE}") USB_AUDIO_TCP_HOST=$(shell_quote "${USB_AUDIO_TCP_HOST}") USB_AUDIO_TCP_PORT=$(shell_quote "${USB_AUDIO_TCP_PORT}") ./$(shell_quote "${APP_TARGET}")"
