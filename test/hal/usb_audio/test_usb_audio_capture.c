@@ -13,8 +13,8 @@ static size_t bytes_read;
 static void init_valid_config(void)
 {
     memset(&config, 0, sizeof(config));
-    snprintf(config.device, sizeof(config.device), "%s", "plughw:1,0");
-    config.sample_rate_hz = 16000U;
+    snprintf(config.device, sizeof(config.device), "%s", "hw:0,0");
+    config.sample_rate_hz = 48000U;
     config.channels = 1U;
     config.samples_per_chunk = 320U;
 }

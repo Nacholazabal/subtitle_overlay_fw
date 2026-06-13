@@ -32,13 +32,13 @@ Some fancy copyright message here (if needed)
 
 // === Macros definitions ========================================================================================== //
 
-#define USB_AUDIO_STREAM_FORMAT_S16_LE       (1U)
-#define USB_AUDIO_STREAM_CONNECT_RETRY_SEC   (1U)
-#define USB_AUDIO_STREAM_POP_WAIT_NS         (200000000L)
-#define USB_AUDIO_STREAM_HEADER_MAGIC        "SAUDPCM"
-#define USB_AUDIO_STREAM_HEADER_MAGIC_BYTES  (8U)
-#define USB_AUDIO_STREAM_HEADER_WORDS        (6U)
-#define USB_AUDIO_STREAM_CHUNK_HEADER_WORDS  (5U)
+#define USB_AUDIO_STREAM_FORMAT_S16_LE      (1U)
+#define USB_AUDIO_STREAM_CONNECT_RETRY_SEC  (1U)
+#define USB_AUDIO_STREAM_POP_WAIT_NS        (200000000L)
+#define USB_AUDIO_STREAM_HEADER_MAGIC       "SAUDPCM"
+#define USB_AUDIO_STREAM_HEADER_MAGIC_BYTES (8U)
+#define USB_AUDIO_STREAM_HEADER_WORDS       (6U)
+#define USB_AUDIO_STREAM_CHUNK_HEADER_WORDS (5U)
 
 // === Private data type declarations ============================================================================== //
 // === Private variable declarations =============================================================================== //
@@ -360,18 +360,33 @@ static void close_sender_fd(usb_audio_stream_t* const stream)
 static void* capture_thread_main(void* const arg)
 {
     usb_audio_stream_t* const stream = (usb_audio_stream_t*)arg;
+    uint8_t first_read_pending = 1U;
+
+    LOG_INFO("usb-audio: capture thread started");
 
     while (stream->stop_requested == 0U)
     {
         usb_audio_stream_chunk_t chunk;
         size_t bytes_read = 0U;
-        int const status = usb_audio_capture_read_chunk(&stream->capture,
-                                                        chunk.payload,
-                                                        sizeof(chunk.payload),
-                                                        &bytes_read);
+        int status;
+
+        if (first_read_pending != 0U)
+        {
+            LOG_INFO("usb-audio: waiting for first ALSA chunk");
+        }
+
+        status = usb_audio_capture_read_chunk(&stream->capture,
+                                              chunk.payload,
+                                              sizeof(chunk.payload),
+                                              &bytes_read);
 
         if (status != 0)
         {
+            if (status == -EAGAIN)
+            {
+                continue;
+            }
+
             LOG_ERROR("usb-audio: capture read failed, code=%ld", (long)status);
             stream->stop_requested = 1U;
             pthread_cond_broadcast(&stream->queue.cond);
@@ -382,8 +397,18 @@ static void* capture_thread_main(void* const arg)
         chunk.sequence = stream->next_sequence++;
         chunk.bytes_used = (uint32_t)bytes_read;
         queue_push_drop_oldest(&stream->queue, &chunk, &stream->total_dropped);
+
+        if ((first_read_pending != 0U) || ((chunk.sequence % 50U) == 0U))
+        {
+            LOG_INFO("usb-audio: captured chunk seq=%lu bytes=%lu dropped=%lu",
+                     (unsigned long)chunk.sequence,
+                     (unsigned long)chunk.bytes_used,
+                     (unsigned long)stream->total_dropped);
+            first_read_pending = 0U;
+        }
     }
 
+    LOG_INFO("usb-audio: capture thread stopped");
     return NULL;
 }
 
@@ -406,6 +431,9 @@ static void* sender_thread_main(void* const arg)
             stream->sender_fd = connect_tcp(stream->config.tcp_host, stream->config.tcp_port);
             if (stream->sender_fd < 0)
             {
+                LOG_WARNING("usb-audio: TCP connect failed target=%s:%lu",
+                            stream->config.tcp_host,
+                            (unsigned long)stream->config.tcp_port);
                 sleep(USB_AUDIO_STREAM_CONNECT_RETRY_SEC);
                 continue;
             }
@@ -416,9 +444,12 @@ static void* sender_thread_main(void* const arg)
 
             if (send_stream_header(stream->sender_fd) != 0)
             {
+                LOG_WARNING("usb-audio: failed to send stream header");
                 close_sender_fd(stream);
                 continue;
             }
+
+            LOG_INFO("usb-audio: stream header sent");
         }
 
         status = queue_pop_wait(&stream->queue, &chunk, &stream->stop_requested);
@@ -436,9 +467,17 @@ static void* sender_thread_main(void* const arg)
             LOG_WARNING("usb-audio: sender disconnected");
             close_sender_fd(stream);
         }
+        else if ((chunk.sequence % 50U) == 0U)
+        {
+            LOG_INFO("usb-audio: sent chunk seq=%lu bytes=%lu dropped=%lu",
+                     (unsigned long)chunk.sequence,
+                     (unsigned long)chunk.bytes_used,
+                     (unsigned long)stream->total_dropped);
+        }
     }
 
     close_sender_fd(stream);
+    LOG_INFO("usb-audio: sender thread stopped");
     return NULL;
 }
 
@@ -497,8 +536,8 @@ int usb_audio_stream_start(usb_audio_stream_t* const stream,
     usb_audio_capture_config_t capture_config;
     int status;
 
-    if ((stream == NULL) || (config == NULL) || (config->pcm_device[0] == '\0') ||
-        (config->tcp_host[0] == '\0') || (config->tcp_port == 0U))
+    if ((stream == NULL) || (config == NULL) || (config->pcm_device[0] == '\0')
+        || (config->tcp_host[0] == '\0') || (config->tcp_port == 0U))
     {
         return -EINVAL;
     }

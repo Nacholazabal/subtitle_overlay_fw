@@ -13,9 +13,11 @@ Some fancy copyright message here (if needed)
 
 #include "usb_audio_capture.h"
 
+#include <alloca.h>
 #include <string.h>
 
 #include "errorno.h"
+#include "log.h"
 
 #ifdef CONFIG_USB_AUDIO_ALSA
     #include <alsa/asoundlib.h>
@@ -25,7 +27,6 @@ Some fancy copyright message here (if needed)
 
 #define USB_AUDIO_CAPTURE_SAMPLE_BYTES (2U)
 #define USB_AUDIO_CAPTURE_BUFFER_PERIODS (8U)
-
 // === Private data type declarations ============================================================================== //
 // === Private variable declarations =============================================================================== //
 // === Private function declarations =============================================================================== //
@@ -33,6 +34,7 @@ Some fancy copyright message here (if needed)
 #ifdef CONFIG_USB_AUDIO_ALSA
 static int configure_pcm(snd_pcm_t* pcm, usb_audio_capture_config_t const* config);
 static int recover_pcm(snd_pcm_t* pcm, int err);
+static char const* pcm_state_name(snd_pcm_state_t state);
 #endif
 
 // === Public variable definitions ================================================================================= //
@@ -101,11 +103,23 @@ static int configure_pcm(snd_pcm_t* const pcm, usb_audio_capture_config_t const*
     status = snd_pcm_hw_params(pcm, params);
     if (status < 0)
     {
+        LOG_ERROR("usb-audio: ALSA hw params apply failed: %s", snd_strerror(status));
         return -EIO;
     }
 
     status = snd_pcm_prepare(pcm);
-    return (status < 0) ? -EIO : 0;
+    if (status < 0)
+    {
+        LOG_ERROR("usb-audio: ALSA prepare failed: %s", snd_strerror(status));
+        return -EIO;
+    }
+
+    LOG_INFO("usb-audio: ALSA configured rate=%lu channels=%lu period=%lu buffer=%lu",
+             (unsigned long)rate,
+             (unsigned long)config->channels,
+             (unsigned long)period_frames,
+             (unsigned long)buffer_frames);
+    return 0;
 }
 
 /**
@@ -141,6 +155,39 @@ static int recover_pcm(snd_pcm_t* const pcm, int err)
 
     return -EIO;
 }
+
+/**
+ * @brief Return a stable name for an ALSA PCM state.
+ * @param state ALSA PCM state value.
+ * @return Printable state name.
+ */
+static char const* pcm_state_name(snd_pcm_state_t const state)
+{
+    switch (state)
+    {
+    case SND_PCM_STATE_OPEN:
+        return "open";
+    case SND_PCM_STATE_SETUP:
+        return "setup";
+    case SND_PCM_STATE_PREPARED:
+        return "prepared";
+    case SND_PCM_STATE_RUNNING:
+        return "running";
+    case SND_PCM_STATE_XRUN:
+        return "xrun";
+    case SND_PCM_STATE_DRAINING:
+        return "draining";
+    case SND_PCM_STATE_PAUSED:
+        return "paused";
+    case SND_PCM_STATE_SUSPENDED:
+        return "suspended";
+    case SND_PCM_STATE_DISCONNECTED:
+        return "disconnected";
+    default:
+        return "unknown";
+    }
+}
+
 #endif
 
 // === Public function implementation ============================================================================== //
@@ -172,8 +219,13 @@ int usb_audio_capture_init(usb_audio_capture_t* const capture,
     status = snd_pcm_open(&pcm, config->device, SND_PCM_STREAM_CAPTURE, 0);
     if (status < 0)
     {
+        LOG_ERROR("usb-audio: ALSA open failed device=%s: %s",
+                  config->device,
+                  snd_strerror(status));
         return -EIO;
     }
+
+    LOG_INFO("usb-audio: ALSA opened capture device=%s", config->device);
 
     status = configure_pcm(pcm, config);
     if (status != 0)
@@ -184,6 +236,9 @@ int usb_audio_capture_init(usb_audio_capture_t* const capture,
 
     capture->pcm_handle = pcm;
     capture->initialized = 1U;
+    LOG_INFO("usb-audio: ALSA capture initialized chunk_frames=%lu chunk_bytes=%lu",
+             (unsigned long)config->samples_per_chunk,
+             (unsigned long)(config->samples_per_chunk * capture->bytes_per_frame));
     return 0;
 #else
     (void)capture;
@@ -225,19 +280,27 @@ int usb_audio_capture_read_chunk(usb_audio_capture_t* const capture,
     {
         uint8_t* const write_ptr = &dst[(size_t)frames_done * capture->bytes_per_frame];
         snd_pcm_uframes_t const frames_left = capture->config.samples_per_chunk - (uint32_t)frames_done;
-        snd_pcm_sframes_t const got = snd_pcm_readi(pcm, write_ptr, frames_left);
+        snd_pcm_sframes_t got;
+
+        got = snd_pcm_readi(pcm, write_ptr, frames_left);
 
         if (got > 0)
         {
             frames_done += got;
         }
-        else if (got == -EAGAIN)
+        else
         {
-            continue;
-        }
-        else if (recover_pcm(pcm, (int)got) != 0)
-        {
-            return -EIO;
+            LOG_WARNING("usb-audio: ALSA read returned=%ld state=%s err=%s frames_done=%ld frames_left=%ld",
+                        (long)got,
+                        pcm_state_name(snd_pcm_state(pcm)),
+                        snd_strerror((int)got),
+                        (long)frames_done,
+                        (long)frames_left);
+
+            if (recover_pcm(pcm, (int)got) != 0)
+            {
+                return -EIO;
+            }
         }
     }
 

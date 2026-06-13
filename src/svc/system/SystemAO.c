@@ -32,6 +32,8 @@ typedef struct
     int32_t error_code;
     uint32_t active_video_width;
     uint32_t active_video_height;
+    uint8_t usb_audio_ready;
+    uint8_t subtitle_init_requested;
 } system_ao_t;
 
 // === Private variable declarations =============================================================================== //
@@ -111,9 +113,12 @@ static void on_init(system_ao_t* const me)
     me->last_ready_component = COMPONENT_NONE;
     me->active_video_width = 0U;
     me->active_video_height = 0U;
+    me->usb_audio_ready = 0U;
+    me->subtitle_init_requested = 0U;
 
     LOG_INFO("system: init sequence started");
     post_component_init(me, AO_Video, COMPONENT_NONE, 0U, 0U);
+    post_component_init(me, AO_USBAudio, COMPONENT_NONE, 0U, 0U);
 }
 
 static int on_component_ready(system_ao_t* const me, component_ready_evt_t const* const e)
@@ -139,21 +144,39 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
 
         me->active_video_width = e->width;
         me->active_video_height = e->height;
-        LOG_INFO("system: requesting USB audio init before subtitle init for %lux%lu",
-                 (unsigned long)e->width,
-                 (unsigned long)e->height);
-        post_component_init(me, AO_USBAudio, COMPONENT_VIDEO, e->width, e->height);
+        if (me->usb_audio_ready != 0U)
+        {
+            LOG_INFO("system: requesting subtitle init for %lux%lu",
+                     (unsigned long)e->width,
+                     (unsigned long)e->height);
+            post_component_init(me, AO_Subtitle, COMPONENT_VIDEO, e->width, e->height);
+            me->subtitle_init_requested = 1U;
+        }
+        else
+        {
+            LOG_INFO("system: video ready, waiting for usb-audio before subtitle init");
+        }
         break;
 
     case COMPONENT_USB_AUDIO:
-        LOG_INFO("system: requesting subtitle init for %lux%lu",
-                 (unsigned long)me->active_video_width,
-                 (unsigned long)me->active_video_height);
-        post_component_init(me,
-                            AO_Subtitle,
-                            COMPONENT_USB_AUDIO,
-                            me->active_video_width,
-                            me->active_video_height);
+        me->usb_audio_ready = 1U;
+        if ((me->active_video_width != 0U) && (me->active_video_height != 0U)
+            && (me->subtitle_init_requested == 0U))
+        {
+            LOG_INFO("system: usb-audio ready, requesting subtitle init for %lux%lu",
+                     (unsigned long)me->active_video_width,
+                     (unsigned long)me->active_video_height);
+            post_component_init(me,
+                                AO_Subtitle,
+                                COMPONENT_USB_AUDIO,
+                                me->active_video_width,
+                                me->active_video_height);
+            me->subtitle_init_requested = 1U;
+        }
+        else
+        {
+            LOG_INFO("system: usb-audio ready, subtitle still waiting for video");
+        }
         break;
 
     case COMPONENT_SUBTITLE_PIPELINE:

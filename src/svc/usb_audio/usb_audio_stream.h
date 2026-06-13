@@ -27,11 +27,11 @@ extern "C" {
 
 // === Public macros definitions =================================================================================== //
 
-#define USB_AUDIO_STREAM_DEFAULT_DEVICE "plughw:1,0"
-#define USB_AUDIO_STREAM_DEFAULT_HOST   "192.168.1.10"
+#define USB_AUDIO_STREAM_DEFAULT_DEVICE "hw:0,0"
+#define USB_AUDIO_STREAM_DEFAULT_HOST   "192.168.1.20"
 #define USB_AUDIO_STREAM_DEFAULT_PORT   (5000U)
 
-#define USB_AUDIO_STREAM_SAMPLE_RATE_HZ  (16000U)
+#define USB_AUDIO_STREAM_SAMPLE_RATE_HZ  (48000U)
 #define USB_AUDIO_STREAM_CHANNELS        (1U)
 #define USB_AUDIO_STREAM_SAMPLE_BYTES    (2U)
 #define USB_AUDIO_STREAM_CHUNK_MS        (20U)

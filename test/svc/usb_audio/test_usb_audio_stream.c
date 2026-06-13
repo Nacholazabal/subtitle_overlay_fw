@@ -14,7 +14,7 @@ static usb_audio_stream_config_t config;
 static void init_valid_config(void)
 {
     memset(&config, 0, sizeof(config));
-    snprintf(config.pcm_device, sizeof(config.pcm_device), "%s", "plughw:1,0");
+    snprintf(config.pcm_device, sizeof(config.pcm_device), "%s", "hw:0,0");
     snprintf(config.tcp_host, sizeof(config.tcp_host), "%s", "127.0.0.1");
     config.tcp_port = 5000U;
 }

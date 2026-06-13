@@ -61,22 +61,25 @@ def main():
                 wav.setsampwidth(2)
                 wav.setframerate(rate)
 
-                while True:
-                    chunk_header = recv_exact(conn, struct.calcsize(CHUNK_HEADER))
-                    seq, timestamp_ns, payload_bytes, dropped, chunk_rate, chunk_channels, chunk_fmt = (
-                        struct.unpack(CHUNK_HEADER, chunk_header)
-                    )
-                    if payload_bytes > bytes_per_chunk:
-                        raise RuntimeError(f"bad payload size: {payload_bytes}")
-                    if (chunk_rate, chunk_channels, chunk_fmt) != (rate, channels, fmt):
-                        raise RuntimeError("chunk format changed")
+                try:
+                    while True:
+                        chunk_header = recv_exact(conn, struct.calcsize(CHUNK_HEADER))
+                        seq, timestamp_ns, payload_bytes, dropped, chunk_rate, chunk_channels, chunk_fmt = (
+                            struct.unpack(CHUNK_HEADER, chunk_header)
+                        )
+                        if payload_bytes > bytes_per_chunk:
+                            raise RuntimeError(f"bad payload size: {payload_bytes}")
+                        if (chunk_rate, chunk_channels, chunk_fmt) != (rate, channels, fmt):
+                            raise RuntimeError("chunk format changed")
 
-                    payload = recv_exact(conn, payload_bytes)
-                    wav.writeframes(payload)
+                        payload = recv_exact(conn, payload_bytes)
+                        wav.writeframes(payload)
 
-                    if seq % 50 == 0:
-                        seconds = timestamp_ns / 1_000_000_000.0
-                        print(f"seq={seq} t={seconds:.3f}s dropped={dropped}")
+                        if seq % 50 == 0:
+                            seconds = timestamp_ns / 1_000_000_000.0
+                            print(f"seq={seq} t={seconds:.3f}s dropped={dropped}")
+                except EOFError:
+                    print("connection closed")
 
 
 if __name__ == "__main__":
