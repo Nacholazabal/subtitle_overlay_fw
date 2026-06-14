@@ -320,6 +320,7 @@ int video_output_stop(video_output_t* const output)
     {
         (void)video_dma_stop(output->dma, VIDEO_DMA_CHANNEL_MM2S);
     }
+    (void)video_dynclk_stop(&output->dynclk);
 
     output->running = 0U;
     output->mode = NULL;

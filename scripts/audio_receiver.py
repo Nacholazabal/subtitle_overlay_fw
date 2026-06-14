@@ -3,9 +3,11 @@
 
 import argparse
 import json
+import queue
 import random
 import socket
 import struct
+import threading
 import wave
 
 
@@ -133,29 +135,107 @@ class JsonlSubtitleSink(SubtitleSink):
 
 
 class TcpSubtitleSink(SubtitleSink):
-    def __init__(self, host, port):
+    def __init__(self, host, port, max_queue=32):
         self.host = host
         self.port = port
         self.sock = None
+        self.events = queue.Queue(maxsize=max_queue)
+        self.stop_event = threading.Event()
+        self.worker = threading.Thread(target=self._worker_main, daemon=True)
+        self.worker.start()
 
     def _connect(self):
         if self.sock is None:
             self.sock = socket.create_connection((self.host, self.port), timeout=2.0)
+            self.sock.settimeout(2.0)
             print(f"subtitle sink connected to {self.host}:{self.port}")
 
     def handle_event(self, event):
-        line = json.dumps(event, ensure_ascii=False) + "\n"
         try:
-            self._connect()
-            self.sock.sendall(line.encode("utf-8"))
-        except OSError as exc:
-            print(f"subtitle sink send failed: {exc}")
-            self.close()
+            self.events.put_nowait(event)
+            return
+        except queue.Full:
+            pass
+
+        if not event.get("is_final", False):
+            return
+
+        if self._drop_one_partial_from_queue():
+            try:
+                self.events.put_nowait(event)
+                return
+            except queue.Full:
+                pass
+
+        print("subtitle sink queue full: dropping final transcript")
+
+    def _drop_one_partial_from_queue(self):
+        kept = []
+        dropped = False
+
+        while True:
+            try:
+                queued = self.events.get_nowait()
+            except queue.Empty:
+                break
+
+            if (not dropped) and (not queued.get("is_final", False)):
+                dropped = True
+                continue
+
+            kept.append(queued)
+
+        for queued in kept:
+            try:
+                self.events.put_nowait(queued)
+            except queue.Full:
+                break
+
+        return dropped
+
+    def _send_event(self, event):
+        line = json.dumps(event, ensure_ascii=False) + "\n"
+        self._connect()
+        self.sock.sendall(line.encode("utf-8"))
+
+    def _worker_main(self):
+        while not self.stop_event.is_set():
+            try:
+                event = self.events.get(timeout=0.1)
+            except queue.Empty:
+                continue
+
+            while not self.stop_event.is_set():
+                try:
+                    self._send_event(event)
+                    break
+                except OSError as exc:
+                    print(f"subtitle sink send failed: {exc}")
+                    self._close_socket()
+                    self.stop_event.wait(0.5)
+
+    def _close_socket(self):
+        if self.sock is not None:
+            try:
+                self.sock.close()
+            finally:
+                self.sock = None
 
     def close(self):
+        self.stop_event.set()
         if self.sock is not None:
-            self.sock.close()
-            self.sock = None
+            try:
+                self.sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        self._close_socket()
+        self.worker.join(timeout=2.0)
+
+        while True:
+            try:
+                self.events.get_nowait()
+            except queue.Empty:
+                break
 
 
 class CompositeSubtitleSink(SubtitleSink):

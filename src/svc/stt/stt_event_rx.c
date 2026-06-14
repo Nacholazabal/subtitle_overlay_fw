@@ -224,6 +224,8 @@ static int json_get_string(char const* const line,
 {
     char const* cursor = json_value(line, key);
     size_t out = 0U;
+    uint8_t original_non_empty = 0U;
+    uint8_t truncated = 0U;
 
     if ((cursor == NULL) || (dst == NULL) || (dst_size == 0U) || (*cursor != '"'))
     {
@@ -235,6 +237,7 @@ static int json_get_string(char const* const line,
     {
         char ch = *cursor++;
 
+        original_non_empty = 1U;
         if (ch == '\\')
         {
             ch = *cursor++;
@@ -258,7 +261,8 @@ static int json_get_string(char const* const line,
 
         if ((out + 1U) >= dst_size)
         {
-            break;
+            truncated = 1U;
+            continue;
         }
 
         dst[out++] = ch;
@@ -270,7 +274,12 @@ static int json_get_string(char const* const line,
     }
 
     dst[out] = '\0';
-    return (out > 0U) ? 0 : -EINVAL;
+    if (truncated != 0U)
+    {
+        LOG_WARNING("stt-rx: truncated JSON string field '%s'", key);
+    }
+
+    return (original_non_empty != 0U) ? 0 : -EINVAL;
 }
 
 /**

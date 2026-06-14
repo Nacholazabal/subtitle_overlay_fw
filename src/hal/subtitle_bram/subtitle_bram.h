@@ -13,6 +13,7 @@ Some fancy copyright message here (if needed)
 
 // === Headers files inclusions ==================================================================================== //
 
+#include <stddef.h>
 #include <stdint.h>
 
 // === C++ Guard =================================================================================================== //
@@ -45,6 +46,7 @@ int subtitle_bram_set_pixel(subtitle_bram_t* bram, int32_t x, int32_t y);
 int subtitle_bram_clear_pixel(subtitle_bram_t* bram, int32_t x, int32_t y);
 int subtitle_bram_write_bitmap(subtitle_bram_t* bram,
                                uint8_t const* src,
+                               size_t src_size,
                                int32_t x,
                                int32_t y,
                                uint32_t width,

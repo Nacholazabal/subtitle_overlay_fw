@@ -15,6 +15,7 @@ Some fancy copyright message here (if needed)
 
 #include <math.h>
 #include <stdio.h>
+#include <time.h>
 
 #include "hw_platform.h"
 #include "xil_io.h"
@@ -39,7 +40,7 @@ Some fancy copyright message here (if needed)
 #define BIT_DYNCLK_START   0U
 #define BIT_DYNCLK_RUNNING 0U
 
-#define CLK_TIMEOUT_COUNT 0x00500000U
+#define CLK_TIMEOUT_NS 10000000ULL
 
 // === Private data type declarations ============================================================================== //
 
@@ -156,6 +157,7 @@ static uint32_t clk_count_calc(uint32_t divide);
 static int clk_find_reg(clk_config_t* reg_values, clk_mode_t const* clk_params);
 static double clk_find_params(double frequency_mhz, clk_mode_t* best_pick);
 static void clk_write_reg(uintptr_t base, clk_config_t const* reg_values);
+static uint64_t dynclk_now_ns(void);
 static int clk_start(uintptr_t base);
 
 // === Public variable definitions ================================================================================= //
@@ -316,6 +318,14 @@ static void clk_write_reg(uintptr_t base, clk_config_t const* const reg_values)
     Xil_Out32(base + OFST_DYNCLK_FLTR_LOCK_H, reg_values->fltr_lock_h);
 }
 
+static uint64_t dynclk_now_ns(void)
+{
+    struct timespec ts;
+
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ((uint64_t)ts.tv_sec * 1000000000ULL) + (uint64_t)ts.tv_nsec;
+}
+
 /**
  * @brief Start the dynclk core and wait for lock.
  * @param base Mapped dynclk register base.
@@ -323,12 +333,12 @@ static void clk_write_reg(uintptr_t base, clk_config_t const* const reg_values)
  */
 static int clk_start(uintptr_t base)
 {
-    uint32_t timeout = 0U;
+    uint64_t const deadline_ns = dynclk_now_ns() + CLK_TIMEOUT_NS;
 
     Xil_Out32(base + OFST_DYNCLK_CTRL, 1U << BIT_DYNCLK_START);
     while ((Xil_In32(base + OFST_DYNCLK_STATUS) & (1U << BIT_DYNCLK_RUNNING)) == 0U)
     {
-        if (++timeout >= CLK_TIMEOUT_COUNT)
+        if (dynclk_now_ns() >= deadline_ns)
         {
             fprintf(stderr, "[video_dynclk] PLL lock timeout\n");
             return XST_FAILURE;
@@ -365,7 +375,7 @@ int video_dynclk_init(video_dynclk_t* const dynclk)
  */
 int video_dynclk_stop(video_dynclk_t* const dynclk)
 {
-    uint32_t timeout = 0U;
+    uint64_t deadline_ns;
 
     if ((dynclk == NULL) || (dynclk->base == (uintptr_t)0))
     {
@@ -373,9 +383,10 @@ int video_dynclk_stop(video_dynclk_t* const dynclk)
     }
 
     Xil_Out32(dynclk->base + OFST_DYNCLK_CTRL, 0U);
+    deadline_ns = dynclk_now_ns() + CLK_TIMEOUT_NS;
     while ((Xil_In32(dynclk->base + OFST_DYNCLK_STATUS) & (1U << BIT_DYNCLK_RUNNING)) != 0U)
     {
-        if (++timeout >= CLK_TIMEOUT_COUNT)
+        if (dynclk_now_ns() >= deadline_ns)
         {
             fprintf(stderr, "[video_dynclk] clock stop timeout\n");
             return XST_FAILURE;

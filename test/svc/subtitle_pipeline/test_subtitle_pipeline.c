@@ -6,6 +6,7 @@
 
 #include "mock_subtitle_bram.h"
 #include "mock_subtitle_overlay.h"
+#include "mock_subtitle_text_renderer.h"
 
 static subtitle_pipeline_t pipeline;
 static uint8_t bitmap[2];
@@ -113,15 +114,15 @@ void test_subtitle_pipeline_clear_requires_initialized_pipeline_and_delegates_to
 void test_subtitle_pipeline_write_bitmap_requires_initialized_pipeline_and_delegates_to_bram(void)
 {
     TEST_ASSERT_EQUAL_INT(-EINVAL,
-                          subtitle_pipeline_write_bitmap(NULL, bitmap, 1, 2, 3, 4));
+                          subtitle_pipeline_write_bitmap(NULL, bitmap, sizeof(bitmap), 1, 2, 3, 4));
     TEST_ASSERT_EQUAL_INT(-ESTATE,
-                          subtitle_pipeline_write_bitmap(&pipeline, bitmap, 1, 2, 3, 4));
+                          subtitle_pipeline_write_bitmap(&pipeline, bitmap, sizeof(bitmap), 1, 2, 3, 4));
 
     pipeline.initialized = 1U;
     subtitle_bram_write_bitmap_ExpectAnyArgsAndReturn(0);
 
     TEST_ASSERT_EQUAL_INT(0,
-                          subtitle_pipeline_write_bitmap(&pipeline, bitmap, 1, 2, 3, 4));
+                          subtitle_pipeline_write_bitmap(&pipeline, bitmap, sizeof(bitmap), 1, 2, 3, 4));
 }
 
 void test_subtitle_pipeline_commit_clears_and_waits_for_sof(void)
@@ -154,6 +155,22 @@ void test_subtitle_pipeline_commit_returns_overlay_error(void)
 
     TEST_ASSERT_EQUAL_INT(-EIO, subtitle_pipeline_commit(&pipeline));
     TEST_ASSERT_EQUAL_UINT8(1U, pipeline.initialized);
+}
+
+void test_subtitle_pipeline_nonblocking_sof_helpers_delegate_to_overlay(void)
+{
+    uint8_t sof_seen = 0U;
+    uint32_t control = SUBTITLE_OVERLAY_CTRL_SOF;
+
+    pipeline.initialized = 1U;
+
+    subtitle_overlay_clear_sof_ExpectAnyArgsAndReturn(0);
+    TEST_ASSERT_EQUAL_INT(0, subtitle_pipeline_clear_sof(&pipeline));
+
+    subtitle_overlay_read_control_ExpectAnyArgsAndReturn(0);
+    subtitle_overlay_read_control_ReturnThruPtr_control(&control);
+    TEST_ASSERT_EQUAL_INT(0, subtitle_pipeline_poll_sof(&pipeline, &sof_seen));
+    TEST_ASSERT_EQUAL_UINT8(1U, sof_seen);
 }
 
 void test_subtitle_pipeline_enable_updates_enabled_flag(void)

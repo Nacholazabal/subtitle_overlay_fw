@@ -79,12 +79,22 @@ QActive* const AO_Subtitle = Q_ACTIVE_UPCAST(&subtitle_ao_inst);
  */
 static void post_ready(subtitle_ao_t* const me)
 {
-    component_ready_evt_t* const ready_evt = Q_NEW(component_ready_evt_t, COMPONENT_READY_SIG);
+    component_ready_evt_t* const ready_evt =
+        Q_NEW_X(component_ready_evt_t, APP_CONTROL_EVENT_MARGIN, COMPONENT_READY_SIG);
+
+    if (ready_evt == NULL)
+    {
+        LOG_ERROR("subtitle: failed to allocate ready event");
+        return;
+    }
 
     ready_evt->source = COMPONENT_SUBTITLE_PIPELINE;
     ready_evt->width = me->pipeline.display_width;
     ready_evt->height = me->pipeline.display_height;
-    QACTIVE_POST(AO_System, &ready_evt->super, &me->super);
+    if (!QACTIVE_POST_X(AO_System, &ready_evt->super, APP_CONTROL_EVENT_MARGIN, &me->super))
+    {
+        LOG_ERROR("subtitle: failed to post ready event");
+    }
 }
 
 /**
@@ -95,13 +105,23 @@ static void post_ready(subtitle_ao_t* const me)
  */
 static void post_error(subtitle_ao_t* const me, int32_t code)
 {
-    app_error_evt_t* const error_evt = Q_NEW(app_error_evt_t, COMPONENT_ERROR_SIG);
+    app_error_evt_t* const error_evt =
+        Q_NEW_X(app_error_evt_t, APP_ERROR_EVENT_MARGIN, COMPONENT_ERROR_SIG);
 
     Q_UNUSED_PAR(me);
 
+    if (error_evt == NULL)
+    {
+        LOG_ERROR("subtitle: failed to allocate error event, code=%ld", (long)code);
+        return;
+    }
+
     error_evt->source = COMPONENT_SUBTITLE_PIPELINE;
     error_evt->code = code;
-    QACTIVE_POST(AO_System, &error_evt->super, &me->super);
+    if (!QACTIVE_POST_X(AO_System, &error_evt->super, APP_ERROR_EVENT_MARGIN, &me->super))
+    {
+        LOG_ERROR("subtitle: failed to post error event, code=%ld", (long)code);
+    }
 }
 
 /**
@@ -124,6 +144,7 @@ static int draw_startup_marker(subtitle_ao_t* const me)
 
     status = subtitle_pipeline_write_bitmap(&me->pipeline,
                                             &done_bitmap[0][0],
+                                            sizeof(done_bitmap),
                                             SUBTITLE_AO_DONE_X,
                                             SUBTITLE_AO_DONE_Y,
                                             SUBTITLE_AO_DONE_WIDTH,

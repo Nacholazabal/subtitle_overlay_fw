@@ -16,8 +16,10 @@ Some fancy copyright message here (if needed)
 #include "errorno.h"
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,6 +36,7 @@ Some fancy copyright message here (if needed)
 
 #define USB_AUDIO_STREAM_FORMAT_S16_LE      (1U)
 #define USB_AUDIO_STREAM_CONNECT_RETRY_SEC  (1U)
+#define USB_AUDIO_STREAM_SOCKET_POLL_MS     (100)
 #define USB_AUDIO_STREAM_POP_WAIT_NS        (200000000L)
 #define USB_AUDIO_STREAM_HEADER_MAGIC       "SAUDPCM"
 #define USB_AUDIO_STREAM_HEADER_MAGIC_BYTES (8U)
@@ -48,17 +51,28 @@ static uint64_t now_ns(void);
 static uint64_t htonll(uint64_t value);
 static void queue_init(usb_audio_stream_queue_t* queue);
 static void queue_cleanup(usb_audio_stream_queue_t* queue);
-static void queue_push_drop_oldest(usb_audio_stream_queue_t* queue,
-                                   usb_audio_stream_chunk_t const* chunk,
-                                   uint32_t* dropped_total);
+static uint32_t queue_push_drop_oldest(usb_audio_stream_queue_t* queue,
+                                       usb_audio_stream_chunk_t const* chunk);
 static int queue_pop_wait(usb_audio_stream_queue_t* queue,
                           usb_audio_stream_chunk_t* chunk,
-                          uint8_t* stop_requested);
-static int connect_tcp(char const* host, uint32_t port);
-static int send_all(int fd, void const* data, size_t size);
-static int send_stream_header(int fd);
-static int send_chunk(int fd, usb_audio_stream_chunk_t const* chunk, uint32_t dropped);
-static void close_sender_fd(usb_audio_stream_t* stream);
+                          usb_audio_stream_t* stream);
+static void stream_request_stop(usb_audio_stream_t* stream);
+static uint8_t stream_stop_requested(usb_audio_stream_t* stream);
+static uint32_t stream_next_sequence(usb_audio_stream_t* stream);
+static uint32_t stream_get_total_dropped(usb_audio_stream_t* stream);
+static void stream_add_dropped(usb_audio_stream_t* stream, uint32_t dropped);
+static void stream_set_sender_fd(usb_audio_stream_t* stream, int fd);
+static void stream_close_sender_fd(usb_audio_stream_t* stream);
+static int stream_get_sender_fd(usb_audio_stream_t* stream);
+static int set_fd_nonblocking(int fd);
+static int poll_fd_until_ready(int fd, short events, usb_audio_stream_t* stream);
+static int connect_tcp(usb_audio_stream_t* stream, char const* host, uint32_t port);
+static int send_all(usb_audio_stream_t* stream, int fd, void const* data, size_t size);
+static int send_stream_header(usb_audio_stream_t* stream, int fd);
+static int send_chunk(usb_audio_stream_t* stream,
+                      int fd,
+                      usb_audio_stream_chunk_t const* chunk,
+                      uint32_t dropped);
 static void* capture_thread_main(void* arg);
 static void* sender_thread_main(void* arg);
 static void copy_env_string(char* dst, size_t dst_size, char const* value);
@@ -134,10 +148,11 @@ static void queue_cleanup(usb_audio_stream_queue_t* const queue)
  * @param dropped_total Stream drop counter to update.
  * @return None.
  */
-static void queue_push_drop_oldest(usb_audio_stream_queue_t* const queue,
-                                   usb_audio_stream_chunk_t const* const chunk,
-                                   uint32_t* const dropped_total)
+static uint32_t queue_push_drop_oldest(usb_audio_stream_queue_t* const queue,
+                                       usb_audio_stream_chunk_t const* const chunk)
 {
+    uint32_t dropped = 0U;
+
     pthread_mutex_lock(&queue->mutex);
 
     if (queue->count == USB_AUDIO_STREAM_QUEUE_CHUNKS)
@@ -145,7 +160,7 @@ static void queue_push_drop_oldest(usb_audio_stream_queue_t* const queue,
         queue->tail = (queue->tail + 1U) % USB_AUDIO_STREAM_QUEUE_CHUNKS;
         queue->count--;
         queue->dropped++;
-        (*dropped_total)++;
+        dropped = 1U;
     }
 
     queue->chunks[queue->head] = *chunk;
@@ -154,6 +169,7 @@ static void queue_push_drop_oldest(usb_audio_stream_queue_t* const queue,
 
     pthread_cond_signal(&queue->cond);
     pthread_mutex_unlock(&queue->mutex);
+    return dropped;
 }
 
 /**
@@ -165,7 +181,7 @@ static void queue_push_drop_oldest(usb_audio_stream_queue_t* const queue,
  */
 static int queue_pop_wait(usb_audio_stream_queue_t* const queue,
                           usb_audio_stream_chunk_t* const chunk,
-                          uint8_t* const stop_requested)
+                          usb_audio_stream_t* const stream)
 {
     struct timespec deadline;
     int status = 0;
@@ -179,12 +195,12 @@ static int queue_pop_wait(usb_audio_stream_queue_t* const queue,
     }
 
     pthread_mutex_lock(&queue->mutex);
-    while ((queue->count == 0U) && (*stop_requested == 0U) && (status == 0))
+    while ((queue->count == 0U) && (stream_stop_requested(stream) == 0U) && (status == 0))
     {
         status = pthread_cond_timedwait(&queue->cond, &queue->mutex, &deadline);
     }
 
-    if (*stop_requested != 0U)
+    if (stream_stop_requested(stream) != 0U)
     {
         status = -ESTATE;
     }
@@ -204,13 +220,156 @@ static int queue_pop_wait(usb_audio_stream_queue_t* const queue,
     return status;
 }
 
+static void stream_request_stop(usb_audio_stream_t* const stream)
+{
+    if ((stream == NULL) || (stream->state_initialized == 0U))
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&stream->state_mutex);
+    stream->stop_requested = 1U;
+    pthread_mutex_unlock(&stream->state_mutex);
+}
+
+static uint8_t stream_stop_requested(usb_audio_stream_t* const stream)
+{
+    uint8_t requested = 1U;
+
+    if ((stream == NULL) || (stream->state_initialized == 0U))
+    {
+        return requested;
+    }
+
+    pthread_mutex_lock(&stream->state_mutex);
+    requested = stream->stop_requested;
+    pthread_mutex_unlock(&stream->state_mutex);
+    return requested;
+}
+
+static uint32_t stream_next_sequence(usb_audio_stream_t* const stream)
+{
+    uint32_t sequence;
+
+    pthread_mutex_lock(&stream->state_mutex);
+    sequence = stream->next_sequence;
+    stream->next_sequence++;
+    pthread_mutex_unlock(&stream->state_mutex);
+    return sequence;
+}
+
+static uint32_t stream_get_total_dropped(usb_audio_stream_t* const stream)
+{
+    uint32_t dropped;
+
+    pthread_mutex_lock(&stream->state_mutex);
+    dropped = stream->total_dropped;
+    pthread_mutex_unlock(&stream->state_mutex);
+    return dropped;
+}
+
+static void stream_add_dropped(usb_audio_stream_t* const stream, uint32_t dropped)
+{
+    if (dropped == 0U)
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&stream->state_mutex);
+    stream->total_dropped += dropped;
+    pthread_mutex_unlock(&stream->state_mutex);
+}
+
+static void stream_set_sender_fd(usb_audio_stream_t* const stream, int fd)
+{
+    pthread_mutex_lock(&stream->state_mutex);
+    stream->sender_fd = fd;
+    pthread_mutex_unlock(&stream->state_mutex);
+}
+
+static int stream_get_sender_fd(usb_audio_stream_t* const stream)
+{
+    int fd;
+
+    pthread_mutex_lock(&stream->state_mutex);
+    fd = stream->sender_fd;
+    pthread_mutex_unlock(&stream->state_mutex);
+    return fd;
+}
+
+static void stream_close_sender_fd(usb_audio_stream_t* const stream)
+{
+    int fd;
+
+    if ((stream == NULL) || (stream->state_initialized == 0U))
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&stream->state_mutex);
+    fd = stream->sender_fd;
+    stream->sender_fd = -1;
+    pthread_mutex_unlock(&stream->state_mutex);
+
+    if (fd >= 0)
+    {
+        (void)shutdown(fd, SHUT_RDWR);
+        close(fd);
+    }
+}
+
+static int set_fd_nonblocking(int fd)
+{
+    int const flags = fcntl(fd, F_GETFL, 0);
+
+    if (flags < 0)
+    {
+        return -EIO;
+    }
+
+    return (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0) ? 0 : -EIO;
+}
+
+static int poll_fd_until_ready(int fd, short events, usb_audio_stream_t* const stream)
+{
+    struct pollfd pfd;
+
+    memset(&pfd, 0, sizeof(pfd));
+    pfd.fd = fd;
+    pfd.events = events;
+
+    while (stream_stop_requested(stream) == 0U)
+    {
+        int const status = poll(&pfd, 1U, USB_AUDIO_STREAM_SOCKET_POLL_MS);
+
+        if (status > 0)
+        {
+            if ((pfd.revents & (events | POLLERR | POLLHUP | POLLNVAL)) != 0)
+            {
+                return 0;
+            }
+        }
+        else if (status < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            return -EIO;
+        }
+    }
+
+    return -ESTATE;
+}
+
 /**
  * @brief Open a TCP connection to the configured receiver.
+ * @param stream Stream service instance.
  * @param host Receiver host or IP string.
  * @param port Receiver TCP port.
  * @return Socket fd on success, or -1 on failure.
  */
-static int connect_tcp(char const* const host, uint32_t port)
+static int connect_tcp(usb_audio_stream_t* const stream, char const* const host, uint32_t port)
 {
     struct addrinfo hints;
     struct addrinfo* result = NULL;
@@ -230,15 +389,44 @@ static int connect_tcp(char const* const host, uint32_t port)
 
     for (it = result; it != NULL; it = it->ai_next)
     {
+        int socket_error = 0;
+        socklen_t socket_error_len = sizeof(socket_error);
+
+        if (stream_stop_requested(stream) != 0U)
+        {
+            break;
+        }
+
         fd = socket(it->ai_family, it->ai_socktype, it->ai_protocol);
         if (fd < 0)
         {
             continue;
         }
 
+        if (set_fd_nonblocking(fd) != 0)
+        {
+            close(fd);
+            fd = -1;
+            continue;
+        }
+
         if (connect(fd, it->ai_addr, it->ai_addrlen) == 0)
         {
             break;
+        }
+
+        if (errno == EINPROGRESS)
+        {
+            if ((poll_fd_until_ready(fd, POLLOUT, stream) == 0)
+                && (getsockopt(fd,
+                               SOL_SOCKET,
+                               SO_ERROR,
+                               &socket_error,
+                               &socket_error_len) == 0)
+                && (socket_error == 0))
+            {
+                break;
+            }
         }
 
         close(fd);
@@ -256,23 +444,37 @@ static int connect_tcp(char const* const host, uint32_t port)
  * @param size Source buffer length.
  * @return 0 on success, or -EIO on failure.
  */
-static int send_all(int fd, void const* const data, size_t size)
+static int send_all(usb_audio_stream_t* const stream, int fd, void const* const data, size_t size)
 {
     uint8_t const* cursor = (uint8_t const*)data;
 
-    while (size > 0U)
+    while ((size > 0U) && (stream_stop_requested(stream) == 0U))
     {
         ssize_t const sent = send(fd, cursor, size, MSG_NOSIGNAL);
+        if (sent > 0)
+        {
+            cursor += sent;
+            size -= (size_t)sent;
+            continue;
+        }
+
+        if ((sent < 0) && ((errno == EAGAIN) || (errno == EWOULDBLOCK) || (errno == EINTR)))
+        {
+            int const poll_status = poll_fd_until_ready(fd, POLLOUT, stream);
+            if (poll_status == 0)
+            {
+                continue;
+            }
+            return poll_status;
+        }
+
         if (sent <= 0)
         {
             return -EIO;
         }
-
-        cursor += sent;
-        size -= (size_t)sent;
     }
 
-    return 0;
+    return (size == 0U) ? 0 : -ESTATE;
 }
 
 /**
@@ -280,7 +482,7 @@ static int send_all(int fd, void const* const data, size_t size)
  * @param fd Socket fd.
  * @return 0 on success, or -EIO on failure.
  */
-static int send_stream_header(int fd)
+static int send_stream_header(usb_audio_stream_t* const stream, int fd)
 {
     char magic[USB_AUDIO_STREAM_HEADER_MAGIC_BYTES];
     uint32_t words[USB_AUDIO_STREAM_HEADER_WORDS];
@@ -295,10 +497,10 @@ static int send_stream_header(int fd)
     words[4] = htonl(USB_AUDIO_STREAM_SAMPLES_PER_CHUNK);
     words[5] = htonl(USB_AUDIO_STREAM_BYTES_PER_CHUNK);
 
-    status = send_all(fd, magic, sizeof(magic));
+    status = send_all(stream, fd, magic, sizeof(magic));
     if (status == 0)
     {
-        status = send_all(fd, words, sizeof(words));
+        status = send_all(stream, fd, words, sizeof(words));
     }
 
     return status;
@@ -311,7 +513,10 @@ static int send_stream_header(int fd)
  * @param dropped Number of chunks dropped before this chunk.
  * @return 0 on success, or -EIO on failure.
  */
-static int send_chunk(int fd, usb_audio_stream_chunk_t const* const chunk, uint32_t dropped)
+static int send_chunk(usb_audio_stream_t* const stream,
+                      int fd,
+                      usb_audio_stream_chunk_t const* const chunk,
+                      uint32_t dropped)
 {
     uint64_t qwords[2];
     uint32_t words[USB_AUDIO_STREAM_CHUNK_HEADER_WORDS];
@@ -325,31 +530,17 @@ static int send_chunk(int fd, usb_audio_stream_chunk_t const* const chunk, uint3
     words[3] = htonl(USB_AUDIO_STREAM_CHANNELS);
     words[4] = htonl(USB_AUDIO_STREAM_FORMAT_S16_LE);
 
-    status = send_all(fd, qwords, sizeof(qwords));
+    status = send_all(stream, fd, qwords, sizeof(qwords));
     if (status == 0)
     {
-        status = send_all(fd, words, sizeof(words));
+        status = send_all(stream, fd, words, sizeof(words));
     }
     if (status == 0)
     {
-        status = send_all(fd, chunk->payload, chunk->bytes_used);
+        status = send_all(stream, fd, chunk->payload, chunk->bytes_used);
     }
 
     return status;
-}
-
-/**
- * @brief Close the current sender socket.
- * @param stream Stream service instance.
- * @return None.
- */
-static void close_sender_fd(usb_audio_stream_t* const stream)
-{
-    if (stream->sender_fd >= 0)
-    {
-        close(stream->sender_fd);
-        stream->sender_fd = -1;
-    }
 }
 
 /**
@@ -364,10 +555,11 @@ static void* capture_thread_main(void* const arg)
 
     LOG_INFO("usb-audio: capture thread started");
 
-    while (stream->stop_requested == 0U)
+    while (stream_stop_requested(stream) == 0U)
     {
         usb_audio_stream_chunk_t chunk;
         size_t bytes_read = 0U;
+        uint32_t dropped;
         int status;
 
         if (first_read_pending != 0U)
@@ -388,22 +580,23 @@ static void* capture_thread_main(void* const arg)
             }
 
             LOG_ERROR("usb-audio: capture read failed, code=%ld", (long)status);
-            stream->stop_requested = 1U;
+            stream_request_stop(stream);
             pthread_cond_broadcast(&stream->queue.cond);
             break;
         }
 
         chunk.timestamp_ns = now_ns();
-        chunk.sequence = stream->next_sequence++;
+        chunk.sequence = stream_next_sequence(stream);
         chunk.bytes_used = (uint32_t)bytes_read;
-        queue_push_drop_oldest(&stream->queue, &chunk, &stream->total_dropped);
+        dropped = queue_push_drop_oldest(&stream->queue, &chunk);
+        stream_add_dropped(stream, dropped);
 
         if ((first_read_pending != 0U) || ((chunk.sequence % 50U) == 0U))
         {
             LOG_INFO("usb-audio: captured chunk seq=%lu bytes=%lu dropped=%lu",
                      (unsigned long)chunk.sequence,
                      (unsigned long)chunk.bytes_used,
-                     (unsigned long)stream->total_dropped);
+                     (unsigned long)stream_get_total_dropped(stream));
             first_read_pending = 0U;
         }
     }
@@ -421,38 +614,49 @@ static void* sender_thread_main(void* const arg)
 {
     usb_audio_stream_t* const stream = (usb_audio_stream_t*)arg;
 
-    while (stream->stop_requested == 0U)
+    while (stream_stop_requested(stream) == 0U)
     {
         usb_audio_stream_chunk_t chunk;
+        int sender_fd;
         int status;
 
-        if (stream->sender_fd < 0)
+        sender_fd = stream_get_sender_fd(stream);
+        if (sender_fd < 0)
         {
-            stream->sender_fd = connect_tcp(stream->config.tcp_host, stream->config.tcp_port);
-            if (stream->sender_fd < 0)
+            sender_fd = connect_tcp(stream, stream->config.tcp_host, stream->config.tcp_port);
+            if (sender_fd < 0)
             {
+                uint32_t wait_ms = 0U;
+
                 LOG_WARNING("usb-audio: TCP connect failed target=%s:%lu",
                             stream->config.tcp_host,
                             (unsigned long)stream->config.tcp_port);
-                sleep(USB_AUDIO_STREAM_CONNECT_RETRY_SEC);
+                while ((stream_stop_requested(stream) == 0U)
+                       && (wait_ms < (USB_AUDIO_STREAM_CONNECT_RETRY_SEC * 1000U)))
+                {
+                    struct timespec const pause = {0, USB_AUDIO_STREAM_SOCKET_POLL_MS * 1000000L};
+                    nanosleep(&pause, NULL);
+                    wait_ms += (uint32_t)USB_AUDIO_STREAM_SOCKET_POLL_MS;
+                }
                 continue;
             }
+            stream_set_sender_fd(stream, sender_fd);
 
             LOG_INFO("usb-audio: connected to %s:%lu",
                      stream->config.tcp_host,
                      (unsigned long)stream->config.tcp_port);
 
-            if (send_stream_header(stream->sender_fd) != 0)
+            if (send_stream_header(stream, sender_fd) != 0)
             {
                 LOG_WARNING("usb-audio: failed to send stream header");
-                close_sender_fd(stream);
+                stream_close_sender_fd(stream);
                 continue;
             }
 
             LOG_INFO("usb-audio: stream header sent");
         }
 
-        status = queue_pop_wait(&stream->queue, &chunk, &stream->stop_requested);
+        status = queue_pop_wait(&stream->queue, &chunk, stream);
         if (status == -EAGAIN)
         {
             continue;
@@ -462,21 +666,21 @@ static void* sender_thread_main(void* const arg)
             break;
         }
 
-        if (send_chunk(stream->sender_fd, &chunk, stream->total_dropped) != 0)
+        if (send_chunk(stream, sender_fd, &chunk, stream_get_total_dropped(stream)) != 0)
         {
             LOG_WARNING("usb-audio: sender disconnected");
-            close_sender_fd(stream);
+            stream_close_sender_fd(stream);
         }
         else if ((chunk.sequence % 50U) == 0U)
         {
             LOG_INFO("usb-audio: sent chunk seq=%lu bytes=%lu dropped=%lu",
                      (unsigned long)chunk.sequence,
                      (unsigned long)chunk.bytes_used,
-                     (unsigned long)stream->total_dropped);
+                     (unsigned long)stream_get_total_dropped(stream));
         }
     }
 
-    close_sender_fd(stream);
+    stream_close_sender_fd(stream);
     LOG_INFO("usb-audio: sender thread stopped");
     return NULL;
 }
@@ -545,6 +749,8 @@ int usb_audio_stream_start(usb_audio_stream_t* const stream,
     memset(stream, 0, sizeof(*stream));
     stream->config = *config;
     stream->sender_fd = -1;
+    pthread_mutex_init(&stream->state_mutex, NULL);
+    stream->state_initialized = 1U;
     queue_init(&stream->queue);
 
     memset(&capture_config, 0, sizeof(capture_config));
@@ -557,6 +763,8 @@ int usb_audio_stream_start(usb_audio_stream_t* const stream,
     if (status != 0)
     {
         queue_cleanup(&stream->queue);
+        pthread_mutex_destroy(&stream->state_mutex);
+        stream->state_initialized = 0U;
         return status;
     }
 
@@ -565,17 +773,22 @@ int usb_audio_stream_start(usb_audio_stream_t* const stream,
     {
         usb_audio_capture_cleanup(&stream->capture);
         queue_cleanup(&stream->queue);
+        pthread_mutex_destroy(&stream->state_mutex);
+        stream->state_initialized = 0U;
         return -EIO;
     }
 
     status = pthread_create(&stream->sender_thread, NULL, sender_thread_main, stream);
     if (status != 0)
     {
-        stream->stop_requested = 1U;
+        stream_request_stop(stream);
         usb_audio_capture_abort(&stream->capture);
+        pthread_cond_broadcast(&stream->queue.cond);
         pthread_join(stream->capture_thread, NULL);
         usb_audio_capture_cleanup(&stream->capture);
         queue_cleanup(&stream->queue);
+        pthread_mutex_destroy(&stream->state_mutex);
+        stream->state_initialized = 0U;
         return -EIO;
     }
 
@@ -595,17 +808,19 @@ void usb_audio_stream_stop(usb_audio_stream_t* const stream)
         return;
     }
 
-    stream->stop_requested = 1U;
+    stream_request_stop(stream);
     usb_audio_capture_abort(&stream->capture);
     pthread_cond_broadcast(&stream->queue.cond);
+    stream_close_sender_fd(stream);
 
     pthread_join(stream->capture_thread, NULL);
     pthread_join(stream->sender_thread, NULL);
 
-    close_sender_fd(stream);
     usb_audio_capture_cleanup(&stream->capture);
     queue_cleanup(&stream->queue);
     stream->running = 0U;
+    pthread_mutex_destroy(&stream->state_mutex);
+    stream->state_initialized = 0U;
 }
 
 // === End of documentation ======================================================================================== //

@@ -76,6 +76,7 @@ typedef struct
     usb_audio_stream_config_t config;
     usb_audio_capture_t capture;
     usb_audio_stream_queue_t queue;
+    pthread_mutex_t state_mutex;
     pthread_t capture_thread;
     pthread_t sender_thread;
     uint32_t next_sequence;
@@ -83,6 +84,7 @@ typedef struct
     int sender_fd;
     uint8_t stop_requested;
     uint8_t running;
+    uint8_t state_initialized;
 } usb_audio_stream_t;
 
 // === Public variable declarations ================================================================================ //

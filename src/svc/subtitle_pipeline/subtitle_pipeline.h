@@ -13,6 +13,7 @@ Some fancy copyright message here (if needed)
 
 // === Headers files inclusions ==================================================================================== //
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "subtitle_bram.h"
@@ -52,12 +53,19 @@ void subtitle_pipeline_cleanup(subtitle_pipeline_t* pipeline);
 int subtitle_pipeline_clear(subtitle_pipeline_t* pipeline);
 int subtitle_pipeline_write_bitmap(subtitle_pipeline_t* pipeline,
                                    uint8_t const* src,
+                                   size_t src_size,
                                    int32_t x,
                                    int32_t y,
                                    uint32_t width,
                                    uint32_t height);
 int subtitle_pipeline_write_text(subtitle_pipeline_t* pipeline, char const* text);
+/*
+ * Blocking debug/manual synchronization helper. It can spin through many MMIO
+ * reads and must not be called from QP/C AO state handlers.
+ */
 int subtitle_pipeline_commit(subtitle_pipeline_t* pipeline);
+int subtitle_pipeline_clear_sof(subtitle_pipeline_t* pipeline);
+int subtitle_pipeline_poll_sof(subtitle_pipeline_t* pipeline, uint8_t* sof_seen);
 int subtitle_pipeline_enable(subtitle_pipeline_t* pipeline, uint8_t enabled);
 
 // === End of documentation ======================================================================================== //

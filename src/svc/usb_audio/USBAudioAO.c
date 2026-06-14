@@ -60,14 +60,24 @@ QActive* const AO_USBAudio = Q_ACTIVE_UPCAST(&usb_audio_ao_inst);
  */
 static void post_ready(usb_audio_ao_t* const me)
 {
-    component_ready_evt_t* const ready_evt = Q_NEW(component_ready_evt_t, COMPONENT_READY_SIG);
+    component_ready_evt_t* const ready_evt =
+        Q_NEW_X(component_ready_evt_t, APP_CONTROL_EVENT_MARGIN, COMPONENT_READY_SIG);
 
     Q_UNUSED_PAR(me);
+
+    if (ready_evt == NULL)
+    {
+        LOG_ERROR("usb-audio: failed to allocate ready event");
+        return;
+    }
 
     ready_evt->source = COMPONENT_USB_AUDIO;
     ready_evt->width = 0U;
     ready_evt->height = 0U;
-    QACTIVE_POST(AO_System, &ready_evt->super, &me->super);
+    if (!QACTIVE_POST_X(AO_System, &ready_evt->super, APP_CONTROL_EVENT_MARGIN, &me->super))
+    {
+        LOG_ERROR("usb-audio: failed to post ready event");
+    }
 }
 
 /**
@@ -78,13 +88,23 @@ static void post_ready(usb_audio_ao_t* const me)
  */
 static void post_error(usb_audio_ao_t* const me, int32_t code)
 {
-    app_error_evt_t* const error_evt = Q_NEW(app_error_evt_t, COMPONENT_ERROR_SIG);
+    app_error_evt_t* const error_evt =
+        Q_NEW_X(app_error_evt_t, APP_ERROR_EVENT_MARGIN, COMPONENT_ERROR_SIG);
 
     Q_UNUSED_PAR(me);
 
+    if (error_evt == NULL)
+    {
+        LOG_ERROR("usb-audio: failed to allocate error event, code=%ld", (long)code);
+        return;
+    }
+
     error_evt->source = COMPONENT_USB_AUDIO;
     error_evt->code = code;
-    QACTIVE_POST(AO_System, &error_evt->super, &me->super);
+    if (!QACTIVE_POST_X(AO_System, &error_evt->super, APP_ERROR_EVENT_MARGIN, &me->super))
+    {
+        LOG_ERROR("usb-audio: failed to post error event, code=%ld", (long)code);
+    }
 }
 
 /**

@@ -47,12 +47,12 @@ static QState system_ao_init(system_ao_t* const me, QEvt const* const e);
 static QState system_ao_run(system_ao_t* const me, QEvt const* const e);
 static QState system_ao_error(system_ao_t* const me, QEvt const* const e);
 
-static void post_component_init(system_ao_t* const me,
-                                QActive* const target,
-                                component_id_e source,
-                                uint32_t width,
-                                uint32_t height);
-static void on_init(system_ao_t* const me);
+static int post_component_init(system_ao_t* const me,
+                               QActive* const target,
+                               component_id_e source,
+                               uint32_t width,
+                               uint32_t height);
+static int on_init(system_ao_t* const me);
 static int on_component_ready(system_ao_t* const me, component_ready_evt_t const* const e);
 static void on_run(system_ao_t* const me);
 static void on_error(system_ao_t* const me, app_error_evt_t const* const e);
@@ -97,24 +97,41 @@ static const char* component_id_to_str(component_id_e component)
     }
 }
 
-static void post_component_init(system_ao_t* const me,
-                                QActive* const target,
-                                component_id_e source,
-                                uint32_t width,
-                                uint32_t height)
+static int post_component_init(system_ao_t* const me,
+                               QActive* const target,
+                               component_id_e source,
+                               uint32_t width,
+                               uint32_t height)
 {
-    component_init_evt_t* const init_evt = Q_NEW(component_init_evt_t, COMPONENT_INIT_SIG);
+    component_init_evt_t* const init_evt =
+        Q_NEW_X(component_init_evt_t, APP_CONTROL_EVENT_MARGIN, COMPONENT_INIT_SIG);
 
     Q_UNUSED_PAR(me);
+
+    if (init_evt == NULL)
+    {
+        LOG_ERROR("system: failed to allocate init event for %s",
+                  component_id_to_str(source));
+        return -EAGAIN;
+    }
 
     init_evt->source = source;
     init_evt->width = width;
     init_evt->height = height;
-    QACTIVE_POST(target, &init_evt->super, &me->super);
+    if (!QACTIVE_POST_X(target, &init_evt->super, APP_CONTROL_EVENT_MARGIN, &me->super))
+    {
+        LOG_ERROR("system: failed to post init event for %s",
+                  component_id_to_str(source));
+        return -EAGAIN;
+    }
+
+    return 0;
 }
 
-static void on_init(system_ao_t* const me)
+static int on_init(system_ao_t* const me)
 {
+    int status = 0;
+
     me->last_ready_component = COMPONENT_NONE;
     me->active_video_width = 0U;
     me->active_video_height = 0U;
@@ -123,8 +140,20 @@ static void on_init(system_ao_t* const me)
     me->stt_init_requested = 0U;
 
     LOG_INFO("system: init sequence started");
-    post_component_init(me, AO_Video, COMPONENT_NONE, 0U, 0U);
-    post_component_init(me, AO_USBAudio, COMPONENT_NONE, 0U, 0U);
+    if (post_component_init(me, AO_Video, COMPONENT_VIDEO, 0U, 0U) != 0)
+    {
+        me->error_source = COMPONENT_VIDEO;
+        me->error_code = -EIO;
+        status = -EIO;
+    }
+    if (post_component_init(me, AO_USBAudio, COMPONENT_USB_AUDIO, 0U, 0U) != 0)
+    {
+        me->error_source = COMPONENT_USB_AUDIO;
+        me->error_code = -EIO;
+        status = -EIO;
+    }
+
+    return status;
 }
 
 static int on_component_ready(system_ao_t* const me, component_ready_evt_t const* const e)
@@ -155,8 +184,16 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
             LOG_INFO("system: requesting subtitle init for %lux%lu",
                      (unsigned long)e->width,
                      (unsigned long)e->height);
-            post_component_init(me, AO_Subtitle, COMPONENT_VIDEO, e->width, e->height);
-            me->subtitle_init_requested = 1U;
+            if (post_component_init(me, AO_Subtitle, COMPONENT_SUBTITLE_PIPELINE, e->width, e->height) == 0)
+            {
+                me->subtitle_init_requested = 1U;
+            }
+            else
+            {
+                me->error_source = COMPONENT_SUBTITLE_PIPELINE;
+                me->error_code = -EIO;
+                status = -EIO;
+            }
         }
         else
         {
@@ -172,12 +209,20 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
             LOG_INFO("system: usb-audio ready, requesting subtitle init for %lux%lu",
                      (unsigned long)me->active_video_width,
                      (unsigned long)me->active_video_height);
-            post_component_init(me,
-                                AO_Subtitle,
-                                COMPONENT_USB_AUDIO,
-                                me->active_video_width,
-                                me->active_video_height);
-            me->subtitle_init_requested = 1U;
+            if (post_component_init(me,
+                                    AO_Subtitle,
+                                    COMPONENT_SUBTITLE_PIPELINE,
+                                    me->active_video_width,
+                                    me->active_video_height) == 0)
+            {
+                me->subtitle_init_requested = 1U;
+            }
+            else
+            {
+                me->error_source = COMPONENT_SUBTITLE_PIPELINE;
+                me->error_code = -EIO;
+                status = -EIO;
+            }
         }
         else
         {
@@ -189,8 +234,16 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
         if (me->stt_init_requested == 0U)
         {
             LOG_INFO("system: subtitle ready, requesting stt init");
-            post_component_init(me, AO_Stt, COMPONENT_SUBTITLE_PIPELINE, 0U, 0U);
-            me->stt_init_requested = 1U;
+            if (post_component_init(me, AO_Stt, COMPONENT_STT, 0U, 0U) == 0)
+            {
+                me->stt_init_requested = 1U;
+            }
+            else
+            {
+                me->error_source = COMPONENT_STT;
+                me->error_code = -EIO;
+                status = -EIO;
+            }
         }
         else
         {
@@ -265,8 +318,14 @@ static QState system_ao_init(system_ao_t* const me, QEvt const* const e)
     switch (e->sig)
     {
     case Q_ENTRY_SIG:
-        on_init(me);
-        status = Q_HANDLED();
+        if (on_init(me) == 0)
+        {
+            status = Q_HANDLED();
+        }
+        else
+        {
+            status = Q_TRAN(&system_ao_error);
+        }
         break;
 
     case COMPONENT_READY_SIG:
