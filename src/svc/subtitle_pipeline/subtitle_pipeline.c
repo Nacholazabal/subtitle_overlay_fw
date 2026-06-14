@@ -16,18 +16,20 @@ Some fancy copyright message here (if needed)
 #include <string.h>
 
 #include "errorno.h"
+#include "subtitle_text_renderer.h"
 
 // === Macros definitions ========================================================================================== //
 
 #define SUBTITLE_PIPELINE_SOF_TIMEOUT_READS 5000000U
 
-#define SUBTITLE_PIPELINE_BAR_WIDTH_NUMERATOR     5U
-#define SUBTITLE_PIPELINE_BAR_WIDTH_DENOMINATOR   6U
-#define SUBTITLE_PIPELINE_BAR_HEIGHT_DENOMINATOR  9U
-#define SUBTITLE_PIPELINE_BOTTOM_MARGIN_DIVISOR   20U
+#define SUBTITLE_PIPELINE_BAR_WIDTH_NUMERATOR    5U
+#define SUBTITLE_PIPELINE_BAR_WIDTH_DENOMINATOR  6U
+#define SUBTITLE_PIPELINE_BAR_HEIGHT_DENOMINATOR 9U
+#define SUBTITLE_PIPELINE_BOTTOM_MARGIN_DIVISOR  20U
 
-#define SUBTITLE_PIPELINE_DEFAULT_BAR_WIDTH(display_width) \
-    (((display_width) * SUBTITLE_PIPELINE_BAR_WIDTH_NUMERATOR) / SUBTITLE_PIPELINE_BAR_WIDTH_DENOMINATOR)
+#define SUBTITLE_PIPELINE_DEFAULT_BAR_WIDTH(display_width)   \
+    (((display_width)*SUBTITLE_PIPELINE_BAR_WIDTH_NUMERATOR) \
+     / SUBTITLE_PIPELINE_BAR_WIDTH_DENOMINATOR)
 #define SUBTITLE_PIPELINE_DEFAULT_BAR_HEIGHT(display_height) \
     ((display_height) / SUBTITLE_PIPELINE_BAR_HEIGHT_DENOMINATOR)
 #define SUBTITLE_PIPELINE_DEFAULT_BOTTOM_MARGIN(display_height) \
@@ -188,6 +190,7 @@ int subtitle_pipeline_clear(subtitle_pipeline_t* const pipeline)
  * @brief Write a packed MSB-first bitmap into the subtitle mask.
  * @param pipeline Initialized pipeline instance.
  * @param src Source row-major bitmap.
+ * @param src_size Source bitmap size in bytes.
  * @param x Destination x coordinate.
  * @param y Destination y coordinate.
  * @param width Source bitmap width in pixels.
@@ -196,6 +199,7 @@ int subtitle_pipeline_clear(subtitle_pipeline_t* const pipeline)
  */
 int subtitle_pipeline_write_bitmap(subtitle_pipeline_t* const pipeline,
                                    uint8_t const* const src,
+                                   size_t src_size,
                                    int32_t x,
                                    int32_t y,
                                    uint32_t width,
@@ -206,11 +210,41 @@ int subtitle_pipeline_write_bitmap(subtitle_pipeline_t* const pipeline,
         return (pipeline == NULL) ? -EINVAL : -ESTATE;
     }
 
-    return subtitle_bram_write_bitmap(&pipeline->bram, src, x, y, width, height);
+    return subtitle_bram_write_bitmap(&pipeline->bram, src, src_size, x, y, width, height);
 }
 
 /**
- * @brief Synchronize subtitle updates to the next overlay SOF boundary.
+ * @brief Render text into a subtitle mask and write it to BRAM.
+ * @param pipeline Initialized pipeline instance.
+ * @param text Null-terminated subtitle text.
+ * @return 0 on success, or a negative errorno_e value on failure.
+ */
+int subtitle_pipeline_write_text(subtitle_pipeline_t* const pipeline, char const* const text)
+{
+    uint8_t bitmap[SUBTITLE_BRAM_SIZE_BYTES];
+    uint32_t width;
+    uint32_t height;
+    int status;
+
+    if (!pipeline_is_initialized(pipeline))
+    {
+        return (pipeline == NULL) ? -EINVAL : -ESTATE;
+    }
+
+    status = subtitle_text_renderer_render(text, bitmap, sizeof(bitmap), &width, &height);
+    if (status != 0)
+    {
+        return status;
+    }
+
+    return subtitle_bram_write_bitmap(&pipeline->bram, bitmap, sizeof(bitmap), 0, 0, width, height);
+}
+
+/**
+ * @brief Blocking debug/manual API: synchronize subtitle updates to the next overlay SOF boundary.
+ *
+ * This function can spin through many MMIO reads. Do not call it from QP/C AO
+ * state handlers or other cooperative-loop paths.
  * @param pipeline Initialized pipeline instance.
  * @return 0 when SOF is observed, or a negative errorno_e value on failure.
  */
@@ -231,6 +265,52 @@ int subtitle_pipeline_commit(subtitle_pipeline_t* const pipeline)
 
     status = subtitle_overlay_wait_sof(&pipeline->overlay, SUBTITLE_PIPELINE_SOF_TIMEOUT_READS);
     return status;
+}
+
+/**
+ * @brief Clear the overlay SOF flag without waiting for a future SOF.
+ * @param pipeline Initialized pipeline instance.
+ * @return 0 on success, or a negative errorno_e value on failure.
+ */
+int subtitle_pipeline_clear_sof(subtitle_pipeline_t* const pipeline)
+{
+    if (!pipeline_is_initialized(pipeline))
+    {
+        return (pipeline == NULL) ? -EINVAL : -ESTATE;
+    }
+
+    return subtitle_overlay_clear_sof(&pipeline->overlay);
+}
+
+/**
+ * @brief Poll the overlay SOF flag once without blocking.
+ * @param pipeline Initialized pipeline instance.
+ * @param sof_seen Output flag set to one when SOF is currently asserted.
+ * @return 0 on success, or a negative errorno_e value on failure.
+ */
+int subtitle_pipeline_poll_sof(subtitle_pipeline_t* const pipeline, uint8_t* const sof_seen)
+{
+    uint32_t control;
+    int status;
+
+    if (!pipeline_is_initialized(pipeline))
+    {
+        return (pipeline == NULL) ? -EINVAL : -ESTATE;
+    }
+
+    if (sof_seen == NULL)
+    {
+        return -EINVAL;
+    }
+
+    status = subtitle_overlay_read_control(&pipeline->overlay, &control);
+    if (status != 0)
+    {
+        return status;
+    }
+
+    *sof_seen = ((control & SUBTITLE_OVERLAY_CTRL_SOF) != 0U) ? 1U : 0U;
+    return 0;
 }
 
 /**

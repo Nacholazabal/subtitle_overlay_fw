@@ -7,16 +7,14 @@ Some fancy copyright message here (if needed)
 #pragma once
 
 ///
-/// @file video_dma.h
-/// @brief HDMI VDMA HAL adapter interface
+/// @file usb_audio_capture.h
+/// @brief ALSA USB audio capture adapter interface
 ///
 
 // === Headers files inclusions ==================================================================================== //
 
-#include <stdint.h>
 #include <stddef.h>
-
-#include "xstatus.h"
+#include <stdint.h>
 
 // === C++ Guard =================================================================================================== //
 
@@ -26,43 +24,36 @@ extern "C" {
 
 // === Public macros definitions =================================================================================== //
 
-#define VIDEO_DMA_MAX_FRAMES    3U
-#define VIDEO_DMA_STATUS_HALTED 0x00000001U
-#define VIDEO_DMA_STATUS_IDLE   0x00000002U
+#define USB_AUDIO_CAPTURE_DEVICE_MAX_LEN (64U)
 
 // === Public data type declarations =============================================================================== //
 
-typedef enum
+typedef struct
 {
-    VIDEO_DMA_CHANNEL_MM2S = 0,
-    VIDEO_DMA_CHANNEL_S2MM,
-} video_dma_channel_e;
+    char device[USB_AUDIO_CAPTURE_DEVICE_MAX_LEN];
+    uint32_t sample_rate_hz;
+    uint32_t channels;
+    uint32_t samples_per_chunk;
+} usb_audio_capture_config_t;
 
 typedef struct
 {
-    int fd;
-    int is_open;
-    uint8_t* frames[VIDEO_DMA_MAX_FRAMES];
-    uint32_t frame_count;
-    uint32_t frame_size;
-    size_t mmap_size;
-} video_dma_t;
+    usb_audio_capture_config_t config;
+    void* pcm_handle;
+    uint32_t bytes_per_frame;
+    uint8_t initialized;
+} usb_audio_capture_t;
 
 // === Public variable declarations ================================================================================ //
 // === Public function declarations ================================================================================ //
 
-int video_dma_init(video_dma_t* dma, uint8_t* frames[VIDEO_DMA_MAX_FRAMES], uint32_t frame_count);
-void video_dma_cleanup(video_dma_t* dma);
-int video_dma_configure(video_dma_t* dma,
-                        video_dma_channel_e channel,
-                        uint32_t width,
-                        uint32_t height,
-                        uint32_t stride,
-                        uint32_t frame_index);
-int video_dma_start(video_dma_t* dma, video_dma_channel_e channel);
-int video_dma_stop(video_dma_t* dma, video_dma_channel_e channel);
-int video_dma_select_frame(video_dma_t* dma, video_dma_channel_e channel, uint32_t frame_index);
-uint32_t video_dma_status(video_dma_t* dma, video_dma_channel_e channel);
+int usb_audio_capture_init(usb_audio_capture_t* capture, usb_audio_capture_config_t const* config);
+int usb_audio_capture_read_chunk(usb_audio_capture_t* capture,
+                                 uint8_t* dst,
+                                 size_t dst_size,
+                                 size_t* bytes_read);
+void usb_audio_capture_abort(usb_audio_capture_t* capture);
+void usb_audio_capture_cleanup(usb_audio_capture_t* capture);
 
 // === End of documentation ======================================================================================== //
 

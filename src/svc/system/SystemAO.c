@@ -15,8 +15,10 @@ Some fancy copyright message here (if needed)
 
 #include "app.h"
 #include "log.h"
+#include "SttAO.h"
 #include "SubtitleAO.h"
 #include "SystemAO.h"
+#include "USBAudioAO.h"
 #include "VideoAO.h"
 
 // === Macros definitions ========================================================================================== //
@@ -31,6 +33,9 @@ typedef struct
     int32_t error_code;
     uint32_t active_video_width;
     uint32_t active_video_height;
+    uint8_t usb_audio_ready;
+    uint8_t subtitle_init_requested;
+    uint8_t stt_init_requested;
 } system_ao_t;
 
 // === Private variable declarations =============================================================================== //
@@ -42,12 +47,12 @@ static QState system_ao_init(system_ao_t* const me, QEvt const* const e);
 static QState system_ao_run(system_ao_t* const me, QEvt const* const e);
 static QState system_ao_error(system_ao_t* const me, QEvt const* const e);
 
-static void post_component_init(system_ao_t* const me,
-                                QActive* const target,
-                                component_id_e source,
-                                uint32_t width,
-                                uint32_t height);
-static void on_init(system_ao_t* const me);
+static int post_component_init(system_ao_t* const me,
+                               QActive* const target,
+                               component_id_e source,
+                               uint32_t width,
+                               uint32_t height);
+static int on_init(system_ao_t* const me);
 static int on_component_ready(system_ao_t* const me, component_ready_evt_t const* const e);
 static void on_run(system_ao_t* const me);
 static void on_error(system_ao_t* const me, app_error_evt_t const* const e);
@@ -77,6 +82,9 @@ static const char* component_id_to_str(component_id_e component)
     case COMPONENT_SUBTITLE_PIPELINE:
         return "subtitle";
 
+    case COMPONENT_STT:
+        return "stt";
+
     case COMPONENT_BUTTONS:
         return "buttons";
 
@@ -89,30 +97,61 @@ static const char* component_id_to_str(component_id_e component)
     }
 }
 
-static void post_component_init(system_ao_t* const me,
-                                QActive* const target,
-                                component_id_e source,
-                                uint32_t width,
-                                uint32_t height)
+static int post_component_init(system_ao_t* const me,
+                               QActive* const target,
+                               component_id_e source,
+                               uint32_t width,
+                               uint32_t height)
 {
-    component_init_evt_t* const init_evt = Q_NEW(component_init_evt_t, COMPONENT_INIT_SIG);
+    component_init_evt_t* const init_evt =
+        Q_NEW_X(component_init_evt_t, APP_CONTROL_EVENT_MARGIN, COMPONENT_INIT_SIG);
 
     Q_UNUSED_PAR(me);
+
+    if (init_evt == NULL)
+    {
+        LOG_ERROR("system: failed to allocate init event for %s", component_id_to_str(source));
+        return -EAGAIN;
+    }
 
     init_evt->source = source;
     init_evt->width = width;
     init_evt->height = height;
-    QACTIVE_POST(target, &init_evt->super, &me->super);
+    if (!QACTIVE_POST_X(target, &init_evt->super, APP_CONTROL_EVENT_MARGIN, &me->super))
+    {
+        LOG_ERROR("system: failed to post init event for %s", component_id_to_str(source));
+        return -EAGAIN;
+    }
+
+    return 0;
 }
 
-static void on_init(system_ao_t* const me)
+static int on_init(system_ao_t* const me)
 {
+    int status = 0;
+
     me->last_ready_component = COMPONENT_NONE;
     me->active_video_width = 0U;
     me->active_video_height = 0U;
+    me->usb_audio_ready = 0U;
+    me->subtitle_init_requested = 0U;
+    me->stt_init_requested = 0U;
 
     LOG_INFO("system: init sequence started");
-    post_component_init(me, AO_Video, COMPONENT_NONE, 0U, 0U);
+    if (post_component_init(me, AO_Video, COMPONENT_VIDEO, 0U, 0U) != 0)
+    {
+        me->error_source = COMPONENT_VIDEO;
+        me->error_code = -EIO;
+        status = -EIO;
+    }
+    if (post_component_init(me, AO_USBAudio, COMPONENT_USB_AUDIO, 0U, 0U) != 0)
+    {
+        me->error_source = COMPONENT_USB_AUDIO;
+        me->error_code = -EIO;
+        status = -EIO;
+    }
+
+    return status;
 }
 
 static int on_component_ready(system_ao_t* const me, component_ready_evt_t const* const e)
@@ -138,13 +177,85 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
 
         me->active_video_width = e->width;
         me->active_video_height = e->height;
-        LOG_INFO("system: requesting subtitle init for %lux%lu",
-                 (unsigned long)e->width,
-                 (unsigned long)e->height);
-        post_component_init(me, AO_Subtitle, COMPONENT_VIDEO, e->width, e->height);
+        if (me->usb_audio_ready != 0U)
+        {
+            LOG_INFO("system: requesting subtitle init for %lux%lu",
+                     (unsigned long)e->width,
+                     (unsigned long)e->height);
+            if (post_component_init(me,
+                                    AO_Subtitle,
+                                    COMPONENT_SUBTITLE_PIPELINE,
+                                    e->width,
+                                    e->height)
+                == 0)
+            {
+                me->subtitle_init_requested = 1U;
+            }
+            else
+            {
+                me->error_source = COMPONENT_SUBTITLE_PIPELINE;
+                me->error_code = -EIO;
+                status = -EIO;
+            }
+        }
+        else
+        {
+            LOG_INFO("system: video ready, waiting for usb-audio before subtitle init");
+        }
+        break;
+
+    case COMPONENT_USB_AUDIO:
+        me->usb_audio_ready = 1U;
+        if ((me->active_video_width != 0U) && (me->active_video_height != 0U)
+            && (me->subtitle_init_requested == 0U))
+        {
+            LOG_INFO("system: usb-audio ready, requesting subtitle init for %lux%lu",
+                     (unsigned long)me->active_video_width,
+                     (unsigned long)me->active_video_height);
+            if (post_component_init(me,
+                                    AO_Subtitle,
+                                    COMPONENT_SUBTITLE_PIPELINE,
+                                    me->active_video_width,
+                                    me->active_video_height)
+                == 0)
+            {
+                me->subtitle_init_requested = 1U;
+            }
+            else
+            {
+                me->error_source = COMPONENT_SUBTITLE_PIPELINE;
+                me->error_code = -EIO;
+                status = -EIO;
+            }
+        }
+        else
+        {
+            LOG_INFO("system: usb-audio ready, subtitle still waiting for video");
+        }
         break;
 
     case COMPONENT_SUBTITLE_PIPELINE:
+        if (me->stt_init_requested == 0U)
+        {
+            LOG_INFO("system: subtitle ready, requesting stt init");
+            if (post_component_init(me, AO_Stt, COMPONENT_STT, 0U, 0U) == 0)
+            {
+                me->stt_init_requested = 1U;
+            }
+            else
+            {
+                me->error_source = COMPONENT_STT;
+                me->error_code = -EIO;
+                status = -EIO;
+            }
+        }
+        else
+        {
+            LOG_WARNING("system: duplicate subtitle ready while stt init already requested");
+        }
+        break;
+
+    case COMPONENT_STT:
         status = 0;
         break;
 
@@ -211,8 +322,14 @@ static QState system_ao_init(system_ao_t* const me, QEvt const* const e)
     switch (e->sig)
     {
     case Q_ENTRY_SIG:
-        on_init(me);
-        status = Q_HANDLED();
+        if (on_init(me) == 0)
+        {
+            status = Q_HANDLED();
+        }
+        else
+        {
+            status = Q_TRAN(&system_ao_error);
+        }
         break;
 
     case COMPONENT_READY_SIG:
@@ -298,6 +415,9 @@ void system_ao_ctor(void)
     me->error_code = 0;
     me->active_video_width = 0U;
     me->active_video_height = 0U;
+    me->usb_audio_ready = 0U;
+    me->subtitle_init_requested = 0U;
+    me->stt_init_requested = 0U;
 }
 
 // === End of documentation ======================================================================================== //

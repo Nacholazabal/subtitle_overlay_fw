@@ -36,7 +36,10 @@ static int configure_channel(video_dma_t* dma,
                              uint32_t height,
                              uint32_t stride,
                              uint32_t frame_index);
-static int select_channel(video_dma_t* dma, unsigned long request, const char* name, uint32_t frame_index);
+static int select_channel(video_dma_t* dma,
+                          unsigned long request,
+                          const char* name,
+                          uint32_t frame_index);
 static uint32_t channel_status(video_dma_t* dma, unsigned long request);
 
 // === Public variable definitions ================================================================================= //
@@ -87,8 +90,8 @@ static int configure_channel(video_dma_t* const dma,
 {
     struct hdmi_vdma_config cfg;
 
-    if ((dma == NULL) || !dma->is_open || (width == 0U) || (height == 0U) ||
-        (stride == 0U) || (frame_index >= dma->frame_count))
+    if ((dma == NULL) || !dma->is_open || (width == 0U) || (height == 0U) || (stride == 0U)
+        || (frame_index >= dma->frame_count))
     {
         return XST_INVALID_PARAM;
     }
@@ -170,12 +173,15 @@ static uint32_t channel_status(video_dma_t* const dma, unsigned long request)
  * @param frame_count Number of framebuffers to map.
  * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or XST_FAILURE on open/ioctl/mmap failure.
  */
-int video_dma_init(video_dma_t* const dma, uint8_t* frames[VIDEO_DMA_MAX_FRAMES], uint32_t frame_count)
+int video_dma_init(video_dma_t* const dma,
+                   uint8_t* frames[VIDEO_DMA_MAX_FRAMES],
+                   uint32_t frame_count)
 {
     struct hdmi_vdma_info info;
     uint32_t i;
 
-    if ((dma == NULL) || (frames == NULL) || (frame_count == 0U) || (frame_count > VIDEO_DMA_MAX_FRAMES))
+    if ((dma == NULL) || (frames == NULL) || (frame_count == 0U)
+        || (frame_count > VIDEO_DMA_MAX_FRAMES))
     {
         return XST_INVALID_PARAM;
     }
@@ -186,7 +192,10 @@ int video_dma_init(video_dma_t* const dma, uint8_t* frames[VIDEO_DMA_MAX_FRAMES]
     dma->fd = open("/dev/" HDMI_VDMA_DEVICE_NAME, O_RDWR | O_SYNC);
     if (dma->fd < 0)
     {
-        fprintf(stderr, "[video_dma] open /dev/%s failed: %s\n", HDMI_VDMA_DEVICE_NAME, strerror(errno));
+        fprintf(stderr,
+                "[video_dma] open /dev/%s failed: %s\n",
+                HDMI_VDMA_DEVICE_NAME,
+                strerror(errno));
         return XST_FAILURE;
     }
     dma->is_open = 1;
@@ -214,11 +223,15 @@ int video_dma_init(video_dma_t* const dma, uint8_t* frames[VIDEO_DMA_MAX_FRAMES]
     {
         uint32_t const kernel_frame = i % info.frame_count;
         off_t const offset = (off_t)((uintptr_t)kernel_frame * dma->frame_size);
-        void* const mapped = mmap(NULL, dma->frame_size, PROT_READ | PROT_WRITE, MAP_SHARED, dma->fd, offset);
+        void* const mapped =
+            mmap(NULL, dma->frame_size, PROT_READ | PROT_WRITE, MAP_SHARED, dma->fd, offset);
 
         if (mapped == MAP_FAILED)
         {
-            fprintf(stderr, "[video_dma] mmap frame %u failed: %s\n", kernel_frame, strerror(errno));
+            fprintf(stderr,
+                    "[video_dma] mmap frame %u failed: %s\n",
+                    kernel_frame,
+                    strerror(errno));
             video_dma_cleanup(dma);
             return XST_FAILURE;
         }
@@ -289,14 +302,24 @@ int video_dma_configure(video_dma_t* const dma,
 {
     if (channel == VIDEO_DMA_CHANNEL_MM2S)
     {
-        return configure_channel(dma, HDMI_VDMA_MM2S_CONFIGURE, "HDMI_VDMA_MM2S_CONFIGURE",
-                                 width, height, stride, frame_index);
+        return configure_channel(dma,
+                                 HDMI_VDMA_MM2S_CONFIGURE,
+                                 "HDMI_VDMA_MM2S_CONFIGURE",
+                                 width,
+                                 height,
+                                 stride,
+                                 frame_index);
     }
 
     if (channel == VIDEO_DMA_CHANNEL_S2MM)
     {
-        return configure_channel(dma, HDMI_VDMA_S2MM_CONFIGURE, "HDMI_VDMA_S2MM_CONFIGURE",
-                                 width, height, stride, frame_index);
+        return configure_channel(dma,
+                                 HDMI_VDMA_S2MM_CONFIGURE,
+                                 "HDMI_VDMA_S2MM_CONFIGURE",
+                                 width,
+                                 height,
+                                 stride,
+                                 frame_index);
     }
 
     return XST_INVALID_PARAM;
@@ -351,7 +374,9 @@ int video_dma_stop(video_dma_t* const dma, video_dma_channel_e channel)
  * @param frame_index Framebuffer index to select.
  * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or XST_FAILURE on ioctl failure.
  */
-int video_dma_select_frame(video_dma_t* const dma, video_dma_channel_e channel, uint32_t frame_index)
+int video_dma_select_frame(video_dma_t* const dma,
+                           video_dma_channel_e channel,
+                           uint32_t frame_index)
 {
     if (channel == VIDEO_DMA_CHANNEL_MM2S)
     {

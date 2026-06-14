@@ -23,8 +23,7 @@ void setUp(void)
 }
 
 void tearDown(void)
-{
-}
+{}
 
 void test_subtitle_overlay_init_uses_mapped_platform_region(void)
 {
@@ -93,7 +92,8 @@ void test_subtitle_overlay_enable_preserves_other_control_bits(void)
     regs[REG_CTRL_INDEX] = SUBTITLE_OVERLAY_CTRL_SOF;
 
     TEST_ASSERT_EQUAL_INT(0, subtitle_overlay_enable(&overlay, 1));
-    TEST_ASSERT_EQUAL_UINT32(SUBTITLE_OVERLAY_CTRL_SOF | SUBTITLE_OVERLAY_CTRL_ENABLE, regs[REG_CTRL_INDEX]);
+    TEST_ASSERT_EQUAL_UINT32(SUBTITLE_OVERLAY_CTRL_SOF | SUBTITLE_OVERLAY_CTRL_ENABLE,
+                             regs[REG_CTRL_INDEX]);
 
     TEST_ASSERT_EQUAL_INT(0, subtitle_overlay_enable(&overlay, 0));
     TEST_ASSERT_EQUAL_UINT32(SUBTITLE_OVERLAY_CTRL_SOF, regs[REG_CTRL_INDEX]);

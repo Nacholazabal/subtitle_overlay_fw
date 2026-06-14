@@ -33,7 +33,10 @@ COMMON_FLAGS=(
     -Isrc/hal/video_dynclk
     -Isrc/hal/video_gpio
     -Isrc/hal/video_vtc
+    -Isrc/hal/usb_audio
+    -Isrc/svc/stt
     -Isrc/svc/subtitle_pipeline
+    -Isrc/svc/usb_audio
     -Isrc/svc/video_pipeline
 )
 

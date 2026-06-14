@@ -36,6 +36,11 @@ typedef struct
 // === Public function declarations ================================================================================ //
 
 int video_dynclk_init(video_dynclk_t* dynclk);
+/*
+ * These calls perform short bounded MMIO polling while the clock locks/stops.
+ * Keep them out of high-frequency AO handlers unless that bounded latency is
+ * acceptable for the state transition.
+ */
 int video_dynclk_configure(video_dynclk_t* dynclk, double frequency_mhz);
 int video_dynclk_stop(video_dynclk_t* dynclk);
 

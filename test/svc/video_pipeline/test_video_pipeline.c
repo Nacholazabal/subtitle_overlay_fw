@@ -47,8 +47,7 @@ void setUp(void)
 }
 
 void tearDown(void)
-{
-}
+{}
 
 void test_video_pipeline_init_rejects_null_pipeline(void)
 {

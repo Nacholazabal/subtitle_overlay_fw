@@ -32,8 +32,7 @@ void setUp(void)
 }
 
 void tearDown(void)
-{
-}
+{}
 
 void test_video_input_init_rejects_invalid_arguments(void)
 {
@@ -294,7 +293,10 @@ void test_video_output_start_stops_existing_output_then_starts_mm2s_dma(void)
 
     video_vtc_stop_generator_ExpectAnyArgs();
     video_dma_stop_ExpectAndReturn(&dma, VIDEO_DMA_CHANNEL_MM2S, XST_SUCCESS);
-    video_dynclk_configure_ExpectAndReturn(&output.dynclk, mode_720p.timing.pixel_clock_mhz, XST_SUCCESS);
+    video_dynclk_stop_ExpectAnyArgsAndReturn(XST_SUCCESS);
+    video_dynclk_configure_ExpectAndReturn(&output.dynclk,
+                                           mode_720p.timing.pixel_clock_mhz,
+                                           XST_SUCCESS);
     video_vtc_configure_generator_ExpectAnyArgsAndReturn(XST_SUCCESS);
     video_vtc_start_generator_ExpectAnyArgs();
     video_dma_configure_ExpectAndReturn(&dma,
@@ -317,7 +319,9 @@ void test_video_output_start_returns_dynclk_error(void)
 {
     output.dma = &dma;
 
-    video_dynclk_configure_ExpectAndReturn(&output.dynclk, mode_720p.timing.pixel_clock_mhz, XST_FAILURE);
+    video_dynclk_configure_ExpectAndReturn(&output.dynclk,
+                                           mode_720p.timing.pixel_clock_mhz,
+                                           XST_FAILURE);
 
     TEST_ASSERT_EQUAL_INT(XST_FAILURE, video_output_start(&output, &mode_720p, 0U));
     TEST_ASSERT_EQUAL_UINT8(0U, output.running);
@@ -327,7 +331,9 @@ void test_video_output_start_returns_vtc_configure_error(void)
 {
     output.dma = &dma;
 
-    video_dynclk_configure_ExpectAndReturn(&output.dynclk, mode_720p.timing.pixel_clock_mhz, XST_SUCCESS);
+    video_dynclk_configure_ExpectAndReturn(&output.dynclk,
+                                           mode_720p.timing.pixel_clock_mhz,
+                                           XST_SUCCESS);
     video_vtc_configure_generator_ExpectAnyArgsAndReturn(XST_FAILURE);
 
     TEST_ASSERT_EQUAL_INT(XST_FAILURE, video_output_start(&output, &mode_720p, 0U));
@@ -339,7 +345,9 @@ void test_video_output_start_returns_dma_configure_error_after_starting_generato
     output.dma = &dma;
     output.stride = 5760U;
 
-    video_dynclk_configure_ExpectAndReturn(&output.dynclk, mode_720p.timing.pixel_clock_mhz, XST_SUCCESS);
+    video_dynclk_configure_ExpectAndReturn(&output.dynclk,
+                                           mode_720p.timing.pixel_clock_mhz,
+                                           XST_SUCCESS);
     video_vtc_configure_generator_ExpectAnyArgsAndReturn(XST_SUCCESS);
     video_vtc_start_generator_ExpectAnyArgs();
     video_dma_configure_ExpectAndReturn(&dma,
@@ -359,7 +367,9 @@ void test_video_output_start_returns_dma_start_error(void)
     output.dma = &dma;
     output.stride = 5760U;
 
-    video_dynclk_configure_ExpectAndReturn(&output.dynclk, mode_720p.timing.pixel_clock_mhz, XST_SUCCESS);
+    video_dynclk_configure_ExpectAndReturn(&output.dynclk,
+                                           mode_720p.timing.pixel_clock_mhz,
+                                           XST_SUCCESS);
     video_vtc_configure_generator_ExpectAnyArgsAndReturn(XST_SUCCESS);
     video_vtc_start_generator_ExpectAnyArgs();
     video_dma_configure_ExpectAndReturn(&dma,
@@ -380,7 +390,9 @@ void test_video_output_start_returns_select_frame_error(void)
     output.dma = &dma;
     output.stride = 5760U;
 
-    video_dynclk_configure_ExpectAndReturn(&output.dynclk, mode_720p.timing.pixel_clock_mhz, XST_SUCCESS);
+    video_dynclk_configure_ExpectAndReturn(&output.dynclk,
+                                           mode_720p.timing.pixel_clock_mhz,
+                                           XST_SUCCESS);
     video_vtc_configure_generator_ExpectAnyArgsAndReturn(XST_SUCCESS);
     video_vtc_start_generator_ExpectAnyArgs();
     video_dma_configure_ExpectAndReturn(&dma,
@@ -407,6 +419,7 @@ void test_video_output_stop_rejects_null_and_resets_state(void)
 
     video_vtc_stop_generator_ExpectAnyArgs();
     video_dma_stop_ExpectAndReturn(&dma, VIDEO_DMA_CHANNEL_MM2S, XST_SUCCESS);
+    video_dynclk_stop_ExpectAnyArgsAndReturn(XST_SUCCESS);
 
     TEST_ASSERT_EQUAL_INT(XST_SUCCESS, video_output_stop(&output));
     TEST_ASSERT_EQUAL_UINT8(0U, output.running);
@@ -420,6 +433,7 @@ void test_video_output_stop_allows_null_dma(void)
     output.mode = &mode_720p;
 
     video_vtc_stop_generator_ExpectAnyArgs();
+    video_dynclk_stop_ExpectAnyArgsAndReturn(XST_SUCCESS);
 
     TEST_ASSERT_EQUAL_INT(XST_SUCCESS, video_output_stop(&output));
     TEST_ASSERT_EQUAL_UINT8(0U, output.running);

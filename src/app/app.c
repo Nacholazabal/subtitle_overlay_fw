@@ -16,22 +16,37 @@ Some fancy copyright message here (if needed)
 
 #include "app.h"
 #include "log.h"
+#include "SttAO.h"
 #include "SubtitleAO.h"
 #include "SystemAO.h"
+#include "USBAudioAO.h"
 #include "VideoAO.h"
 
 // === Macros definitions ========================================================================================== //
 
-#define APP_TICKS_PER_SEC     (100U)
-#define APP_EVENT_POOL_LEN    (16U)
-#define SYSTEM_AO_QUEUE_LEN   (8U)
-#define SUBTITLE_AO_QUEUE_LEN (8U)
-#define VIDEO_AO_QUEUE_LEN    (8U)
-#define SYSTEM_AO_PRIO        (1U)
-#define VIDEO_AO_PRIO         (2U)
-#define SUBTITLE_AO_PRIO      (3U)
+#define APP_TICKS_PER_SEC      (100U)
+#define APP_EVENT_POOL_LEN     (32U)
+#define SYSTEM_AO_QUEUE_LEN    (8U)
+#define SUBTITLE_AO_QUEUE_LEN  (8U)
+#define STT_AO_QUEUE_LEN       (8U)
+#define USB_AUDIO_AO_QUEUE_LEN (8U)
+#define VIDEO_AO_QUEUE_LEN     (8U)
+#define SYSTEM_AO_PRIO         (1U)
+#define VIDEO_AO_PRIO          (2U)
+#define USB_AUDIO_AO_PRIO      (3U)
+#define STT_AO_PRIO            (4U)
+#define SUBTITLE_AO_PRIO       (5U)
 
 // === Private data type declarations ============================================================================== //
+
+typedef union
+{
+    component_init_evt_t component_init;
+    component_ready_evt_t component_ready;
+    app_error_evt_t app_error;
+    subtitle_text_evt_t subtitle_text;
+} app_event_pool_evt_t;
+
 // === Private variable declarations =============================================================================== //
 // === Private function declarations =============================================================================== //
 
@@ -64,7 +79,7 @@ static void app_init(void)
 {
     LOG_INFO("app: initializing QP/C event pools and active objects");
 
-    static QF_MPOOL_EL(component_init_evt_t) app_event_pool_sto[APP_EVENT_POOL_LEN];
+    static QF_MPOOL_EL(app_event_pool_evt_t) app_event_pool_sto[APP_EVENT_POOL_LEN];
     QF_poolInit(app_event_pool_sto, sizeof(app_event_pool_sto), sizeof(app_event_pool_sto[0]));
 
     static QEvtPtr video_queue_sto[VIDEO_AO_QUEUE_LEN];
@@ -73,6 +88,16 @@ static void app_init(void)
                   VIDEO_AO_PRIO,
                   video_queue_sto,
                   Q_DIM(video_queue_sto),
+                  (void*)0,
+                  0U,
+                  (void*)0);
+
+    static QEvtPtr usb_audio_queue_sto[USB_AUDIO_AO_QUEUE_LEN];
+    usb_audio_ao_ctor();
+    QActive_start(AO_USBAudio,
+                  USB_AUDIO_AO_PRIO,
+                  usb_audio_queue_sto,
+                  Q_DIM(usb_audio_queue_sto),
                   (void*)0,
                   0U,
                   (void*)0);
@@ -87,6 +112,10 @@ static void app_init(void)
                   0U,
                   (void*)0);
 
+    static QEvtPtr stt_queue_sto[STT_AO_QUEUE_LEN];
+    stt_ao_ctor();
+    QActive_start(AO_Stt, STT_AO_PRIO, stt_queue_sto, Q_DIM(stt_queue_sto), (void*)0, 0U, (void*)0);
+
     static QEvtPtr system_queue_sto[SYSTEM_AO_QUEUE_LEN];
     system_ao_ctor();
     QActive_start(AO_System,
@@ -100,8 +129,8 @@ static void app_init(void)
     LOG_INFO("app: active objects started");
 
     /*
-     * TODO: Construct and start USBAudioAO, ButtonsAO, and LEDAO here as they
-     * are implemented.
+     * TODO: Construct and start ButtonsAO and LEDAO here as they are
+     * implemented.
      */
 }
 

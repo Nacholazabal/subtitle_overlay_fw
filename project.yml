@@ -17,14 +17,21 @@
   :source:
     - src/hal/subtitle_bram/**
     - src/hal/subtitle_overlay/**
+    - src/hal/usb_audio/**
+    - src/svc/stt/**
     - src/svc/subtitle_pipeline/**
+    - src/svc/usb_audio/**
     - src/svc/video_pipeline/**
+    - src/utils/log/**
   :include:
     - linux/include/uapi
     - src/bsp/bsp_compat
     - src/bsp/platform
     - src/bsp/platform/linux
     - src/bsp/vtc_v7_2/src
+    - src/qpc/include
+    - src/qpc/ports/posix-qv
+    - src/qpc/ports/config
     - src/app
     - src/hal/subtitle_bram
     - src/hal/subtitle_overlay
@@ -32,8 +39,12 @@
     - src/hal/video_dynclk
     - src/hal/video_gpio
     - src/hal/video_vtc
+    - src/hal/usb_audio
+    - src/svc/stt
     - src/svc/subtitle_pipeline
+    - src/svc/usb_audio
     - src/svc/video_pipeline
+    - src/utils/log
 
 :defines:
   :common: &common_defines []
@@ -65,6 +76,7 @@
         - -fprofile-arcs
         - -ftest-coverage
         - -lgcov
+        - -pthread
 
 :plugins:
   :enabled:

@@ -7,16 +7,16 @@ Some fancy copyright message here (if needed)
 #pragma once
 
 ///
-/// @file video_dma.h
-/// @brief HDMI VDMA HAL adapter interface
+/// @file stt_event_rx.h
+/// @brief Nonblocking TCP NDJSON receiver for STT transcript events
 ///
 
 // === Headers files inclusions ==================================================================================== //
 
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 
-#include "xstatus.h"
+#include "app.h"
 
 // === C++ Guard =================================================================================================== //
 
@@ -26,43 +26,44 @@ extern "C" {
 
 // === Public macros definitions =================================================================================== //
 
-#define VIDEO_DMA_MAX_FRAMES    3U
-#define VIDEO_DMA_STATUS_HALTED 0x00000001U
-#define VIDEO_DMA_STATUS_IDLE   0x00000002U
+#define STT_EVENT_RX_DEFAULT_HOST        "0.0.0.0"
+#define STT_EVENT_RX_DEFAULT_PORT        (5001U)
+#define STT_EVENT_RX_HOST_MAX_LEN        (64U)
+#define STT_EVENT_RX_LINE_MAX            (512U)
+#define STT_EVENT_RX_MAX_BYTES_PER_POLL  (512U)
+#define STT_EVENT_RX_MAX_EVENTS_PER_POLL (4U)
 
 // === Public data type declarations =============================================================================== //
 
-typedef enum
+typedef struct
 {
-    VIDEO_DMA_CHANNEL_MM2S = 0,
-    VIDEO_DMA_CHANNEL_S2MM,
-} video_dma_channel_e;
+    char host[STT_EVENT_RX_HOST_MAX_LEN];
+    uint32_t port;
+} stt_event_rx_config_t;
 
 typedef struct
 {
-    int fd;
-    int is_open;
-    uint8_t* frames[VIDEO_DMA_MAX_FRAMES];
-    uint32_t frame_count;
-    uint32_t frame_size;
-    size_t mmap_size;
-} video_dma_t;
+    stt_event_rx_config_t config;
+    char line[STT_EVENT_RX_LINE_MAX];
+    size_t line_used;
+    int server_fd;
+    int client_fd;
+    uint8_t initialized;
+    uint8_t client_connected;
+    uint8_t discarding_line;
+} stt_event_rx_t;
 
 // === Public variable declarations ================================================================================ //
 // === Public function declarations ================================================================================ //
 
-int video_dma_init(video_dma_t* dma, uint8_t* frames[VIDEO_DMA_MAX_FRAMES], uint32_t frame_count);
-void video_dma_cleanup(video_dma_t* dma);
-int video_dma_configure(video_dma_t* dma,
-                        video_dma_channel_e channel,
-                        uint32_t width,
-                        uint32_t height,
-                        uint32_t stride,
-                        uint32_t frame_index);
-int video_dma_start(video_dma_t* dma, video_dma_channel_e channel);
-int video_dma_stop(video_dma_t* dma, video_dma_channel_e channel);
-int video_dma_select_frame(video_dma_t* dma, video_dma_channel_e channel, uint32_t frame_index);
-uint32_t video_dma_status(video_dma_t* dma, video_dma_channel_e channel);
+void stt_event_rx_default_config(stt_event_rx_config_t* config);
+int stt_event_rx_init(stt_event_rx_t* rx, stt_event_rx_config_t const* config);
+int stt_event_rx_poll(stt_event_rx_t* rx,
+                      subtitle_text_evt_t* events,
+                      uint32_t max_events,
+                      uint32_t* event_count);
+void stt_event_rx_cleanup(stt_event_rx_t* rx);
+int stt_event_rx_parse_line(char const* line, subtitle_text_evt_t* event);
 
 // === End of documentation ======================================================================================== //
 

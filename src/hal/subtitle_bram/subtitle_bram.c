@@ -69,9 +69,10 @@ static volatile uint32_t* bram_words(subtitle_bram_t const* const bram)
  */
 static uint8_t pixel_is_in_range(int32_t x, int32_t y)
 {
-    return ((x >= 0) && (y >= 0) &&
-            ((uint32_t)x < SUBTITLE_BRAM_MASK_WIDTH) &&
-            ((uint32_t)y < SUBTITLE_BRAM_MASK_HEIGHT)) ? 1U : 0U;
+    return ((x >= 0) && (y >= 0) && ((uint32_t)x < SUBTITLE_BRAM_MASK_WIDTH)
+            && ((uint32_t)y < SUBTITLE_BRAM_MASK_HEIGHT))
+               ? 1U
+               : 0U;
 }
 
 // === Public function implementation ============================================================================== //
@@ -187,6 +188,7 @@ int subtitle_bram_clear_pixel(subtitle_bram_t* const bram, int32_t x, int32_t y)
  * @brief Copy a packed MSB-first 1bpp bitmap into the subtitle mask BRAM.
  * @param bram Initialized BRAM adapter.
  * @param src Source row-major bitmap, MSB-first inside each byte.
+ * @param src_size Source bitmap size in bytes.
  * @param x Destination x coordinate.
  * @param y Destination y coordinate.
  * @param width Source bitmap width in pixels.
@@ -195,6 +197,7 @@ int subtitle_bram_clear_pixel(subtitle_bram_t* const bram, int32_t x, int32_t y)
  */
 int subtitle_bram_write_bitmap(subtitle_bram_t* const bram,
                                uint8_t const* const src,
+                               size_t src_size,
                                int32_t x,
                                int32_t y,
                                uint32_t width,
@@ -211,13 +214,18 @@ int subtitle_bram_write_bitmap(subtitle_bram_t* const bram,
         return status;
     }
 
-    if ((src == NULL) || (width == 0U) || (height == 0U))
+    if ((src == NULL) || (src_size == 0U) || (width == 0U) || (height == 0U))
     {
         return -EINVAL;
     }
 
     words = bram_words(bram);
     src_stride = (width + 7U) / 8U;
+    if ((src_stride == 0U) || (height > (SIZE_MAX / src_stride))
+        || (((size_t)height * (size_t)src_stride) > src_size))
+    {
+        return -EINVAL;
+    }
 
     for (row = 0U; row < height; row++)
     {
@@ -240,8 +248,8 @@ int subtitle_bram_write_bitmap(subtitle_bram_t* const bram,
             }
 
             {
-                uint32_t const word_index =
-                    ((uint32_t)dst_y * SUBTITLE_BRAM_WORDS_PER_ROW) + ((uint32_t)dst_x / 32U);
+                uint32_t const word_index = ((uint32_t)dst_y * SUBTITLE_BRAM_WORDS_PER_ROW)
+                                            + ((uint32_t)dst_x / 32U);
                 uint32_t const bit_mask = 1U << ((uint32_t)dst_x % 32U);
 
                 if (src_bit != 0U)
