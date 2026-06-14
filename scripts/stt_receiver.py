@@ -16,7 +16,7 @@ STREAM_HEADER = "!6I"
 CHUNK_HEADER = "!QQ5I"
 FORMAT_S16_LE = 1
 
-EXPECTED_RATE = 16000
+WHISPER_RATE = 16000
 EXPECTED_CHANNELS = 1
 EXPECTED_SAMPLE_WIDTH = 2
 
@@ -36,6 +36,25 @@ def pcm_s16le_to_float32(payload):
 
     samples = np.frombuffer(payload, dtype="<i2")
     return samples.astype(np.float32) / 32768.0
+
+
+def resample_audio(samples, source_rate, target_rate):
+    if source_rate == target_rate:
+        return samples
+
+    import numpy as np
+
+    if samples.size == 0:
+        return samples
+
+    target_size = int(round(samples.size * target_rate / source_rate))
+    if target_size <= 0:
+        return np.empty(0, dtype=np.float32)
+
+    source_positions = np.arange(samples.size, dtype=np.float64)
+    target_positions = np.arange(target_size, dtype=np.float64) * source_rate / target_rate
+    resampled = np.interp(target_positions, source_positions, samples)
+    return resampled.astype(np.float32)
 
 
 class TranscriptSink:
@@ -181,20 +200,34 @@ class FasterWhisperEngine:
 
 
 class ChunkTranscriber:
-    def __init__(self, engine, sink, sample_rate, chunk_sec):
+    def __init__(self, engine, sink, target_rate, chunk_sec, max_pending_chunks=4):
         import numpy as np
 
         self.engine = engine
         self.sink = sink
-        self.sample_rate = sample_rate
-        self.samples_per_chunk = int(round(sample_rate * chunk_sec))
+        self.source_rate = target_rate
+        self.target_rate = target_rate
+        self.samples_per_chunk = int(round(target_rate * chunk_sec))
         self.buffer = np.empty(0, dtype=np.float32)
         self.next_start_sample = 0
+        self.pending_chunks = queue.Queue(maxsize=max_pending_chunks)
+        self.stop_event = threading.Event()
+        self.worker = threading.Thread(target=self._worker_main, daemon=True)
+        self.worker.start()
+
+    def set_source_rate(self, source_rate):
+        self.source_rate = source_rate
+        if source_rate != self.target_rate:
+            print(
+                f"resampling audio from {source_rate} Hz to {self.target_rate} Hz for Whisper",
+                flush=True,
+            )
 
     def push_pcm(self, payload):
         import numpy as np
 
         samples = pcm_s16le_to_float32(payload)
+        samples = resample_audio(samples, self.source_rate, self.target_rate)
         if samples.size == 0:
             return
 
@@ -202,20 +235,59 @@ class ChunkTranscriber:
         while self.buffer.size >= self.samples_per_chunk:
             chunk = self.buffer[: self.samples_per_chunk].copy()
             self.buffer = self.buffer[self.samples_per_chunk :]
-            self._transcribe(chunk)
+            self._queue_chunk(chunk)
 
     def flush(self):
         if self.buffer.size > 0:
             chunk = self.buffer.copy()
             self.buffer = self.buffer[:0]
-            self._transcribe(chunk)
+            self._queue_chunk(chunk)
+        self.pending_chunks.join()
 
-    def _transcribe(self, chunk):
+    def close(self):
+        self.flush()
+        self.stop_event.set()
+        self.worker.join(timeout=2.0)
+
+    def _queue_chunk(self, chunk):
         start_sample = self.next_start_sample
         end_sample = start_sample + chunk.size
-        start_sec = start_sample / self.sample_rate
-        end_sec = end_sample / self.sample_rate
         self.next_start_sample = end_sample
+
+        item = (chunk, start_sample, end_sample)
+        try:
+            self.pending_chunks.put_nowait(item)
+            return
+        except queue.Full:
+            pass
+
+        try:
+            self.pending_chunks.get_nowait()
+            self.pending_chunks.task_done()
+            print("stt queue full: dropping oldest audio chunk", flush=True)
+        except queue.Empty:
+            pass
+
+        try:
+            self.pending_chunks.put_nowait(item)
+        except queue.Full:
+            print("stt queue full: dropping newest audio chunk", flush=True)
+
+    def _worker_main(self):
+        while not self.stop_event.is_set():
+            try:
+                chunk, start_sample, end_sample = self.pending_chunks.get(timeout=0.1)
+            except queue.Empty:
+                continue
+
+            try:
+                self._transcribe(chunk, start_sample, end_sample)
+            finally:
+                self.pending_chunks.task_done()
+
+    def _transcribe(self, chunk, start_sample, end_sample):
+        start_sec = start_sample / self.target_rate
+        end_sec = end_sample / self.target_rate
 
         t0 = time.monotonic()
         event = self.engine.transcribe_chunk(chunk, start_sec, end_sec)
@@ -256,6 +328,7 @@ class TcpAudioReceiver:
             STREAM_HEADER, header
         )
         validate_audio_format(rate, channels, fmt)
+        self.transcriber.set_source_rate(rate)
 
         print(
             f"stream: {rate} Hz, {channels} ch, {chunk_ms} ms chunks, "
@@ -289,8 +362,8 @@ class TcpAudioReceiver:
 
 
 def validate_audio_format(rate, channels, fmt):
-    if rate != EXPECTED_RATE:
-        raise RuntimeError(f"expected {EXPECTED_RATE} Hz audio, got {rate} Hz")
+    if rate <= 0:
+        raise RuntimeError(f"invalid audio rate: {rate}")
     if channels != EXPECTED_CHANNELS:
         raise RuntimeError(f"expected mono audio, got {channels} channels")
     if fmt != FORMAT_S16_LE:
@@ -305,8 +378,9 @@ def run_wav(path, transcriber):
         if sample_width != EXPECTED_SAMPLE_WIDTH:
             raise RuntimeError(f"expected 16-bit PCM WAV, got sample width {sample_width}")
         validate_audio_format(rate, channels, FORMAT_S16_LE)
+        transcriber.set_source_rate(rate)
 
-        frames_per_read = EXPECTED_RATE // 10
+        frames_per_read = max(1, rate // 10)
         print(f"reading WAV {path}: {rate} Hz, {channels} ch", flush=True)
         while True:
             payload = wav.readframes(frames_per_read)
@@ -355,6 +429,7 @@ def parse_args():
 def main():
     args = parse_args()
     sink = build_sink(args)
+    transcriber = None
 
     try:
         engine = FasterWhisperEngine(
@@ -365,13 +440,15 @@ def main():
             beam_size=args.beam_size,
             vad_filter=args.vad_filter,
         )
-        transcriber = ChunkTranscriber(engine, sink, EXPECTED_RATE, args.chunk_sec)
+        transcriber = ChunkTranscriber(engine, sink, WHISPER_RATE, args.chunk_sec)
 
         if args.wav:
             run_wav(args.wav, transcriber)
         else:
             TcpAudioReceiver(args.host, args.port, transcriber).run()
     finally:
+        if transcriber is not None:
+            transcriber.close()
         sink.close()
 
 
