@@ -22,9 +22,9 @@ Some fancy copyright message here (if needed)
 
 #define SUBTITLE_PIPELINE_SOF_TIMEOUT_READS 5000000U
 
-#define SUBTITLE_PIPELINE_BAR_WIDTH_NUMERATOR    5U
-#define SUBTITLE_PIPELINE_BAR_WIDTH_DENOMINATOR  6U
-#define SUBTITLE_PIPELINE_BAR_HEIGHT_DENOMINATOR 9U
+#define SUBTITLE_PIPELINE_BAR_WIDTH_NUMERATOR    4U
+#define SUBTITLE_PIPELINE_BAR_WIDTH_DENOMINATOR  5U
+#define SUBTITLE_PIPELINE_BAR_HEIGHT_DENOMINATOR 6U
 #define SUBTITLE_PIPELINE_BOTTOM_MARGIN_DIVISOR  20U
 
 #define SUBTITLE_PIPELINE_DEFAULT_BAR_WIDTH(display_width)   \
@@ -47,7 +47,7 @@ static uint8_t pipeline_is_initialized(subtitle_pipeline_t const* pipeline);
 // === Private function implementation ============================================================================= //
 
 /**
- * @brief Compute legacy subtitle bar defaults from the active display dimensions.
+ * @brief Compute subtitle bar defaults from the active display dimensions.
  * @param display_width Active display width in pixels.
  * @param display_height Active display height in lines.
  * @return Overlay configuration for the default subtitle bar.
