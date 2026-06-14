@@ -26,7 +26,7 @@ extern "C" {
 
 // === Public macros definitions =================================================================================== //
 
-#define SUBTITLE_TEXT_MAX_LEN (128U)
+#define SUBTITLE_TEXT_MAX_LEN    (128U)
 #define APP_CONTROL_EVENT_MARGIN (2U)
 #define APP_ERROR_EVENT_MARGIN   (1U)
 

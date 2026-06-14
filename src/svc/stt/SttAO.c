@@ -24,10 +24,10 @@ Some fancy copyright message here (if needed)
 
 // === Macros definitions ========================================================================================== //
 
-#define STT_AO_POLL_TICKS              (1U)
-#define STT_AO_POLL_PERIOD_MS          (10U)
-#define STT_AO_PARTIAL_EVENT_MARGIN    (4U)
-#define STT_AO_FINAL_EVENT_MARGIN      (1U)
+#define STT_AO_POLL_TICKS           (1U)
+#define STT_AO_POLL_PERIOD_MS       (10U)
+#define STT_AO_PARTIAL_EVENT_MARGIN (4U)
+#define STT_AO_FINAL_EVENT_MARGIN   (1U)
 
 // === Private data type declarations ============================================================================== //
 
@@ -191,8 +191,8 @@ static int on_poll(stt_ao_t* const me)
 static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
 {
     subtitle_text_evt_t* subtitle_evt;
-    uint16_t const margin =
-        (e->is_final != 0U) ? STT_AO_FINAL_EVENT_MARGIN : STT_AO_PARTIAL_EVENT_MARGIN;
+    uint16_t const margin = (e->is_final != 0U) ? STT_AO_FINAL_EVENT_MARGIN
+                                                : STT_AO_PARTIAL_EVENT_MARGIN;
 
     if ((e == NULL) || (e->text[0] == '\0'))
     {

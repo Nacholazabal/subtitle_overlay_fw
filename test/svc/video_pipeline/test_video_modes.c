@@ -4,12 +4,10 @@
 #include "video_modes.h"
 
 void setUp(void)
-{
-}
+{}
 
 void tearDown(void)
-{
-}
+{}
 
 void test_video_modes_default_returns_first_supported_mode(void)
 {

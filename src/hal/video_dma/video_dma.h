@@ -26,7 +26,7 @@ extern "C" {
 
 // === Public macros definitions =================================================================================== //
 
-#define VIDEO_DMA_MAX_FRAMES 3U
+#define VIDEO_DMA_MAX_FRAMES    3U
 #define VIDEO_DMA_STATUS_HALTED 0x00000001U
 #define VIDEO_DMA_STATUS_IDLE   0x00000002U
 

@@ -27,8 +27,7 @@ void setUp(void)
 }
 
 void tearDown(void)
-{
-}
+{}
 
 void test_subtitle_pipeline_init_rejects_invalid_arguments(void)
 {
@@ -115,14 +114,16 @@ void test_subtitle_pipeline_write_bitmap_requires_initialized_pipeline_and_deleg
 {
     TEST_ASSERT_EQUAL_INT(-EINVAL,
                           subtitle_pipeline_write_bitmap(NULL, bitmap, sizeof(bitmap), 1, 2, 3, 4));
-    TEST_ASSERT_EQUAL_INT(-ESTATE,
-                          subtitle_pipeline_write_bitmap(&pipeline, bitmap, sizeof(bitmap), 1, 2, 3, 4));
+    TEST_ASSERT_EQUAL_INT(
+        -ESTATE,
+        subtitle_pipeline_write_bitmap(&pipeline, bitmap, sizeof(bitmap), 1, 2, 3, 4));
 
     pipeline.initialized = 1U;
     subtitle_bram_write_bitmap_ExpectAnyArgsAndReturn(0);
 
-    TEST_ASSERT_EQUAL_INT(0,
-                          subtitle_pipeline_write_bitmap(&pipeline, bitmap, sizeof(bitmap), 1, 2, 3, 4));
+    TEST_ASSERT_EQUAL_INT(
+        0,
+        subtitle_pipeline_write_bitmap(&pipeline, bitmap, sizeof(bitmap), 1, 2, 3, 4));
 }
 
 void test_subtitle_pipeline_commit_clears_and_waits_for_sof(void)

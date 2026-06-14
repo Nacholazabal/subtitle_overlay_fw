@@ -24,11 +24,11 @@ extern "C" {
 
 // === Public macros definitions =================================================================================== //
 
-#define SUBTITLE_BRAM_MASK_WIDTH     256U
-#define SUBTITLE_BRAM_MASK_HEIGHT    64U
-#define SUBTITLE_BRAM_WORDS_PER_ROW  8U
-#define SUBTITLE_BRAM_SIZE_BYTES     2048U
-#define SUBTITLE_BRAM_WORD_COUNT     (SUBTITLE_BRAM_SIZE_BYTES / sizeof(uint32_t))
+#define SUBTITLE_BRAM_MASK_WIDTH    256U
+#define SUBTITLE_BRAM_MASK_HEIGHT   64U
+#define SUBTITLE_BRAM_WORDS_PER_ROW 8U
+#define SUBTITLE_BRAM_SIZE_BYTES    2048U
+#define SUBTITLE_BRAM_WORD_COUNT    (SUBTITLE_BRAM_SIZE_BYTES / sizeof(uint32_t))
 
 // === Public data type declarations =============================================================================== //
 

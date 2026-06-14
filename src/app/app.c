@@ -24,7 +24,7 @@ Some fancy copyright message here (if needed)
 
 // === Macros definitions ========================================================================================== //
 
-#define APP_TICKS_PER_SEC     (100U)
+#define APP_TICKS_PER_SEC      (100U)
 #define APP_EVENT_POOL_LEN     (32U)
 #define SYSTEM_AO_QUEUE_LEN    (8U)
 #define SUBTITLE_AO_QUEUE_LEN  (8U)
@@ -114,13 +114,7 @@ static void app_init(void)
 
     static QEvtPtr stt_queue_sto[STT_AO_QUEUE_LEN];
     stt_ao_ctor();
-    QActive_start(AO_Stt,
-                  STT_AO_PRIO,
-                  stt_queue_sto,
-                  Q_DIM(stt_queue_sto),
-                  (void*)0,
-                  0U,
-                  (void*)0);
+    QActive_start(AO_Stt, STT_AO_PRIO, stt_queue_sto, Q_DIM(stt_queue_sto), (void*)0, 0U, (void*)0);
 
     static QEvtPtr system_queue_sto[SYSTEM_AO_QUEUE_LEN];
     system_ao_ctor();

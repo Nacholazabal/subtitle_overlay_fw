@@ -25,7 +25,7 @@ Some fancy copyright message here (if needed)
 
 // === Macros definitions ========================================================================================== //
 
-#define USB_AUDIO_CAPTURE_SAMPLE_BYTES (2U)
+#define USB_AUDIO_CAPTURE_SAMPLE_BYTES   (2U)
 #define USB_AUDIO_CAPTURE_BUFFER_PERIODS (8U)
 // === Private data type declarations ============================================================================== //
 // === Private variable declarations =============================================================================== //
@@ -143,7 +143,8 @@ static int recover_pcm(snd_pcm_t* const pcm, int err)
         do
         {
             status = snd_pcm_resume(pcm);
-        } while (status == -EAGAIN);
+        }
+        while (status == -EAGAIN);
 
         if (status < 0)
         {
@@ -201,9 +202,9 @@ static char const* pcm_state_name(snd_pcm_state_t const state)
 int usb_audio_capture_init(usb_audio_capture_t* const capture,
                            usb_audio_capture_config_t const* const config)
 {
-    if ((capture == NULL) || (config == NULL) || (config->device[0] == '\0') ||
-        (config->sample_rate_hz == 0U) || (config->channels == 0U) ||
-        (config->samples_per_chunk == 0U))
+    if ((capture == NULL) || (config == NULL) || (config->device[0] == '\0')
+        || (config->sample_rate_hz == 0U) || (config->channels == 0U)
+        || (config->samples_per_chunk == 0U))
     {
         return -EINVAL;
     }
@@ -260,15 +261,15 @@ int usb_audio_capture_read_chunk(usb_audio_capture_t* const capture,
                                  size_t dst_size,
                                  size_t* const bytes_read)
 {
-    if ((capture == NULL) || (dst == NULL) || (bytes_read == NULL) ||
-        (capture->initialized == 0U))
+    if ((capture == NULL) || (dst == NULL) || (bytes_read == NULL) || (capture->initialized == 0U))
     {
         return -EINVAL;
     }
 
 #ifdef CONFIG_USB_AUDIO_ALSA
     snd_pcm_t* const pcm = (snd_pcm_t*)capture->pcm_handle;
-    size_t const expected_bytes = (size_t)capture->config.samples_per_chunk * capture->bytes_per_frame;
+    size_t const expected_bytes =
+        (size_t)capture->config.samples_per_chunk * capture->bytes_per_frame;
     snd_pcm_sframes_t frames_done = 0;
 
     if (dst_size < expected_bytes)
@@ -279,7 +280,8 @@ int usb_audio_capture_read_chunk(usb_audio_capture_t* const capture,
     while ((uint32_t)frames_done < capture->config.samples_per_chunk)
     {
         uint8_t* const write_ptr = &dst[(size_t)frames_done * capture->bytes_per_frame];
-        snd_pcm_uframes_t const frames_left = capture->config.samples_per_chunk - (uint32_t)frames_done;
+        snd_pcm_uframes_t const frames_left = capture->config.samples_per_chunk
+                                              - (uint32_t)frames_done;
         snd_pcm_sframes_t got;
 
         got = snd_pcm_readi(pcm, write_ptr, frames_left);
@@ -290,12 +292,13 @@ int usb_audio_capture_read_chunk(usb_audio_capture_t* const capture,
         }
         else
         {
-            LOG_WARNING("usb-audio: ALSA read returned=%ld state=%s err=%s frames_done=%ld frames_left=%ld",
-                        (long)got,
-                        pcm_state_name(snd_pcm_state(pcm)),
-                        snd_strerror((int)got),
-                        (long)frames_done,
-                        (long)frames_left);
+            LOG_WARNING(
+                "usb-audio: ALSA read returned=%ld state=%s err=%s frames_done=%ld frames_left=%ld",
+                (long)got,
+                pcm_state_name(snd_pcm_state(pcm)),
+                snd_strerror((int)got),
+                (long)frames_done,
+                (long)frames_left);
 
             if (recover_pcm(pcm, (int)got) != 0)
             {

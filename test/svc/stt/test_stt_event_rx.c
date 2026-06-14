@@ -14,8 +14,7 @@ void setUp(void)
 }
 
 void tearDown(void)
-{
-}
+{}
 
 void test_stt_event_rx_parse_line_accepts_valid_partial_with_boolean_final_flag(void)
 {
@@ -106,9 +105,8 @@ void test_stt_event_rx_parse_line_rejects_missing_required_fields(void)
 
 void test_stt_event_rx_parse_line_handles_simple_escapes(void)
 {
-    char const* const line =
-        "{\"seq\":13,\"is_final\":true,\"start_sec\":0.0,\"end_sec\":1.0,"
-        "\"text\":\"hola\\n\\\"mundo\\\"\\\\\"}";
+    char const* const line = "{\"seq\":13,\"is_final\":true,\"start_sec\":0.0,\"end_sec\":1.0,"
+                             "\"text\":\"hola\\n\\\"mundo\\\"\\\\\"}";
 
     TEST_ASSERT_EQUAL_INT(0, stt_event_rx_parse_line(line, &event));
     TEST_ASSERT_EQUAL_STRING("hola \"mundo\"\\", event.text);

@@ -110,8 +110,7 @@ static int post_component_init(system_ao_t* const me,
 
     if (init_evt == NULL)
     {
-        LOG_ERROR("system: failed to allocate init event for %s",
-                  component_id_to_str(source));
+        LOG_ERROR("system: failed to allocate init event for %s", component_id_to_str(source));
         return -EAGAIN;
     }
 
@@ -120,8 +119,7 @@ static int post_component_init(system_ao_t* const me,
     init_evt->height = height;
     if (!QACTIVE_POST_X(target, &init_evt->super, APP_CONTROL_EVENT_MARGIN, &me->super))
     {
-        LOG_ERROR("system: failed to post init event for %s",
-                  component_id_to_str(source));
+        LOG_ERROR("system: failed to post init event for %s", component_id_to_str(source));
         return -EAGAIN;
     }
 
@@ -184,7 +182,12 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
             LOG_INFO("system: requesting subtitle init for %lux%lu",
                      (unsigned long)e->width,
                      (unsigned long)e->height);
-            if (post_component_init(me, AO_Subtitle, COMPONENT_SUBTITLE_PIPELINE, e->width, e->height) == 0)
+            if (post_component_init(me,
+                                    AO_Subtitle,
+                                    COMPONENT_SUBTITLE_PIPELINE,
+                                    e->width,
+                                    e->height)
+                == 0)
             {
                 me->subtitle_init_requested = 1U;
             }
@@ -213,7 +216,8 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
                                     AO_Subtitle,
                                     COMPONENT_SUBTITLE_PIPELINE,
                                     me->active_video_width,
-                                    me->active_video_height) == 0)
+                                    me->active_video_height)
+                == 0)
             {
                 me->subtitle_init_requested = 1U;
             }

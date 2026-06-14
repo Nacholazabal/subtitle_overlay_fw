@@ -418,11 +418,7 @@ static int connect_tcp(usb_audio_stream_t* const stream, char const* const host,
         if (errno == EINPROGRESS)
         {
             if ((poll_fd_until_ready(fd, POLLOUT, stream) == 0)
-                && (getsockopt(fd,
-                               SOL_SOCKET,
-                               SO_ERROR,
-                               &socket_error,
-                               &socket_error_len) == 0)
+                && (getsockopt(fd, SOL_SOCKET, SO_ERROR, &socket_error, &socket_error_len) == 0)
                 && (socket_error == 0))
             {
                 break;

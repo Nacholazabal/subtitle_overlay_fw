@@ -69,9 +69,10 @@ static volatile uint32_t* bram_words(subtitle_bram_t const* const bram)
  */
 static uint8_t pixel_is_in_range(int32_t x, int32_t y)
 {
-    return ((x >= 0) && (y >= 0) &&
-            ((uint32_t)x < SUBTITLE_BRAM_MASK_WIDTH) &&
-            ((uint32_t)y < SUBTITLE_BRAM_MASK_HEIGHT)) ? 1U : 0U;
+    return ((x >= 0) && (y >= 0) && ((uint32_t)x < SUBTITLE_BRAM_MASK_WIDTH)
+            && ((uint32_t)y < SUBTITLE_BRAM_MASK_HEIGHT))
+               ? 1U
+               : 0U;
 }
 
 // === Public function implementation ============================================================================== //
@@ -247,8 +248,8 @@ int subtitle_bram_write_bitmap(subtitle_bram_t* const bram,
             }
 
             {
-                uint32_t const word_index =
-                    ((uint32_t)dst_y * SUBTITLE_BRAM_WORDS_PER_ROW) + ((uint32_t)dst_x / 32U);
+                uint32_t const word_index = ((uint32_t)dst_y * SUBTITLE_BRAM_WORDS_PER_ROW)
+                                            + ((uint32_t)dst_x / 32U);
                 uint32_t const bit_mask = 1U << ((uint32_t)dst_x % 32U);
 
                 if (src_bit != 0U)

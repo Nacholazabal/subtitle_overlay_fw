@@ -30,13 +30,13 @@ Some fancy copyright message here (if needed)
 
 // === Macros definitions ========================================================================================== //
 
-#define STT_EVENT_RX_LISTEN_BACKLOG  (1)
-#define STT_EVENT_RX_PORT_STR_LEN    (16U)
-#define STT_EVENT_RX_JSON_KEY_MAX    (32U)
-#define STT_EVENT_RX_BOOL_TRUE_LEN   (4U)
-#define STT_EVENT_RX_BOOL_FALSE_LEN  (5U)
-#define STT_EVENT_RX_MS_PER_SEC      (1000.0)
-#define STT_EVENT_RX_ROUND_HALF      (0.5)
+#define STT_EVENT_RX_LISTEN_BACKLOG (1)
+#define STT_EVENT_RX_PORT_STR_LEN   (16U)
+#define STT_EVENT_RX_JSON_KEY_MAX   (32U)
+#define STT_EVENT_RX_BOOL_TRUE_LEN  (4U)
+#define STT_EVENT_RX_BOOL_FALSE_LEN (5U)
+#define STT_EVENT_RX_MS_PER_SEC     (1000.0)
+#define STT_EVENT_RX_ROUND_HALF     (0.5)
 
 // === Private data type declarations ============================================================================== //
 // === Private variable declarations =============================================================================== //
@@ -516,9 +516,7 @@ int stt_event_rx_init(stt_event_rx_t* const rx, stt_event_rx_config_t const* con
     }
 
     rx->initialized = 1U;
-    LOG_INFO("stt-rx: listening on %s:%lu",
-             rx->config.host,
-             (unsigned long)rx->config.port);
+    LOG_INFO("stt-rx: listening on %s:%lu", rx->config.host, (unsigned long)rx->config.port);
     return 0;
 }
 

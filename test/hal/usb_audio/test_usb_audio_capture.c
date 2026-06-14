@@ -28,8 +28,7 @@ void setUp(void)
 }
 
 void tearDown(void)
-{
-}
+{}
 
 void test_usb_audio_capture_init_rejects_invalid_arguments(void)
 {
@@ -62,11 +61,9 @@ void test_usb_audio_capture_read_reports_unavailable_when_alsa_is_disabled(void)
 {
     capture.initialized = 1U;
 
-    TEST_ASSERT_EQUAL_INT(-EIO,
-                          usb_audio_capture_read_chunk(&capture,
-                                                       chunk,
-                                                       sizeof(chunk),
-                                                       &bytes_read));
+    TEST_ASSERT_EQUAL_INT(
+        -EIO,
+        usb_audio_capture_read_chunk(&capture, chunk, sizeof(chunk), &bytes_read));
     TEST_ASSERT_EQUAL_UINT(0U, bytes_read);
 }
 
