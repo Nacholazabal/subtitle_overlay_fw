@@ -46,10 +46,10 @@ void test_subtitle_pipeline_init_configures_default_geometry_and_stays_disabled(
     TEST_ASSERT_EQUAL_UINT8(0U, pipeline.enabled);
     TEST_ASSERT_EQUAL_UINT32(1280U, pipeline.display_width);
     TEST_ASSERT_EQUAL_UINT32(720U, pipeline.display_height);
-    TEST_ASSERT_EQUAL_UINT32(1066U, pipeline.config.width);
-    TEST_ASSERT_EQUAL_UINT32(80U, pipeline.config.height);
-    TEST_ASSERT_EQUAL_UINT32(107U, pipeline.config.x);
-    TEST_ASSERT_EQUAL_UINT32(604U, pipeline.config.y);
+    TEST_ASSERT_EQUAL_UINT32(1024U, pipeline.config.width);
+    TEST_ASSERT_EQUAL_UINT32(120U, pipeline.config.height);
+    TEST_ASSERT_EQUAL_UINT32(128U, pipeline.config.x);
+    TEST_ASSERT_EQUAL_UINT32(564U, pipeline.config.y);
     TEST_ASSERT_EQUAL_UINT32(SUBTITLE_PIPELINE_DEFAULT_BAR_COLOR, pipeline.config.bar_color);
     TEST_ASSERT_EQUAL_UINT32(SUBTITLE_PIPELINE_DEFAULT_TEXT_COLOR, pipeline.config.text_color);
 }
