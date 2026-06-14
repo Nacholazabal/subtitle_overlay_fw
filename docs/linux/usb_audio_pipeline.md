@@ -35,6 +35,31 @@ board application:
 scripts/audio_receiver.py --port 5000 --output usb_audio_capture.wav
 ```
 
+For pipeline development before real STT integration, the same receiver can
+emit fake STT-like subtitle events while still writing the WAV:
+
+```sh
+scripts/audio_receiver.py --port 5000 --output usb_audio_capture.wav \
+  --simulate-stt --jsonl stt_events.jsonl
+```
+
+The simulator generates incremental `partial` transcript events every
+`--chunk-word-interval` chunks and a `final` event every `--words-per-final`
+generated words. These events are intended as a temporary stand-in for the
+future flow from audio chunks to subtitle/bitmap updates.
+
+When the firmware STT input active object is running on the board, the receiver
+can also forward those fake transcript events back to the board over a separate
+subtitle TCP channel:
+
+```sh
+scripts/audio_receiver.py --port 5000 --output usb_audio_capture.wav \
+  --simulate-stt --send-subtitles --subtitle-host 192.168.1.10 --subtitle-port 5001
+```
+
+The board-side defaults are `SUBTITLE_STT_RX_HOST=0.0.0.0` and
+`SUBTITLE_STT_RX_PORT=5001`.
+
 The current bring-up path prefers `hw` over `plughw` so ALSA stays on the sound
 card's native capture mode and avoids converter/plugin behavior during board
 debugging.

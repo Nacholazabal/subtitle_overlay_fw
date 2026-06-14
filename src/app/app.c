@@ -16,6 +16,7 @@ Some fancy copyright message here (if needed)
 
 #include "app.h"
 #include "log.h"
+#include "SttAO.h"
 #include "SubtitleAO.h"
 #include "SystemAO.h"
 #include "USBAudioAO.h"
@@ -24,17 +25,28 @@ Some fancy copyright message here (if needed)
 // === Macros definitions ========================================================================================== //
 
 #define APP_TICKS_PER_SEC     (100U)
-#define APP_EVENT_POOL_LEN    (16U)
-#define SYSTEM_AO_QUEUE_LEN   (8U)
-#define SUBTITLE_AO_QUEUE_LEN (8U)
+#define APP_EVENT_POOL_LEN     (32U)
+#define SYSTEM_AO_QUEUE_LEN    (8U)
+#define SUBTITLE_AO_QUEUE_LEN  (8U)
+#define STT_AO_QUEUE_LEN       (8U)
 #define USB_AUDIO_AO_QUEUE_LEN (8U)
-#define VIDEO_AO_QUEUE_LEN    (8U)
-#define SYSTEM_AO_PRIO        (1U)
-#define VIDEO_AO_PRIO         (2U)
-#define USB_AUDIO_AO_PRIO     (3U)
-#define SUBTITLE_AO_PRIO      (4U)
+#define VIDEO_AO_QUEUE_LEN     (8U)
+#define SYSTEM_AO_PRIO         (1U)
+#define VIDEO_AO_PRIO          (2U)
+#define USB_AUDIO_AO_PRIO      (3U)
+#define STT_AO_PRIO            (4U)
+#define SUBTITLE_AO_PRIO       (5U)
 
 // === Private data type declarations ============================================================================== //
+
+typedef union
+{
+    component_init_evt_t component_init;
+    component_ready_evt_t component_ready;
+    app_error_evt_t app_error;
+    subtitle_text_evt_t subtitle_text;
+} app_event_pool_evt_t;
+
 // === Private variable declarations =============================================================================== //
 // === Private function declarations =============================================================================== //
 
@@ -67,7 +79,7 @@ static void app_init(void)
 {
     LOG_INFO("app: initializing QP/C event pools and active objects");
 
-    static QF_MPOOL_EL(component_init_evt_t) app_event_pool_sto[APP_EVENT_POOL_LEN];
+    static QF_MPOOL_EL(app_event_pool_evt_t) app_event_pool_sto[APP_EVENT_POOL_LEN];
     QF_poolInit(app_event_pool_sto, sizeof(app_event_pool_sto), sizeof(app_event_pool_sto[0]));
 
     static QEvtPtr video_queue_sto[VIDEO_AO_QUEUE_LEN];
@@ -96,6 +108,16 @@ static void app_init(void)
                   SUBTITLE_AO_PRIO,
                   subtitle_queue_sto,
                   Q_DIM(subtitle_queue_sto),
+                  (void*)0,
+                  0U,
+                  (void*)0);
+
+    static QEvtPtr stt_queue_sto[STT_AO_QUEUE_LEN];
+    stt_ao_ctor();
+    QActive_start(AO_Stt,
+                  STT_AO_PRIO,
+                  stt_queue_sto,
+                  Q_DIM(stt_queue_sto),
                   (void*)0,
                   0U,
                   (void*)0);

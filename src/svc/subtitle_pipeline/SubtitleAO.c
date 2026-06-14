@@ -47,6 +47,7 @@ static QState subtitle_ao_error(subtitle_ao_t* const me, QEvt const* const e);
 static void post_ready(subtitle_ao_t* const me);
 static void post_error(subtitle_ao_t* const me, int32_t code);
 static int on_component_init(subtitle_ao_t* const me, component_init_evt_t const* const e);
+static int on_subtitle_text(subtitle_ao_t* const me, subtitle_text_evt_t const* const e);
 static int draw_startup_marker(subtitle_ao_t* const me);
 static void enter_error(subtitle_ao_t* const me, int32_t code);
 
@@ -186,6 +187,49 @@ static int on_component_init(subtitle_ao_t* const me, component_init_evt_t const
 }
 
 /**
+ * @brief Render one subtitle text event to the overlay.
+ * @param me Subtitle active object owning the pipeline.
+ * @param e Subtitle text event.
+ * @return 0 on success, or a negative errorno_e value on failure.
+ */
+static int on_subtitle_text(subtitle_ao_t* const me, subtitle_text_evt_t const* const e)
+{
+    int status;
+
+    if ((e == NULL) || (e->text[0] == '\0'))
+    {
+        return -EINVAL;
+    }
+
+    LOG_INFO("subtitle: rendering %s seq=%lu text=\"%s\"",
+             (e->is_final != 0U) ? "final" : "partial",
+             (unsigned long)e->seq,
+             e->text);
+
+    status = subtitle_pipeline_clear(&me->pipeline);
+    if (status != 0)
+    {
+        LOG_ERROR("subtitle: clear failed, code=%ld", (long)status);
+        return status;
+    }
+
+    status = subtitle_pipeline_write_text(&me->pipeline, e->text);
+    if (status != 0)
+    {
+        LOG_ERROR("subtitle: text render failed, code=%ld", (long)status);
+        return status;
+    }
+
+    status = subtitle_pipeline_enable(&me->pipeline, 1U);
+    if (status != 0)
+    {
+        LOG_ERROR("subtitle: enable failed, code=%ld", (long)status);
+    }
+
+    return status;
+}
+
+/**
  * @brief Clean up the subtitle pipeline and report a subtitle AO error.
  * @param me Subtitle active object entering its terminal error state.
  * @param code Negative errorno_e value to post to system_ao_t.
@@ -253,13 +297,28 @@ static QState subtitle_ao_idle(subtitle_ao_t* const me, QEvt const* const e)
  */
 static QState subtitle_ao_ready(subtitle_ao_t* const me, QEvt const* const e)
 {
-    Q_UNUSED_PAR(me);
+    QState status;
 
     switch (e->sig)
     {
+    case SUBTITLE_TEXT_SIG:
+        if (on_subtitle_text(me, Q_EVT_CAST(subtitle_text_evt_t)) == 0)
+        {
+            status = Q_HANDLED();
+        }
+        else
+        {
+            enter_error(me, -EIO);
+            status = Q_TRAN(&subtitle_ao_error);
+        }
+        break;
+
     default:
-        return Q_SUPER(&QHsm_top);
+        status = Q_SUPER(&QHsm_top);
+        break;
     }
+
+    return status;
 }
 
 /**

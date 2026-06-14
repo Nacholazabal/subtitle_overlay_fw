@@ -15,6 +15,7 @@ Some fancy copyright message here (if needed)
 
 #include "app.h"
 #include "log.h"
+#include "SttAO.h"
 #include "SubtitleAO.h"
 #include "SystemAO.h"
 #include "USBAudioAO.h"
@@ -34,6 +35,7 @@ typedef struct
     uint32_t active_video_height;
     uint8_t usb_audio_ready;
     uint8_t subtitle_init_requested;
+    uint8_t stt_init_requested;
 } system_ao_t;
 
 // === Private variable declarations =============================================================================== //
@@ -80,6 +82,9 @@ static const char* component_id_to_str(component_id_e component)
     case COMPONENT_SUBTITLE_PIPELINE:
         return "subtitle";
 
+    case COMPONENT_STT:
+        return "stt";
+
     case COMPONENT_BUTTONS:
         return "buttons";
 
@@ -115,6 +120,7 @@ static void on_init(system_ao_t* const me)
     me->active_video_height = 0U;
     me->usb_audio_ready = 0U;
     me->subtitle_init_requested = 0U;
+    me->stt_init_requested = 0U;
 
     LOG_INFO("system: init sequence started");
     post_component_init(me, AO_Video, COMPONENT_NONE, 0U, 0U);
@@ -180,6 +186,19 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
         break;
 
     case COMPONENT_SUBTITLE_PIPELINE:
+        if (me->stt_init_requested == 0U)
+        {
+            LOG_INFO("system: subtitle ready, requesting stt init");
+            post_component_init(me, AO_Stt, COMPONENT_SUBTITLE_PIPELINE, 0U, 0U);
+            me->stt_init_requested = 1U;
+        }
+        else
+        {
+            LOG_WARNING("system: duplicate subtitle ready while stt init already requested");
+        }
+        break;
+
+    case COMPONENT_STT:
         status = 0;
         break;
 
@@ -333,6 +352,9 @@ void system_ao_ctor(void)
     me->error_code = 0;
     me->active_video_width = 0U;
     me->active_video_height = 0U;
+    me->usb_audio_ready = 0U;
+    me->subtitle_init_requested = 0U;
+    me->stt_init_requested = 0U;
 }
 
 // === End of documentation ======================================================================================== //

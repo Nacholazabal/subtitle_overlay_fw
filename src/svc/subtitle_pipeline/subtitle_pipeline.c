@@ -16,6 +16,7 @@ Some fancy copyright message here (if needed)
 #include <string.h>
 
 #include "errorno.h"
+#include "subtitle_text_renderer.h"
 
 // === Macros definitions ========================================================================================== //
 
@@ -207,6 +208,33 @@ int subtitle_pipeline_write_bitmap(subtitle_pipeline_t* const pipeline,
     }
 
     return subtitle_bram_write_bitmap(&pipeline->bram, src, x, y, width, height);
+}
+
+/**
+ * @brief Render text into a subtitle mask and write it to BRAM.
+ * @param pipeline Initialized pipeline instance.
+ * @param text Null-terminated subtitle text.
+ * @return 0 on success, or a negative errorno_e value on failure.
+ */
+int subtitle_pipeline_write_text(subtitle_pipeline_t* const pipeline, char const* const text)
+{
+    uint8_t bitmap[SUBTITLE_BRAM_SIZE_BYTES];
+    uint32_t width;
+    uint32_t height;
+    int status;
+
+    if (!pipeline_is_initialized(pipeline))
+    {
+        return (pipeline == NULL) ? -EINVAL : -ESTATE;
+    }
+
+    status = subtitle_text_renderer_render(text, bitmap, sizeof(bitmap), &width, &height);
+    if (status != 0)
+    {
+        return status;
+    }
+
+    return subtitle_bram_write_bitmap(&pipeline->bram, bitmap, 0, 0, width, height);
 }
 
 /**

@@ -7,16 +7,14 @@ Some fancy copyright message here (if needed)
 #pragma once
 
 ///
-/// @file subtitle_pipeline.h
-/// @brief Subtitle pipeline service interface
+/// @file subtitle_text_renderer.h
+/// @brief Minimal text-to-bitmap renderer for subtitle masks
 ///
 
 // === Headers files inclusions ==================================================================================== //
 
+#include <stddef.h>
 #include <stdint.h>
-
-#include "subtitle_bram.h"
-#include "subtitle_overlay.h"
 
 // === C++ Guard =================================================================================================== //
 
@@ -25,40 +23,15 @@ extern "C" {
 #endif
 
 // === Public macros definitions =================================================================================== //
-
-#define SUBTITLE_PIPELINE_DEFAULT_BAR_COLOR  0x000000U
-#define SUBTITLE_PIPELINE_DEFAULT_TEXT_COLOR 0xFFFFFFU
-
 // === Public data type declarations =============================================================================== //
-
-typedef struct
-{
-    subtitle_overlay_t overlay;
-    subtitle_bram_t bram;
-    subtitle_overlay_config_t config;
-    uint32_t display_width;
-    uint32_t display_height;
-    uint8_t initialized;
-    uint8_t enabled;
-} subtitle_pipeline_t;
-
 // === Public variable declarations ================================================================================ //
 // === Public function declarations ================================================================================ //
 
-int subtitle_pipeline_init(subtitle_pipeline_t* pipeline,
-                           uint32_t display_width,
-                           uint32_t display_height);
-void subtitle_pipeline_cleanup(subtitle_pipeline_t* pipeline);
-int subtitle_pipeline_clear(subtitle_pipeline_t* pipeline);
-int subtitle_pipeline_write_bitmap(subtitle_pipeline_t* pipeline,
-                                   uint8_t const* src,
-                                   int32_t x,
-                                   int32_t y,
-                                   uint32_t width,
-                                   uint32_t height);
-int subtitle_pipeline_write_text(subtitle_pipeline_t* pipeline, char const* text);
-int subtitle_pipeline_commit(subtitle_pipeline_t* pipeline);
-int subtitle_pipeline_enable(subtitle_pipeline_t* pipeline, uint8_t enabled);
+int subtitle_text_renderer_render(char const* text,
+                                  uint8_t* dst,
+                                  size_t dst_size,
+                                  uint32_t* width,
+                                  uint32_t* height);
 
 // === End of documentation ======================================================================================== //
 

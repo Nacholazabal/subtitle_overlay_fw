@@ -31,6 +31,7 @@ COMMON_CFLAGS := \
 	-Isrc/hal/video_gpio \
 	-Isrc/hal/video_vtc \
 	-Isrc/hal/usb_audio \
+	-Isrc/svc/stt \
 	-Isrc/svc/subtitle_pipeline \
 	-Isrc/svc/usb_audio \
 	-Isrc/svc/video_pipeline
@@ -65,8 +66,11 @@ VIDEO_PORT_SRCS := \
 	src/utils/log/log.c \
 	src/app/app.c \
 	src/svc/system/SystemAO.c \
+	src/svc/stt/SttAO.c \
+	src/svc/stt/stt_event_rx.c \
 	src/svc/subtitle_pipeline/SubtitleAO.c \
 	src/svc/subtitle_pipeline/subtitle_pipeline.c \
+	src/svc/subtitle_pipeline/subtitle_text_renderer.c \
 	src/svc/usb_audio/USBAudioAO.c \
 	src/svc/usb_audio/usb_audio_stream.c \
 	src/svc/video_pipeline/VideoAO.c \
