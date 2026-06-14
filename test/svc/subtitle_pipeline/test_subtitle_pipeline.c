@@ -46,24 +46,24 @@ void test_subtitle_pipeline_init_configures_default_geometry_and_stays_disabled(
     TEST_ASSERT_EQUAL_UINT8(0U, pipeline.enabled);
     TEST_ASSERT_EQUAL_UINT32(1280U, pipeline.display_width);
     TEST_ASSERT_EQUAL_UINT32(720U, pipeline.display_height);
-    TEST_ASSERT_EQUAL_UINT32(256U, pipeline.config.width);
-    TEST_ASSERT_EQUAL_UINT32(32U, pipeline.config.height);
-    TEST_ASSERT_EQUAL_UINT32(512U, pipeline.config.x);
-    TEST_ASSERT_EQUAL_UINT32(652U, pipeline.config.y);
+    TEST_ASSERT_EQUAL_UINT32(1024U, pipeline.config.width);
+    TEST_ASSERT_EQUAL_UINT32(120U, pipeline.config.height);
+    TEST_ASSERT_EQUAL_UINT32(128U, pipeline.config.x);
+    TEST_ASSERT_EQUAL_UINT32(564U, pipeline.config.y);
     TEST_ASSERT_EQUAL_UINT32(SUBTITLE_PIPELINE_DEFAULT_BAR_COLOR, pipeline.config.bar_color);
     TEST_ASSERT_EQUAL_UINT32(SUBTITLE_PIPELINE_DEFAULT_TEXT_COLOR, pipeline.config.text_color);
 }
 
-void test_subtitle_pipeline_init_enforces_compact_minimum_bar_size(void)
+void test_subtitle_pipeline_init_enforces_minimum_mask_sized_bar(void)
 {
     expect_init_success();
 
     TEST_ASSERT_EQUAL_INT(0, subtitle_pipeline_init(&pipeline, 200U, 100U));
 
     TEST_ASSERT_EQUAL_UINT32(SUBTITLE_BRAM_MASK_WIDTH, pipeline.config.width);
-    TEST_ASSERT_EQUAL_UINT32(32U, pipeline.config.height);
+    TEST_ASSERT_EQUAL_UINT32(SUBTITLE_BRAM_MASK_HEIGHT, pipeline.config.height);
     TEST_ASSERT_EQUAL_UINT32(0U, pipeline.config.x);
-    TEST_ASSERT_EQUAL_UINT32(63U, pipeline.config.y);
+    TEST_ASSERT_EQUAL_UINT32(31U, pipeline.config.y);
 }
 
 void test_subtitle_pipeline_init_returns_hal_errors(void)

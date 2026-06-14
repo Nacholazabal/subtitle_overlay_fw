@@ -22,11 +22,10 @@ Some fancy copyright message here (if needed)
 
 #define SUBTITLE_PIPELINE_SOF_TIMEOUT_READS 5000000U
 
-#define SUBTITLE_PIPELINE_BAR_WIDTH_NUMERATOR    1U
+#define SUBTITLE_PIPELINE_BAR_WIDTH_NUMERATOR    4U
 #define SUBTITLE_PIPELINE_BAR_WIDTH_DENOMINATOR  5U
-#define SUBTITLE_PIPELINE_BAR_HEIGHT_DENOMINATOR 24U
+#define SUBTITLE_PIPELINE_BAR_HEIGHT_DENOMINATOR 6U
 #define SUBTITLE_PIPELINE_BOTTOM_MARGIN_DIVISOR  20U
-#define SUBTITLE_PIPELINE_MIN_BAR_HEIGHT         32U
 
 #define SUBTITLE_PIPELINE_DEFAULT_BAR_WIDTH(display_width)   \
     (((display_width)*SUBTITLE_PIPELINE_BAR_WIDTH_NUMERATOR) \
@@ -65,9 +64,9 @@ static subtitle_overlay_config_t default_config(uint32_t display_width, uint32_t
         bar_width = SUBTITLE_BRAM_MASK_WIDTH;
     }
 
-    if (bar_height < SUBTITLE_PIPELINE_MIN_BAR_HEIGHT)
+    if (bar_height < SUBTITLE_BRAM_MASK_HEIGHT)
     {
-        bar_height = SUBTITLE_PIPELINE_MIN_BAR_HEIGHT;
+        bar_height = SUBTITLE_BRAM_MASK_HEIGHT;
     }
 
     memset(&config, 0, sizeof(config));

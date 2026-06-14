@@ -23,14 +23,14 @@ Some fancy copyright message here (if needed)
 
 #define GLYPH_WIDTH             (5U)
 #define GLYPH_HEIGHT            (7U)
-#define GLYPH_SCALE             (4U)
+#define GLYPH_SCALE             (2U)
 #define GLYPH_RENDERED_WIDTH    (GLYPH_WIDTH * GLYPH_SCALE)
 #define GLYPH_RENDERED_HEIGHT   (GLYPH_HEIGHT * GLYPH_SCALE)
-#define GLYPH_ADVANCE           (24U)
-#define RENDER_LINE_HEIGHT      (32U)
+#define GLYPH_ADVANCE           (12U)
+#define RENDER_LINE_HEIGHT      (24U)
 #define RENDER_MAX_LINES        (2U)
 #define RENDER_TEXT_X           (8U)
-#define RENDER_TEXT_Y           (2U)
+#define RENDER_TEXT_Y           (8U)
 #define RENDER_BITMAP_STRIDE    (SUBTITLE_BRAM_MASK_WIDTH / 8U)
 #define RENDER_BITMAP_SIZE      (RENDER_BITMAP_STRIDE * SUBTITLE_BRAM_MASK_HEIGHT)
 #define RENDER_UNKNOWN_GLYPH    (36U)
@@ -158,6 +158,11 @@ static uint8_t const* glyph_for_char(char ch)
  */
 static void set_bitmap_pixel(uint8_t* const dst, uint32_t x, uint32_t y)
 {
+    if ((x >= SUBTITLE_BRAM_MASK_WIDTH) || (y >= SUBTITLE_BRAM_MASK_HEIGHT))
+    {
+        return;
+    }
+
     uint32_t const byte_index = (y * RENDER_BITMAP_STRIDE) + (x / 8U);
     uint8_t const bit_mask = (uint8_t)(1U << (7U - (x % 8U)));
 
@@ -239,7 +244,7 @@ int subtitle_text_renderer_render(char const* const text,
             continue;
         }
 
-        if ((x + GLYPH_RENDERED_WIDTH) >= SUBTITLE_BRAM_MASK_WIDTH)
+        if ((x + GLYPH_RENDERED_WIDTH) > SUBTITLE_BRAM_MASK_WIDTH)
         {
             line++;
             x = RENDER_TEXT_X;
