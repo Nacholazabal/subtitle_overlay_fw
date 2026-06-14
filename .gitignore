@@ -14,8 +14,11 @@ CLAUDE.md
 *.swp
 *.swo
 *~
+__pycache__/
+*.pyc
 
 # Local build outputs
 build/
+.venv-stt/
 
 subtitle_overlay_fw.code-workspace
