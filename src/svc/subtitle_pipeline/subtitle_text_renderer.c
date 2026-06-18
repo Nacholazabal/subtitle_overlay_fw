@@ -18,21 +18,28 @@ Some fancy copyright message here (if needed)
 
 #include "errorno.h"
 #include "subtitle_bram.h"
+#include "subtitle_text_sanitize.h"
 
 // === Macros definitions ========================================================================================== //
 
-#define GLYPH_WIDTH             (5U)
-#define GLYPH_HEIGHT            (7U)
-#define GLYPH_SCALE             (2U)
+#define GLYPH_WIDTH  (5U)
+#define GLYPH_HEIGHT (7U)
+// Scale 4 uses the enlarged subtitle mask directly; hardware centers the mask
+// inside the on-screen bar configured by firmware.
+#define GLYPH_SCALE             (4U)
 #define GLYPH_RENDERED_WIDTH    (GLYPH_WIDTH * GLYPH_SCALE)
 #define GLYPH_RENDERED_HEIGHT   (GLYPH_HEIGHT * GLYPH_SCALE)
-#define GLYPH_ADVANCE           (12U)
-#define RENDER_LINE_HEIGHT      (24U)
-#define RENDER_MAX_LINES        (2U)
-#define RENDER_TEXT_X           (8U)
-#define RENDER_TEXT_Y           (8U)
+#define GLYPH_ADVANCE           (7U * GLYPH_SCALE)
+#define RENDER_LINE_HEIGHT      (12U * GLYPH_SCALE)
+#define RENDER_MAX_LINES        (5U)
+#define RENDER_TEXT_X           (24U)
+#define RENDER_TEXT_Y           (24U)
 #define RENDER_BITMAP_STRIDE    (SUBTITLE_BRAM_MASK_WIDTH / 8U)
 #define RENDER_BITMAP_SIZE      (RENDER_BITMAP_STRIDE * SUBTITLE_BRAM_MASK_HEIGHT)
+#define RENDER_SANITIZE_MAX     (512U)
+#define RENDER_GLYPHS_PER_LINE \
+    (((SUBTITLE_BRAM_MASK_WIDTH - RENDER_TEXT_X - GLYPH_RENDERED_WIDTH) / GLYPH_ADVANCE) + 1U)
+#define RENDER_VISIBLE_CAPACITY (RENDER_GLYPHS_PER_LINE * RENDER_MAX_LINES)
 #define RENDER_UNKNOWN_GLYPH    (36U)
 #define RENDER_SPACE_GLYPH      (37U)
 #define RENDER_PERIOD_GLYPH     (38U)
@@ -48,6 +55,7 @@ Some fancy copyright message here (if needed)
 static uint8_t const* glyph_for_char(char ch);
 static void set_bitmap_pixel(uint8_t* dst, uint32_t x, uint32_t y);
 static void draw_glyph(uint8_t* dst, uint32_t x, uint32_t y, uint8_t const* glyph);
+static char const* tail_start(char const* text);
 
 // === Public variable definitions ================================================================================= //
 // === Private variable definitions ================================================================================ //
@@ -204,10 +212,45 @@ static void draw_glyph(uint8_t* const dst, uint32_t x, uint32_t y, uint8_t const
     }
 }
 
+/**
+ * @brief Pick the render start offset so the most recent text stays visible.
+ *
+ * When the text is longer than the subtitle box can show, render from the tail
+ * (the newest words) instead of truncating the end, aligning to a word boundary
+ * when one is available.
+ * @param text Null-terminated sanitized text.
+ * @return Pointer into @p text at which rendering should start.
+ */
+static char const* tail_start(char const* const text)
+{
+    size_t const len = strlen(text);
+    size_t offset;
+    size_t scan;
+
+    if (len <= RENDER_VISIBLE_CAPACITY)
+    {
+        return text;
+    }
+
+    offset = len - RENDER_VISIBLE_CAPACITY;
+    scan = offset;
+    while ((text[scan] != '\0') && (text[scan] != ' '))
+    {
+        scan++;
+    }
+
+    if ((text[scan] == ' ') && ((scan + 1U) < len))
+    {
+        offset = scan + 1U;
+    }
+
+    return text + offset;
+}
+
 // === Public function implementation ============================================================================== //
 
 /**
- * @brief Render text into a 256x64 packed subtitle mask bitmap.
+ * @brief Render text into a packed subtitle mask bitmap.
  * @param text Null-terminated text to render.
  * @param dst Destination bitmap buffer.
  * @param dst_size Destination buffer size in bytes.
@@ -224,6 +267,7 @@ int subtitle_text_renderer_render(char const* const text,
     uint32_t x = RENDER_TEXT_X;
     uint32_t y = RENDER_TEXT_Y;
     uint32_t line = 0U;
+    char sanitized[RENDER_SANITIZE_MAX];
     char const* cursor;
 
     if ((text == NULL) || (dst == NULL) || (width == NULL) || (height == NULL)
@@ -232,9 +276,14 @@ int subtitle_text_renderer_render(char const* const text,
         return -EINVAL;
     }
 
+    if (subtitle_text_sanitize(text, sanitized, sizeof(sanitized)) != 0)
+    {
+        return -EINVAL;
+    }
+
     memset(dst, 0, dst_size);
 
-    for (cursor = text; (*cursor != '\0') && (line < RENDER_MAX_LINES); cursor++)
+    for (cursor = tail_start(sanitized); (*cursor != '\0') && (line < RENDER_MAX_LINES); cursor++)
     {
         if (*cursor == '\n')
         {

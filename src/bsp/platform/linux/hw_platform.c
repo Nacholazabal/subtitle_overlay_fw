@@ -10,6 +10,8 @@
 
 #include "../xparameters_linux.h"
 
+#define HW_PLATFORM_REGION_SIZE(base, high) (((high) - (base)) + 1U)
+
 typedef struct
 {
     const char* name;
@@ -27,7 +29,8 @@ static hw_platform_mapping_t mappings[HW_REGION_COUNT] = {
         {
             "Subtitle BRAM",
             XPAR_AXI_BRAM_CTRL_0_S_AXI_BASEADDR,
-            0x00002000U,
+            HW_PLATFORM_REGION_SIZE(XPAR_AXI_BRAM_CTRL_0_S_AXI_BASEADDR,
+                                    XPAR_AXI_BRAM_CTRL_0_S_AXI_HIGHADDR),
             NULL,
         },
     [HW_REGION_VIDEO_GPIO] = {"Video GPIO", XPAR_AXI_GPIO_VIDEO_BASEADDR, 0x00010000U, NULL},

@@ -1,0 +1,10 @@
+Texto de referencia para probar los subtítulos (leelo en voz alta, pausado y claro).
+Contiene acentos, eñes y signos de apertura para ejercitar el sanitizador.
+
+---
+
+Hola, ¿qué tal? Bienvenidos a la presentación de mi proyecto de tesis.
+Este sistema recibe una señal HDMI, extrae el audio y genera subtítulos en español en tiempo real.
+La idea es ayudar a las personas con dificultades auditivas a seguir la televisión en vivo.
+¡Espero que la transcripción se entienda bien! Si todo funciona, deberías leer esta misma frase en la pantalla,
+con las palabras más recientes siempre visibles. Muchas gracias por su atención.

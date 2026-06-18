@@ -14,6 +14,7 @@ Some fancy copyright message here (if needed)
 #include "usb_audio_capture.h"
 
 #include <alloca.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "errorno.h"
@@ -35,7 +36,10 @@ Some fancy copyright message here (if needed)
 static int configure_pcm(snd_pcm_t* pcm, usb_audio_capture_config_t const* config);
 static int recover_pcm(snd_pcm_t* pcm, int err);
 static char const* pcm_state_name(snd_pcm_state_t state);
+static void set_capture_gain(char const* device);
 #endif
+
+#define USB_AUDIO_CAPTURE_DEFAULT_VOL_PCT (100L)
 
 // === Public variable definitions ================================================================================= //
 // === Private variable definitions ================================================================================ //
@@ -189,6 +193,95 @@ static char const* pcm_state_name(snd_pcm_state_t const state)
     }
 }
 
+/**
+ * @brief Raise the analog capture gain of the USB soundcard via the ALSA mixer.
+ *
+ * Sets the capture volume control toward its maximum so the ADC uses more of its
+ * range (better SNR) before any digital gain. Best-effort: a missing control or
+ * mixer only logs a warning. The control name, card, and percent are overridable
+ * via SUBTITLE_USB_AUDIO_CAPTURE_CONTROL / _MIXER / _CAPTURE_VOL_PCT.
+ * @param device ALSA PCM device string (used to derive the mixer card).
+ * @return None.
+ */
+static void set_capture_gain(char const* const device)
+{
+    char const* const control = getenv("SUBTITLE_USB_AUDIO_CAPTURE_CONTROL");
+    char const* const mixer_env = getenv("SUBTITLE_USB_AUDIO_MIXER");
+    char const* const pct_env = getenv("SUBTITLE_USB_AUDIO_CAPTURE_VOL_PCT");
+    char const* const control_name = ((control != NULL) && (control[0] != '\0')) ? control : "Mic";
+    char card[16];
+    snd_mixer_t* mixer = NULL;
+    snd_mixer_selem_id_t* sid;
+    snd_mixer_elem_t* elem;
+    long pct = USB_AUDIO_CAPTURE_DEFAULT_VOL_PCT;
+    long vmin = 0;
+    long vmax = 0;
+    long value;
+
+    if ((pct_env != NULL) && (pct_env[0] != '\0'))
+    {
+        pct = strtol(pct_env, NULL, 10);
+        if (pct < 0L)
+        {
+            pct = 0L;
+        }
+        if (pct > 100L)
+        {
+            pct = 100L;
+        }
+    }
+
+    if ((mixer_env != NULL) && (mixer_env[0] != '\0'))
+    {
+        snprintf(card, sizeof(card), "%s", mixer_env);
+    }
+    else
+    {
+        char const* digit = device;
+        while ((*digit != '\0') && ((*digit < '0') || (*digit > '9')))
+        {
+            digit++;
+        }
+        snprintf(card, sizeof(card), "hw:%d", (*digit != '\0') ? atoi(digit) : 0);
+    }
+
+    if ((snd_mixer_open(&mixer, 0) < 0) || (snd_mixer_attach(mixer, card) < 0)
+        || (snd_mixer_selem_register(mixer, NULL, NULL) < 0) || (snd_mixer_load(mixer) < 0))
+    {
+        LOG_WARNING("usb-audio: could not open mixer on %s to set capture gain", card);
+        if (mixer != NULL)
+        {
+            snd_mixer_close(mixer);
+        }
+        return;
+    }
+
+    snd_mixer_selem_id_alloca(&sid);
+    snd_mixer_selem_id_set_index(sid, 0);
+    snd_mixer_selem_id_set_name(sid, control_name);
+    elem = snd_mixer_find_selem(mixer, sid);
+
+    if ((elem == NULL) || (snd_mixer_selem_has_capture_volume(elem) == 0))
+    {
+        LOG_WARNING("usb-audio: capture control '%s' not found on %s", control_name, card);
+        snd_mixer_close(mixer);
+        return;
+    }
+
+    snd_mixer_selem_get_capture_volume_range(elem, &vmin, &vmax);
+    value = vmin + (((vmax - vmin) * pct) / 100L);
+    (void)snd_mixer_selem_set_capture_volume_all(elem, value);
+    (void)snd_mixer_selem_set_capture_switch_all(elem, 1);
+    LOG_INFO("usb-audio: capture gain '%s' on %s set to %ld/%ld (%ld%%)",
+             control_name,
+             card,
+             value,
+             vmax,
+             pct);
+
+    snd_mixer_close(mixer);
+}
+
 #endif
 
 // === Public function implementation ============================================================================== //
@@ -234,6 +327,8 @@ int usb_audio_capture_init(usb_audio_capture_t* const capture,
         snd_pcm_close(pcm);
         return status;
     }
+
+    set_capture_gain(config->device);
 
     capture->pcm_handle = pcm;
     capture->initialized = 1U;

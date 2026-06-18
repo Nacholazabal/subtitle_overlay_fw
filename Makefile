@@ -71,7 +71,9 @@ VIDEO_PORT_SRCS := \
 	src/svc/subtitle_pipeline/SubtitleAO.c \
 	src/svc/subtitle_pipeline/subtitle_pipeline.c \
 	src/svc/subtitle_pipeline/subtitle_text_renderer.c \
+	src/svc/subtitle_pipeline/subtitle_text_sanitize.c \
 	src/svc/usb_audio/USBAudioAO.c \
+	src/svc/usb_audio/usb_audio_agc.c \
 	src/svc/usb_audio/usb_audio_stream.c \
 	src/svc/video_pipeline/VideoAO.c \
 	src/svc/video_pipeline/video_io.c \
