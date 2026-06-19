@@ -27,7 +27,9 @@ static volatile uint32_t* bram_words(subtitle_bram_t const* bram);
 static uint8_t pixel_is_in_range(int32_t x, int32_t y);
 static uint8_t reverse_bits_u8(uint8_t value);
 static uint32_t subtitle_bram_pack_word(uint8_t const* src);
-static int subtitle_bram_write_full_bitmap(subtitle_bram_t const* bram, uint8_t const* src, uint32_t src_stride);
+static int subtitle_bram_write_full_bitmap(subtitle_bram_t const* bram,
+                                           uint8_t const* src,
+                                           uint32_t src_stride);
 
 // === Public variable definitions ================================================================================= //
 // === Private variable definitions ================================================================================ //
@@ -99,7 +101,8 @@ static uint8_t reverse_bits_u8(uint8_t value)
 static uint32_t subtitle_bram_pack_word(uint8_t const* const src)
 {
     return ((uint32_t)reverse_bits_u8(src[0]) << 0U) | ((uint32_t)reverse_bits_u8(src[1]) << 8U)
-           | ((uint32_t)reverse_bits_u8(src[2]) << 16U) | ((uint32_t)reverse_bits_u8(src[3]) << 24U);
+           | ((uint32_t)reverse_bits_u8(src[2]) << 16U)
+           | ((uint32_t)reverse_bits_u8(src[3]) << 24U);
 }
 
 /**
@@ -124,8 +127,7 @@ static int subtitle_bram_write_full_bitmap(subtitle_bram_t const* const bram,
 
         for (word_col = 0U; word_col < SUBTITLE_BRAM_WORDS_PER_ROW; word_col++)
         {
-            words[dst_row + word_col] =
-                subtitle_bram_pack_word(&src_row[(size_t)word_col * 4U]);
+            words[dst_row + word_col] = subtitle_bram_pack_word(&src_row[(size_t)word_col * 4U]);
         }
     }
 
@@ -284,7 +286,8 @@ int subtitle_bram_write_bitmap(subtitle_bram_t* const bram,
         return -EINVAL;
     }
 
-    if ((x == 0) && (y == 0) && (width == SUBTITLE_BRAM_MASK_WIDTH) && (height == SUBTITLE_BRAM_MASK_HEIGHT))
+    if ((x == 0) && (y == 0) && (width == SUBTITLE_BRAM_MASK_WIDTH)
+        && (height == SUBTITLE_BRAM_MASK_HEIGHT))
     {
         return subtitle_bram_write_full_bitmap(bram, src, src_stride);
     }

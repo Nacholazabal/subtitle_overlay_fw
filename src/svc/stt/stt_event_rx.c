@@ -41,12 +41,12 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #define STT_EVENT_RX_ROUND_HALF     (0.5)
 #define STT_EVENT_RX_TCP_PORT_MAX   (65535U)
 
-#define STT_FIELD_SEQ      (1U << 0U)
-#define STT_FIELD_FINAL    (1U << 1U)
-#define STT_FIELD_TYPE     (1U << 2U)
-#define STT_FIELD_START    (1U << 3U)
-#define STT_FIELD_END      (1U << 4U)
-#define STT_FIELD_TEXT     (1U << 5U)
+#define STT_FIELD_SEQ       (1U << 0U)
+#define STT_FIELD_FINAL     (1U << 1U)
+#define STT_FIELD_TYPE      (1U << 2U)
+#define STT_FIELD_START     (1U << 3U)
+#define STT_FIELD_END       (1U << 4U)
+#define STT_FIELD_TEXT      (1U << 5U)
 #define STT_REQUIRED_FIELDS (STT_FIELD_SEQ | STT_FIELD_START | STT_FIELD_END | STT_FIELD_TEXT)
 
 // === Private data type declarations ============================================================================== //
@@ -211,8 +211,7 @@ static int json_scalar_span(char const** const cursor,
 
     *start = *cursor;
     end = *cursor;
-    while ((*end != '\0') && (*end != ',') && (*end != '}')
-           && (isspace((unsigned char)*end) == 0))
+    while ((*end != '\0') && (*end != ',') && (*end != '}') && (isspace((unsigned char)*end) == 0))
     {
         end++;
     }
@@ -310,8 +309,8 @@ static int json_skip_value(char const** const cursor)
     {
         return -EINVAL;
     }
-    if (((length == 4U) && ((memcmp(start, "true", length) == 0)
-                            || (memcmp(start, "null", length) == 0)))
+    if (((length == 4U)
+         && ((memcmp(start, "true", length) == 0) || (memcmp(start, "null", length) == 0)))
         || ((length == 5U) && (memcmp(start, "false", length) == 0)))
     {
         return 0;
@@ -720,11 +719,7 @@ int stt_event_rx_parse_line(char const* const line, subtitle_text_evt_t* const e
         }
 
         key_truncated = 0U;
-        status = json_parse_string(&cursor,
-                                   key,
-                                   sizeof(key),
-                                   0U,
-                                   &key_truncated);
+        status = json_parse_string(&cursor, key, sizeof(key), 0U, &key_truncated);
         if (status != 0)
         {
             return status;
@@ -810,11 +805,8 @@ int stt_event_rx_parse_line(char const* const line, subtitle_text_evt_t* const e
 
         case STT_FIELD_TEXT:
             text_truncated = 0U;
-            status = json_parse_string(&cursor,
-                                       event->text,
-                                       sizeof(event->text),
-                                       1U,
-                                       &text_truncated);
+            status =
+                json_parse_string(&cursor, event->text, sizeof(event->text), 1U, &text_truncated);
             if ((status == 0) && (text_truncated != 0U))
             {
                 LOG_WARNING("stt-rx: truncated JSON text field");
@@ -869,10 +861,8 @@ int stt_event_rx_parse_line(char const* const line, subtitle_text_evt_t* const e
     event->is_final = ((seen & STT_FIELD_FINAL) != 0U) ? final_value : type_value;
 
     if ((start_sec < 0.0) || (end_sec < start_sec)
-        || (start_sec > (((double)UINT32_MAX - STT_EVENT_RX_ROUND_HALF)
-                         / STT_EVENT_RX_MS_PER_SEC))
-        || (end_sec > (((double)UINT32_MAX - STT_EVENT_RX_ROUND_HALF)
-                       / STT_EVENT_RX_MS_PER_SEC)))
+        || (start_sec > (((double)UINT32_MAX - STT_EVENT_RX_ROUND_HALF) / STT_EVENT_RX_MS_PER_SEC))
+        || (end_sec > (((double)UINT32_MAX - STT_EVENT_RX_ROUND_HALF) / STT_EVENT_RX_MS_PER_SEC)))
     {
         return -EINVAL;
     }

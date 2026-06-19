@@ -177,11 +177,10 @@ void test_stt_event_rx_parse_line_does_not_match_keys_inside_text(void)
 
 void test_stt_event_rx_parse_line_rejects_duplicates_and_inconsistent_final_fields(void)
 {
-    TEST_ASSERT_EQUAL_INT(
-        -EINVAL,
-        stt_event_rx_parse_line("{\"seq\":1,\"seq\":2,\"is_final\":false,"
-                                "\"start_sec\":0,\"end_sec\":1,\"text\":\"x\"}",
-                                &event));
+    TEST_ASSERT_EQUAL_INT(-EINVAL,
+                          stt_event_rx_parse_line("{\"seq\":1,\"seq\":2,\"is_final\":false,"
+                                                  "\"start_sec\":0,\"end_sec\":1,\"text\":\"x\"}",
+                                                  &event));
     TEST_ASSERT_EQUAL_INT(
         -EINVAL,
         stt_event_rx_parse_line("{\"seq\":1,\"is_final\":false,\"type\":\"final\","
@@ -191,16 +190,14 @@ void test_stt_event_rx_parse_line_rejects_duplicates_and_inconsistent_final_fiel
 
 void test_stt_event_rx_parse_line_rejects_overflow_and_malformed_numeric_tokens(void)
 {
-    TEST_ASSERT_EQUAL_INT(
-        -ERANGE,
-        stt_event_rx_parse_line("{\"seq\":4294967296,\"is_final\":false,"
-                                "\"start_sec\":0,\"end_sec\":1,\"text\":\"x\"}",
-                                &event));
-    TEST_ASSERT_EQUAL_INT(
-        -EINVAL,
-        stt_event_rx_parse_line("{\"seq\":1junk,\"is_final\":false,"
-                                "\"start_sec\":0,\"end_sec\":1,\"text\":\"x\"}",
-                                &event));
+    TEST_ASSERT_EQUAL_INT(-ERANGE,
+                          stt_event_rx_parse_line("{\"seq\":4294967296,\"is_final\":false,"
+                                                  "\"start_sec\":0,\"end_sec\":1,\"text\":\"x\"}",
+                                                  &event));
+    TEST_ASSERT_EQUAL_INT(-EINVAL,
+                          stt_event_rx_parse_line("{\"seq\":1junk,\"is_final\":false,"
+                                                  "\"start_sec\":0,\"end_sec\":1,\"text\":\"x\"}",
+                                                  &event));
     TEST_ASSERT_EQUAL_INT(
         -EINVAL,
         stt_event_rx_parse_line("{\"seq\":1,\"is_final\":false,"
@@ -229,9 +226,8 @@ void test_stt_event_rx_parse_line_rejects_nonfinite_time_and_trailing_comma(void
         stt_event_rx_parse_line("{\"seq\":1,\"is_final\":false,"
                                 "\"start_sec\":0,\"end_sec\":1e999,\"text\":\"x\"}",
                                 &event));
-    TEST_ASSERT_EQUAL_INT(
-        -EINVAL,
-        stt_event_rx_parse_line("{\"seq\":1,\"is_final\":false,"
-                                "\"start_sec\":0,\"end_sec\":1,\"text\":\"x\",}",
-                                &event));
+    TEST_ASSERT_EQUAL_INT(-EINVAL,
+                          stt_event_rx_parse_line("{\"seq\":1,\"is_final\":false,"
+                                                  "\"start_sec\":0,\"end_sec\":1,\"text\":\"x\",}",
+                                                  &event));
 }

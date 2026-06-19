@@ -22,41 +22,35 @@ extern "C" {
 
 // Maximum number of concurrent subscribers
 #ifndef LOG_MAX_SUBSCRIBERS
-#define LOG_MAX_SUBSCRIBERS (1U)
+    #define LOG_MAX_SUBSCRIBERS (1U)
 #endif
 
 // Maximum length of the formatted log messages
 #ifndef LOG_MAX_MESSAGE_LENGTH
-#define LOG_MAX_MESSAGE_LENGTH (128U)
+    #define LOG_MAX_MESSAGE_LENGTH (128U)
 #endif
 
 // Helper macros for printing log messages
 #ifdef CONFIG_LOG_ENABLED
-#define LOG(...) log_message(__VA_ARGS__)
-#define LOG_TRACE(...) log_message(LOG_LEVEL_TRACE, __VA_ARGS__)
-#define LOG_DEBUG(...) log_message(LOG_LEVEL_DEBUG, __VA_ARGS__)
-#define LOG_INFO(...) log_message(LOG_LEVEL_INFO, __VA_ARGS__)
-#define LOG_WARNING(...) log_message(LOG_LEVEL_WARNING, __VA_ARGS__)
-#define LOG_ERROR(...) log_message(LOG_LEVEL_ERROR, __VA_ARGS__)
+    #define LOG(...)         log_message(__VA_ARGS__)
+    #define LOG_TRACE(...)   log_message(LOG_LEVEL_TRACE, __VA_ARGS__)
+    #define LOG_DEBUG(...)   log_message(LOG_LEVEL_DEBUG, __VA_ARGS__)
+    #define LOG_INFO(...)    log_message(LOG_LEVEL_INFO, __VA_ARGS__)
+    #define LOG_WARNING(...) log_message(LOG_LEVEL_WARNING, __VA_ARGS__)
+    #define LOG_ERROR(...)   log_message(LOG_LEVEL_ERROR, __VA_ARGS__)
 #else
-#define LOG(...) \
-    {            \
-    }
-#define LOG_TRACE(...) \
-    {                  \
-    }
-#define LOG_DEBUG(...) \
-    {                  \
-    }
-#define LOG_INFO(...) \
-    {                 \
-    }
-#define LOG_WARNING(...) \
-    {                    \
-    }
-#define LOG_ERROR(...) \
-    {                  \
-    }
+    #define LOG(...) \
+        {}
+    #define LOG_TRACE(...) \
+        {}
+    #define LOG_DEBUG(...) \
+        {}
+    #define LOG_INFO(...) \
+        {}
+    #define LOG_WARNING(...) \
+        {}
+    #define LOG_ERROR(...) \
+        {}
 #endif
 
 // === Public data type declarations =============================================================================== //
@@ -64,20 +58,20 @@ extern "C" {
 /// @brief Log Severity Level, useful for filtering messages
 typedef enum
 {
-    LOG_LEVEL_TRACE = 0,  ///< Trace Level
-    LOG_LEVEL_DEBUG,      ///< Debug Level
-    LOG_LEVEL_INFO,       ///< Info Level
-    LOG_LEVEL_WARNING,    ///< Warning Level
-    LOG_LEVEL_ERROR,      ///< Error Level
+    LOG_LEVEL_TRACE = 0, ///< Trace Level
+    LOG_LEVEL_DEBUG,     ///< Debug Level
+    LOG_LEVEL_INFO,      ///< Info Level
+    LOG_LEVEL_WARNING,   ///< Warning Level
+    LOG_LEVEL_ERROR,     ///< Error Level
 } log_level_e;
 
 /// @brief Errors returned by this Log API
 typedef enum
 {
-    LOG_ERROR_NONE = 0,              ///< No error happened
-    LOG_ERROR_INVALID_ARGUMENT,      ///< A required pointer or severity value is invalid
-    LOG_ERROR_NOT_SUBSCRIBED,        ///< We're trying to unsubscribe a not subscribed function
-    LOG_ERROR_SUBSCRIBERS_EXCEEDED,  ///< Reached Subscribber limit. Consider increasing `LOG_MAX_SUBSCRIBERS`
+    LOG_ERROR_NONE = 0,         ///< No error happened
+    LOG_ERROR_INVALID_ARGUMENT, ///< A required pointer or severity value is invalid
+    LOG_ERROR_NOT_SUBSCRIBED,   ///< We're trying to unsubscribe a not subscribed function
+    LOG_ERROR_SUBSCRIBERS_EXCEEDED, ///< Reached Subscribber limit. Consider increasing `LOG_MAX_SUBSCRIBERS`
 } log_error_e;
 
 /// Prototype for Log subscribers. The log functions must follow this signature

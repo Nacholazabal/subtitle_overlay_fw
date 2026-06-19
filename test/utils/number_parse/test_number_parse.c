@@ -37,8 +37,7 @@ void test_number_parse_u32_rejects_overflow_and_requested_range_failures(void)
 {
     uint32_t value = 55U;
 
-    TEST_ASSERT_EQUAL_INT(-ERANGE,
-                          number_parse_u32("4294967296", 10U, 0U, UINT32_MAX, &value));
+    TEST_ASSERT_EQUAL_INT(-ERANGE, number_parse_u32("4294967296", 10U, 0U, UINT32_MAX, &value));
     TEST_ASSERT_EQUAL_INT(-ERANGE, number_parse_u32("0", 1U, 1U, 65535U, &value));
     TEST_ASSERT_EQUAL_INT(-ERANGE, number_parse_u32("11", 2U, 0U, 10U, &value));
     TEST_ASSERT_EQUAL_INT(-ERANGE, number_parse_u32("1", 1U, 0U, 0U, &value));
