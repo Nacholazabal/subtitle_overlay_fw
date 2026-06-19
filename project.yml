@@ -23,6 +23,7 @@
     - src/svc/usb_audio/**
     - src/svc/video_pipeline/**
     - src/utils/log/**
+    - src/utils/number_parse/**
   :include:
     - linux/include/uapi
     - src/bsp/bsp_compat
@@ -45,6 +46,7 @@
     - src/svc/usb_audio
     - src/svc/video_pipeline
     - src/utils/log
+    - src/utils/number_parse
 
 :defines:
   :common: &common_defines []

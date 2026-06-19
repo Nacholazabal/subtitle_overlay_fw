@@ -1,7 +1,5 @@
 /**********************************************************************************************************************
-Copyright (c) 2024, <Your Name> <your_email@mail.com>
-
-Some fancy copyright message here (if needed)
+Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
 **********************************************************************************************************************/
 
 #pragma once
@@ -13,10 +11,6 @@ Some fancy copyright message here (if needed)
 ///
 
 // === Headers files inclusions ==================================================================================== //
-
-#include <stdarg.h>
-#include <stdio.h>
-#include <string.h>
 
 // === C++ Guard =================================================================================================== //
 
@@ -81,6 +75,7 @@ typedef enum
 typedef enum
 {
     LOG_ERROR_NONE = 0,              ///< No error happened
+    LOG_ERROR_INVALID_ARGUMENT,      ///< A required pointer or severity value is invalid
     LOG_ERROR_NOT_SUBSCRIBED,        ///< We're trying to unsubscribe a not subscribed function
     LOG_ERROR_SUBSCRIBERS_EXCEEDED,  ///< Reached Subscribber limit. Consider increasing `LOG_MAX_SUBSCRIBERS`
 } log_error_e;
@@ -91,16 +86,17 @@ typedef void (*log_function_t)(const log_level_e severity, const char* msg);
 // === Public variable declarations ================================================================================ //
 // === Public function declarations ================================================================================ //
 
-/// @brief Initialize the Log Facility. This function must be called before sending any data.
-void log_init();
+/// @brief Initialize the log facility during single-threaded application startup.
+void log_init(void);
 
 /// @brief Subscribe the specified function to the log facility, so as to use to stream messages.
+/// Subscription changes are restricted to single-threaded startup/cleanup; message formatting is thread-safe.
 /// @param log_function Function to register
 /// @param threshold Log level in which the log function should output mesages
 /// @return `LOG_ERROR_NONE` on success.
 log_error_e log_subscribe(log_function_t log_function, log_level_e threshold);
 
-/// @brief Unsubscribe the specified function from the log facility.
+/// @brief Unsubscribe the specified function during single-threaded cleanup.
 /// @param log_function Function to unregister
 /// @return `LOG_ERROR_NONE` on success.
 log_error_e log_unsubscribe(log_function_t log_function);
@@ -115,7 +111,6 @@ const char* log_level_to_str(const log_level_e severity);
 /// the `LOG_X()` macros instead.
 /// @param severity Message severity
 /// @param fmt String to format
-/// @param
 void log_message(log_level_e severity, const char* fmt, ...);
 
 // === End of documentation ======================================================================================== //

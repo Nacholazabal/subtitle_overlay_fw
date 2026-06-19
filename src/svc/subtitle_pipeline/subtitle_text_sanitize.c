@@ -1,7 +1,6 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
 
-Some fancy copyright message here (if needed)
 **********************************************************************************************************************/
 
 ///
@@ -112,7 +111,6 @@ static char map_two_byte(unsigned char b2)
     case 0xB3U: // ó
         return 'o';
     case 0xBAU: // ú
-        return 'u';
     case 0xBCU: // ü
         return 'u';
     case 0xB1U: // ñ
@@ -126,7 +124,6 @@ static char map_two_byte(unsigned char b2)
     case 0x93U: // Ó
         return 'O';
     case 0x9AU: // Ú
-        return 'U';
     case 0x9CU: // Ü
         return 'U';
     case 0x91U: // Ñ
@@ -189,7 +186,7 @@ static char map_three_byte_punct(unsigned char b3)
  * @param in Null-terminated UTF-8 input.
  * @param out Destination ASCII buffer.
  * @param out_size Destination capacity in bytes (must be at least 1).
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int subtitle_text_sanitize(char const* const in, char* const out, size_t out_size)
 {
@@ -245,14 +242,21 @@ int subtitle_text_sanitize(char const* const in, char* const out, size_t out_siz
 
             if (length == 2U)
             {
-                mapped = (b == 0xC3U) ? map_two_byte(b2)
-                                      : ((b == 0xC2U) ? map_two_byte_c2(b2) : '\0');
+                if (b == 0xC3U)
+                {
+                    mapped = map_two_byte(b2);
+                }
+                else if (b == 0xC2U)
+                {
+                    mapped = map_two_byte_c2(b2);
+                }
             }
             else if (length == 3U)
             {
-                mapped = ((b == 0xE2U) && (b2 == 0x80U))
-                             ? map_three_byte_punct((unsigned char)cursor[2])
-                             : '\0';
+                if ((b == 0xE2U) && (b2 == 0x80U))
+                {
+                    mapped = map_three_byte_punct((unsigned char)cursor[2]);
+                }
             }
             else
             {
@@ -260,7 +264,14 @@ int subtitle_text_sanitize(char const* const in, char* const out, size_t out_siz
                 mapped = '\0';
             }
 
-            emit(out, out_size, &idx, (mapped != '\0') ? mapped : ' ');
+            if (mapped != '\0')
+            {
+                emit(out, out_size, &idx, mapped);
+            }
+            else
+            {
+                emit(out, out_size, &idx, ' ');
+            }
             cursor += length;
         }
         else

@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "unity.h"
@@ -6,15 +7,55 @@
 #include "errorno.h"
 #include "stt_event_rx.h"
 
+TEST_SOURCE_FILE("number_parse.c")
+
 static subtitle_text_evt_t event;
 
 void setUp(void)
 {
     memset(&event, 0, sizeof(event));
+    unsetenv("SUBTITLE_STT_RX_HOST");
+    unsetenv("SUBTITLE_STT_RX_PORT");
 }
 
 void tearDown(void)
-{}
+{
+    unsetenv("SUBTITLE_STT_RX_HOST");
+    unsetenv("SUBTITLE_STT_RX_PORT");
+}
+
+void test_stt_event_rx_default_config_accepts_valid_and_ignores_invalid_port_overrides(void)
+{
+    stt_event_rx_config_t config;
+
+    stt_event_rx_default_config(NULL);
+    setenv("SUBTITLE_STT_RX_HOST", "127.0.0.1", 1);
+    setenv("SUBTITLE_STT_RX_PORT", "6001", 1);
+    stt_event_rx_default_config(&config);
+    TEST_ASSERT_EQUAL_STRING("127.0.0.1", config.host);
+    TEST_ASSERT_EQUAL_UINT32(6001U, config.port);
+
+    setenv("SUBTITLE_STT_RX_PORT", "70000", 1);
+    stt_event_rx_default_config(&config);
+    TEST_ASSERT_EQUAL_UINT32(STT_EVENT_RX_DEFAULT_PORT, config.port);
+
+    setenv("SUBTITLE_STT_RX_PORT", "5001junk", 1);
+    stt_event_rx_default_config(&config);
+    TEST_ASSERT_EQUAL_UINT32(STT_EVENT_RX_DEFAULT_PORT, config.port);
+}
+
+void test_stt_event_rx_init_rejects_port_outside_tcp_range(void)
+{
+    stt_event_rx_t rx;
+    stt_event_rx_config_t config;
+
+    memset(&rx, 0, sizeof(rx));
+    memset(&config, 0, sizeof(config));
+    snprintf(config.host, sizeof(config.host), "%s", "127.0.0.1");
+    config.port = 65536U;
+
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_event_rx_init(&rx, &config));
+}
 
 void test_stt_event_rx_parse_line_accepts_valid_partial_with_boolean_final_flag(void)
 {
@@ -110,4 +151,87 @@ void test_stt_event_rx_parse_line_handles_simple_escapes(void)
 
     TEST_ASSERT_EQUAL_INT(0, stt_event_rx_parse_line(line, &event));
     TEST_ASSERT_EQUAL_STRING("hola \"mundo\"\\", event.text);
+}
+
+void test_stt_event_rx_parse_line_accepts_sender_fields_in_any_order(void)
+{
+    char const* const line = "{\"text\":\"hola\",\"dropped\":0,\"end_sec\":1.25,"
+                             "\"type\":\"final\",\"seq\":21,\"chunk_start\":1,"
+                             "\"start_sec\":1.0,\"is_final\":true}";
+
+    TEST_ASSERT_EQUAL_INT(0, stt_event_rx_parse_line(line, &event));
+    TEST_ASSERT_EQUAL_UINT32(21U, event.seq);
+    TEST_ASSERT_EQUAL_UINT8(1U, event.is_final);
+    TEST_ASSERT_EQUAL_STRING("hola", event.text);
+}
+
+void test_stt_event_rx_parse_line_does_not_match_keys_inside_text(void)
+{
+    char const* const line = "{\"text\":\"say \\\"seq\\\":999 now\",\"seq\":22,"
+                             "\"is_final\":false,\"start_sec\":0.0,\"end_sec\":0.2}";
+
+    TEST_ASSERT_EQUAL_INT(0, stt_event_rx_parse_line(line, &event));
+    TEST_ASSERT_EQUAL_UINT32(22U, event.seq);
+    TEST_ASSERT_EQUAL_STRING("say \"seq\":999 now", event.text);
+}
+
+void test_stt_event_rx_parse_line_rejects_duplicates_and_inconsistent_final_fields(void)
+{
+    TEST_ASSERT_EQUAL_INT(
+        -EINVAL,
+        stt_event_rx_parse_line("{\"seq\":1,\"seq\":2,\"is_final\":false,"
+                                "\"start_sec\":0,\"end_sec\":1,\"text\":\"x\"}",
+                                &event));
+    TEST_ASSERT_EQUAL_INT(
+        -EINVAL,
+        stt_event_rx_parse_line("{\"seq\":1,\"is_final\":false,\"type\":\"final\","
+                                "\"start_sec\":0,\"end_sec\":1,\"text\":\"x\"}",
+                                &event));
+}
+
+void test_stt_event_rx_parse_line_rejects_overflow_and_malformed_numeric_tokens(void)
+{
+    TEST_ASSERT_EQUAL_INT(
+        -ERANGE,
+        stt_event_rx_parse_line("{\"seq\":4294967296,\"is_final\":false,"
+                                "\"start_sec\":0,\"end_sec\":1,\"text\":\"x\"}",
+                                &event));
+    TEST_ASSERT_EQUAL_INT(
+        -EINVAL,
+        stt_event_rx_parse_line("{\"seq\":1junk,\"is_final\":false,"
+                                "\"start_sec\":0,\"end_sec\":1,\"text\":\"x\"}",
+                                &event));
+    TEST_ASSERT_EQUAL_INT(
+        -EINVAL,
+        stt_event_rx_parse_line("{\"seq\":1,\"is_final\":false,"
+                                "\"start_sec\":0,\"end_sec\":4294968,\"text\":\"x\"}",
+                                &event));
+}
+
+void test_stt_event_rx_parse_line_rejects_malformed_escapes_and_trailing_garbage(void)
+{
+    TEST_ASSERT_EQUAL_INT(
+        -EINVAL,
+        stt_event_rx_parse_line("{\"seq\":1,\"is_final\":false,"
+                                "\"start_sec\":0,\"end_sec\":1,\"text\":\"bad\\q\"}",
+                                &event));
+    TEST_ASSERT_EQUAL_INT(
+        -EINVAL,
+        stt_event_rx_parse_line("{\"seq\":1,\"is_final\":false,"
+                                "\"start_sec\":0,\"end_sec\":1,\"text\":\"x\"}junk",
+                                &event));
+}
+
+void test_stt_event_rx_parse_line_rejects_nonfinite_time_and_trailing_comma(void)
+{
+    TEST_ASSERT_EQUAL_INT(
+        -EINVAL,
+        stt_event_rx_parse_line("{\"seq\":1,\"is_final\":false,"
+                                "\"start_sec\":0,\"end_sec\":1e999,\"text\":\"x\"}",
+                                &event));
+    TEST_ASSERT_EQUAL_INT(
+        -EINVAL,
+        stt_event_rx_parse_line("{\"seq\":1,\"is_final\":false,"
+                                "\"start_sec\":0,\"end_sec\":1,\"text\":\"x\",}",
+                                &event));
 }

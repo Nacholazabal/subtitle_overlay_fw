@@ -129,7 +129,7 @@ void test_subtitle_bram_rejects_invalid_arguments(void)
                           subtitle_bram_write_bitmap(&bram, bitmap, sizeof(bitmap), 0, 0, 1, 0));
 
     bram.base = (uintptr_t)0;
-    TEST_ASSERT_EQUAL_INT(-ESTATE, subtitle_bram_clear(&bram));
+    TEST_ASSERT_EQUAL_INT(-APP_ESTATE, subtitle_bram_clear(&bram));
 }
 
 void test_subtitle_bram_write_bitmap_rejects_insufficient_source_size(void)

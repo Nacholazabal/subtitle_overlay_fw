@@ -1,7 +1,6 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
 
-Some fancy copyright message here (if needed)
 **********************************************************************************************************************/
 
 ///
@@ -44,7 +43,7 @@ static int validate_overlay(subtitle_overlay_t const* overlay);
 /**
  * @brief Validate an initialized subtitle overlay adapter.
  * @param overlay Overlay adapter to validate.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 static int validate_overlay(subtitle_overlay_t const* const overlay)
 {
@@ -55,7 +54,7 @@ static int validate_overlay(subtitle_overlay_t const* const overlay)
 
     if (overlay->base == (uintptr_t)0)
     {
-        return -ESTATE;
+        return -APP_ESTATE;
     }
 
     return 0;
@@ -66,7 +65,7 @@ static int validate_overlay(subtitle_overlay_t const* const overlay)
 /**
  * @brief Initialize the subtitle overlay adapter from the mapped platform region.
  * @param overlay Overlay adapter to initialize.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int subtitle_overlay_init(subtitle_overlay_t* const overlay)
 {
@@ -85,7 +84,7 @@ int subtitle_overlay_init(subtitle_overlay_t* const overlay)
  * @brief Configure subtitle overlay geometry and colors.
  * @param overlay Initialized overlay adapter.
  * @param config Overlay geometry and RGB888 color values.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int subtitle_overlay_configure(subtitle_overlay_t* const overlay,
                                subtitle_overlay_config_t const* const config)
@@ -119,7 +118,7 @@ int subtitle_overlay_configure(subtitle_overlay_t* const overlay,
  * @brief Enable or disable subtitle overlay compositing without changing other control bits.
  * @param overlay Initialized overlay adapter.
  * @param enabled Nonzero enables overlay, zero disables overlay passthrough.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int subtitle_overlay_enable(subtitle_overlay_t* const overlay, int enabled)
 {
@@ -149,7 +148,7 @@ int subtitle_overlay_enable(subtitle_overlay_t* const overlay, int enabled)
  * @brief Read the overlay control register.
  * @param overlay Initialized overlay adapter.
  * @param control Output control register value.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int subtitle_overlay_read_control(subtitle_overlay_t const* const overlay, uint32_t* const control)
 {
@@ -172,7 +171,7 @@ int subtitle_overlay_read_control(subtitle_overlay_t const* const overlay, uint3
 /**
  * @brief Clear the hardware sticky SOF flag while preserving the overlay enable bit.
  * @param overlay Initialized overlay adapter.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int subtitle_overlay_clear_sof(subtitle_overlay_t* const overlay)
 {
@@ -194,7 +193,7 @@ int subtitle_overlay_clear_sof(subtitle_overlay_t* const overlay)
  * @brief Wait for the overlay SOF flag to be set by hardware.
  * @param overlay Initialized overlay adapter.
  * @param timeout_reads Maximum register reads before timing out.
- * @return 0 when SOF is observed, or a negative errorno_e value on failure.
+ * @return 0 when SOF is observed, or a negative errno-style value on failure.
  */
 int subtitle_overlay_wait_sof(subtitle_overlay_t* const overlay, uint32_t timeout_reads)
 {

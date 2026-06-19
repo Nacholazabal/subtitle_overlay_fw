@@ -1,7 +1,6 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
 
-Some fancy copyright message here (if needed)
 **********************************************************************************************************************/
 
 ///
@@ -34,12 +33,12 @@ Some fancy copyright message here (if needed)
 #define RENDER_MAX_LINES        (5U)
 #define RENDER_TEXT_X           (24U)
 #define RENDER_TEXT_Y           (24U)
-#define RENDER_BITMAP_STRIDE    (SUBTITLE_BRAM_MASK_WIDTH / 8U)
+#define RENDER_BITMAP_STRIDE    ((size_t)SUBTITLE_BRAM_MASK_WIDTH / 8U)
 #define RENDER_BITMAP_SIZE      (RENDER_BITMAP_STRIDE * SUBTITLE_BRAM_MASK_HEIGHT)
 #define RENDER_SANITIZE_MAX     (512U)
 #define RENDER_GLYPHS_PER_LINE \
     (((SUBTITLE_BRAM_MASK_WIDTH - RENDER_TEXT_X - GLYPH_RENDERED_WIDTH) / GLYPH_ADVANCE) + 1U)
-#define RENDER_VISIBLE_CAPACITY (RENDER_GLYPHS_PER_LINE * RENDER_MAX_LINES)
+#define RENDER_VISIBLE_CAPACITY ((size_t)RENDER_GLYPHS_PER_LINE * RENDER_MAX_LINES)
 #define RENDER_UNKNOWN_GLYPH    (36U)
 #define RENDER_SPACE_GLYPH      (37U)
 #define RENDER_PERIOD_GLYPH     (38U)
@@ -171,7 +170,7 @@ static void set_bitmap_pixel(uint8_t* const dst, uint32_t x, uint32_t y)
         return;
     }
 
-    uint32_t const byte_index = (y * RENDER_BITMAP_STRIDE) + (x / 8U);
+    size_t const byte_index = ((size_t)y * RENDER_BITMAP_STRIDE) + ((size_t)x / 8U);
     uint8_t const bit_mask = (uint8_t)(1U << (7U - (x % 8U)));
 
     dst[byte_index] |= bit_mask;
@@ -256,7 +255,7 @@ static char const* tail_start(char const* const text)
  * @param dst_size Destination buffer size in bytes.
  * @param width Rendered bitmap width destination.
  * @param height Rendered bitmap height destination.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int subtitle_text_renderer_render(char const* const text,
                                   uint8_t* const dst,

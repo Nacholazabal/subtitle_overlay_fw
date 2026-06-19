@@ -1,7 +1,5 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
-
-Some fancy copyright message here (if needed)
 **********************************************************************************************************************/
 
 #pragma once
@@ -13,7 +11,7 @@ Some fancy copyright message here (if needed)
 
 // === Headers files inclusions ==================================================================================== //
 
-#include <stdint.h>
+#include <errno.h>
 
 // === C++ Guard =================================================================================================== //
 
@@ -24,14 +22,11 @@ extern "C" {
 // === Public macros definitions =================================================================================== //
 // === Public data type declarations =============================================================================== //
 
-/// @brief Positive application error numbers; return or store failures as negative values.
+/// @brief Positive application-specific error numbers; return or store failures as negative values.
 typedef enum
 {
-    EIO = 5,     ///< Generic input/output failure.
-    EAGAIN = 11, ///< Operation is not complete yet; try again later.
-    EINVAL = 22, ///< Invalid argument or unexpected input.
-    ESTATE = 32, ///< Unexpected state for the requested operation.
-} errorno_e;
+    APP_ESTATE = 1000, ///< Unexpected state for the requested operation.
+} app_errorno_e;
 
 // === Public variable declarations ================================================================================ //
 // === Public function declarations ================================================================================ //

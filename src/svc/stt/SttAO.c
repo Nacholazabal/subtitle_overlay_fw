@@ -1,7 +1,6 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
 
-Some fancy copyright message here (if needed)
 **********************************************************************************************************************/
 
 ///
@@ -97,7 +96,7 @@ static void post_ready(stt_ao_t* const me)
 /**
  * @brief Post a component-error report to system_ao_t.
  * @param me STT active object sending the report.
- * @param code Negative errorno_e value to include in the report.
+ * @param code Negative errno-style value to include in the report.
  * @return None.
  */
 static void post_error(stt_ao_t* const me, int32_t code)
@@ -124,7 +123,7 @@ static void post_error(stt_ao_t* const me, int32_t code)
 /**
  * @brief Start the STT transcript TCP receiver.
  * @param me STT active object.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 static int on_component_init(stt_ao_t* const me)
 {
@@ -158,7 +157,7 @@ static int on_component_init(stt_ao_t* const me)
 /**
  * @brief Poll the STT receiver and forward parsed transcript events.
  * @param me STT active object.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 static int on_poll(stt_ao_t* const me)
 {
@@ -244,7 +243,7 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
 /**
  * @brief Stop the STT receiver and report a terminal error.
  * @param me STT active object entering error.
- * @param code Negative errorno_e value.
+ * @param code Negative errno-style value.
  * @return None.
  */
 static void enter_error(stt_ao_t* const me, int32_t code)

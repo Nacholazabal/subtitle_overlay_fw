@@ -1,7 +1,5 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
-
-Some fancy copyright message here (if needed)
 **********************************************************************************************************************/
 
 ///
@@ -120,7 +118,7 @@ static uint32_t clk_count_calc(uint32_t divide);
 static int clk_find_reg(clk_config_t* reg_values, clk_mode_t const* clk_params);
 static double clk_find_params(double frequency_mhz, clk_mode_t* best_pick);
 static void clk_write_reg(uintptr_t base, clk_config_t const* reg_values);
-static uint64_t dynclk_now_ns(void);
+static int dynclk_now_ns(uint64_t* now_ns);
 static int clk_start(uintptr_t base);
 
 // === Public variable definitions ================================================================================= //
@@ -282,12 +280,18 @@ static void clk_write_reg(uintptr_t base, clk_config_t const* const reg_values)
     Xil_Out32(base + OFST_DYNCLK_FLTR_LOCK_H, reg_values->fltr_lock_h);
 }
 
-static uint64_t dynclk_now_ns(void)
+/** @brief Read the monotonic clock used for bounded MMIO polling. */
+static int dynclk_now_ns(uint64_t* const now_ns)
 {
     struct timespec ts;
 
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ((uint64_t)ts.tv_sec * 1000000000ULL) + (uint64_t)ts.tv_nsec;
+    if ((now_ns == NULL) || (clock_gettime(CLOCK_MONOTONIC, &ts) != 0))
+    {
+        return XST_FAILURE;
+    }
+
+    *now_ns = ((uint64_t)ts.tv_sec * 1000000000ULL) + (uint64_t)ts.tv_nsec;
+    return XST_SUCCESS;
 }
 
 /**
@@ -297,12 +301,19 @@ static uint64_t dynclk_now_ns(void)
  */
 static int clk_start(uintptr_t base)
 {
-    uint64_t const deadline_ns = dynclk_now_ns() + CLK_TIMEOUT_NS;
+    uint64_t start_ns;
+
+    if (dynclk_now_ns(&start_ns) != XST_SUCCESS)
+    {
+        return XST_FAILURE;
+    }
 
     Xil_Out32(base + OFST_DYNCLK_CTRL, 1U << BIT_DYNCLK_START);
     while ((Xil_In32(base + OFST_DYNCLK_STATUS) & (1U << BIT_DYNCLK_RUNNING)) == 0U)
     {
-        if (dynclk_now_ns() >= deadline_ns)
+        uint64_t now_ns;
+
+        if ((dynclk_now_ns(&now_ns) != XST_SUCCESS) || ((now_ns - start_ns) >= CLK_TIMEOUT_NS))
         {
             fprintf(stderr, "[video_dynclk] PLL lock timeout\n");
             return XST_FAILURE;
@@ -339,18 +350,24 @@ int video_dynclk_init(video_dynclk_t* const dynclk)
  */
 int video_dynclk_stop(video_dynclk_t* const dynclk)
 {
-    uint64_t deadline_ns;
+    uint64_t start_ns;
 
     if ((dynclk == NULL) || (dynclk->base == (uintptr_t)0))
     {
         return XST_INVALID_PARAM;
     }
 
+    if (dynclk_now_ns(&start_ns) != XST_SUCCESS)
+    {
+        return XST_FAILURE;
+    }
+
     Xil_Out32(dynclk->base + OFST_DYNCLK_CTRL, 0U);
-    deadline_ns = dynclk_now_ns() + CLK_TIMEOUT_NS;
     while ((Xil_In32(dynclk->base + OFST_DYNCLK_STATUS) & (1U << BIT_DYNCLK_RUNNING)) != 0U)
     {
-        if (dynclk_now_ns() >= deadline_ns)
+        uint64_t now_ns;
+
+        if ((dynclk_now_ns(&now_ns) != XST_SUCCESS) || ((now_ns - start_ns) >= CLK_TIMEOUT_NS))
         {
             fprintf(stderr, "[video_dynclk] clock stop timeout\n");
             return XST_FAILURE;
@@ -383,7 +400,10 @@ int video_dynclk_configure(video_dynclk_t* const dynclk, double frequency_mhz)
         return XST_FAILURE;
     }
 
-    (void)video_dynclk_stop(dynclk);
+    if (video_dynclk_stop(dynclk) != XST_SUCCESS)
+    {
+        return XST_FAILURE;
+    }
     clk_write_reg(dynclk->base, &regs);
 
     if (clk_start(dynclk->base) != XST_SUCCESS)

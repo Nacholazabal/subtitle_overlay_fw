@@ -1,14 +1,12 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
-
-Some fancy copyright message here (if needed)
 **********************************************************************************************************************/
 
 #pragma once
 
 ///
 /// @file usb_audio_capture.h
-/// @brief ALSA USB audio capture adapter interface
+/// @brief Linux ALSA USB audio capture adapter interface
 ///
 
 // === Headers files inclusions ==================================================================================== //

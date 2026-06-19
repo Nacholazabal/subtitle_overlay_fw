@@ -1,7 +1,6 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
 
-Some fancy copyright message here (if needed)
 **********************************************************************************************************************/
 
 #pragma once
@@ -51,6 +50,7 @@ typedef enum
     COMPONENT_READY_SIG,             ///< Directed response: one component finished initialization.
     COMPONENT_ERROR_SIG, ///< Directed error report containing an app_error_evt_t payload.
     VIDEO_POLL_SIG,      ///< Private video AO timer signal used to poll the video pipeline.
+    USB_AUDIO_POLL_SIG,  ///< Private USB-audio AO timer signal used to detect worker failures.
     STT_POLL_SIG,        ///< Private STT AO timer signal used to poll TCP transcript input.
     SUBTITLE_TEXT_SIG,   ///< Directed event from stt_ao_t to subtitle_ao_t.
     SUBTITLE_CLEAR_SIG,  ///< Private subtitle AO timer signal to clear stale subtitles.

@@ -1,7 +1,6 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
 
-Some fancy copyright message here (if needed)
 **********************************************************************************************************************/
 
 ///
@@ -37,7 +36,7 @@ static int subtitle_bram_write_full_bitmap(subtitle_bram_t const* bram, uint8_t 
 /**
  * @brief Validate an initialized subtitle BRAM adapter.
  * @param bram BRAM adapter to validate.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 static int validate_bram(subtitle_bram_t const* const bram)
 {
@@ -48,7 +47,7 @@ static int validate_bram(subtitle_bram_t const* const bram)
 
     if (bram->base == (uintptr_t)0)
     {
-        return -ESTATE;
+        return -APP_ESTATE;
     }
 
     return 0;
@@ -108,7 +107,7 @@ static uint32_t subtitle_bram_pack_word(uint8_t const* const src)
  * @param bram Initialized BRAM adapter.
  * @param src Source row-major bitmap, MSB-first inside each byte.
  * @param src_stride Source row stride in bytes.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 static int subtitle_bram_write_full_bitmap(subtitle_bram_t const* const bram,
                                            uint8_t const* const src,
@@ -125,7 +124,8 @@ static int subtitle_bram_write_full_bitmap(subtitle_bram_t const* const bram,
 
         for (word_col = 0U; word_col < SUBTITLE_BRAM_WORDS_PER_ROW; word_col++)
         {
-            words[dst_row + word_col] = subtitle_bram_pack_word(&src_row[word_col * 4U]);
+            words[dst_row + word_col] =
+                subtitle_bram_pack_word(&src_row[(size_t)word_col * 4U]);
         }
     }
 
@@ -137,7 +137,7 @@ static int subtitle_bram_write_full_bitmap(subtitle_bram_t const* const bram,
 /**
  * @brief Initialize the subtitle BRAM adapter from the mapped platform region.
  * @param bram BRAM adapter to initialize.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int subtitle_bram_init(subtitle_bram_t* const bram)
 {
@@ -155,7 +155,7 @@ int subtitle_bram_init(subtitle_bram_t* const bram)
 /**
  * @brief Clear the whole subtitle mask BRAM.
  * @param bram Initialized BRAM adapter.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int subtitle_bram_clear(subtitle_bram_t* const bram)
 {
@@ -182,7 +182,7 @@ int subtitle_bram_clear(subtitle_bram_t* const bram)
  * @param bram Initialized BRAM adapter.
  * @param x Pixel x coordinate.
  * @param y Pixel y coordinate.
- * @return 0 on success or clipped out-of-range pixel, or a negative errorno_e value on failure.
+ * @return 0 on success or clipped out-of-range pixel, or a negative errno-style value on failure.
  */
 int subtitle_bram_set_pixel(subtitle_bram_t* const bram, int32_t x, int32_t y)
 {
@@ -214,7 +214,7 @@ int subtitle_bram_set_pixel(subtitle_bram_t* const bram, int32_t x, int32_t y)
  * @param bram Initialized BRAM adapter.
  * @param x Pixel x coordinate.
  * @param y Pixel y coordinate.
- * @return 0 on success or clipped out-of-range pixel, or a negative errorno_e value on failure.
+ * @return 0 on success or clipped out-of-range pixel, or a negative errno-style value on failure.
  */
 int subtitle_bram_clear_pixel(subtitle_bram_t* const bram, int32_t x, int32_t y)
 {
@@ -250,7 +250,7 @@ int subtitle_bram_clear_pixel(subtitle_bram_t* const bram, int32_t x, int32_t y)
  * @param y Destination y coordinate.
  * @param width Source bitmap width in pixels.
  * @param height Source bitmap height in pixels.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int subtitle_bram_write_bitmap(subtitle_bram_t* const bram,
                                uint8_t const* const src,

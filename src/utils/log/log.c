@@ -1,7 +1,5 @@
 /**********************************************************************************************************************
-Copyright (c) 2024, <Your Name> <your_email@mail.com>
-
-Some fancy copyright message here (if needed)
+Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
 **********************************************************************************************************************/
 
 ///
@@ -11,9 +9,8 @@ Some fancy copyright message here (if needed)
 
 // === Headers files inclusions ==================================================================================== //
 
-#include <assert.h>
 #include <stdarg.h>
-#include <stdint.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -33,7 +30,6 @@ typedef struct
 
 /// @brief Array containing all the log subscribers. W
 static subscriber_t log_subscribers[LOG_MAX_SUBSCRIBERS] = {0};
-static char log_message_buffer[LOG_MAX_MESSAGE_LENGTH] = {0};
 
 // === Private function declarations =============================================================================== //
 // === Public variable definitions ================================================================================= //
@@ -41,13 +37,16 @@ static char log_message_buffer[LOG_MAX_MESSAGE_LENGTH] = {0};
 // === Private function implementation ============================================================================= //
 // === Public function implementation ============================================================================== //
 
-void log_init() { memset(log_subscribers, 0, sizeof(log_subscribers)); }
+void log_init(void) { memset(log_subscribers, 0, sizeof(log_subscribers)); }
 
 log_error_e log_subscribe(log_function_t log_function, log_level_e threshold)
 {
-    assert(log_function);
+    size_t available_slot = LOG_MAX_SUBSCRIBERS;
 
-    int8_t available_slot = -1;
+    if ((log_function == NULL) || (threshold < LOG_LEVEL_TRACE) || (threshold > LOG_LEVEL_ERROR))
+    {
+        return LOG_ERROR_INVALID_ARGUMENT;
+    }
 
     // Let's find an available slot in our subscriber list.
     for (size_t i = 0; i < LOG_MAX_SUBSCRIBERS; i++) {
@@ -62,7 +61,7 @@ log_error_e log_subscribe(log_function_t log_function, log_level_e threshold)
         }
     }
     // log_function is not yet a subscriber.  Assign it if possible.
-    if (available_slot == -1) { return LOG_ERROR_SUBSCRIBERS_EXCEEDED; }
+    if (available_slot == LOG_MAX_SUBSCRIBERS) { return LOG_ERROR_SUBSCRIBERS_EXCEEDED; }
     log_subscribers[available_slot].log_function = log_function;
     log_subscribers[available_slot].threshold = threshold;
     return LOG_ERROR_NONE;
@@ -70,6 +69,11 @@ log_error_e log_subscribe(log_function_t log_function, log_level_e threshold)
 
 log_error_e log_unsubscribe(log_function_t log_function)
 {
+    if (log_function == NULL)
+    {
+        return LOG_ERROR_INVALID_ARGUMENT;
+    }
+
     for (size_t i = 0; i < LOG_MAX_SUBSCRIBERS; i++) {
         if (log_subscribers[i].log_function == log_function) {
             log_subscribers[i].log_function = NULL;  // Mark as empty
@@ -81,15 +85,22 @@ log_error_e log_unsubscribe(log_function_t log_function)
 
 void log_message(log_level_e severity, const char* fmt, ...)
 {
+    char message[LOG_MAX_MESSAGE_LENGTH];
     va_list ap;
+
+    if (fmt == NULL)
+    {
+        return;
+    }
+
     va_start(ap, fmt);
-    vsnprintf(log_message_buffer, LOG_MAX_MESSAGE_LENGTH, fmt, ap);
+    (void)vsnprintf(message, sizeof(message), fmt, ap);
     va_end(ap);
 
     for (size_t i = 0; i < LOG_MAX_SUBSCRIBERS; i++) {
         if (log_subscribers[i].log_function != NULL) {
             if (severity >= log_subscribers[i].threshold) {
-                log_subscribers[i].log_function(severity, log_message_buffer);
+                log_subscribers[i].log_function(severity, message);
             }
         }
     }

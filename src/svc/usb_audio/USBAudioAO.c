@@ -1,7 +1,5 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
-
-Some fancy copyright message here (if needed)
 **********************************************************************************************************************/
 
 ///
@@ -19,11 +17,15 @@ Some fancy copyright message here (if needed)
 #include "usb_audio_stream.h"
 
 // === Macros definitions ========================================================================================== //
+
+#define USB_AUDIO_AO_POLL_TICKS     (10U)
+#define USB_AUDIO_AO_POLL_PERIOD_MS (100U)
 // === Private data type declarations ============================================================================== //
 
 typedef struct
 {
     QActive super;
+    QTimeEvt poll_time_evt;
 
     usb_audio_stream_t stream;
     uint8_t running;
@@ -38,6 +40,7 @@ static QState usb_audio_ao_ready(usb_audio_ao_t* const me, QEvt const* const e);
 static QState usb_audio_ao_error(usb_audio_ao_t* const me, QEvt const* const e);
 
 static int on_component_init(usb_audio_ao_t* const me);
+static int on_stream_poll(usb_audio_ao_t* const me);
 static void post_ready(usb_audio_ao_t* const me);
 static void post_error(usb_audio_ao_t* const me, int32_t code);
 static void enter_error(usb_audio_ao_t* const me, int32_t code);
@@ -83,7 +86,7 @@ static void post_ready(usb_audio_ao_t* const me)
 /**
  * @brief Post a USB-audio error report to system_ao_t.
  * @param me USB audio active object.
- * @param code Negative errorno_e value.
+ * @param code Negative errno-style value.
  * @return None.
  */
 static void post_error(usb_audio_ao_t* const me, int32_t code)
@@ -110,7 +113,7 @@ static void post_error(usb_audio_ao_t* const me, int32_t code)
 /**
  * @brief Start USB audio capture and TCP streaming.
  * @param me USB audio active object.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 static int on_component_init(usb_audio_ao_t* const me)
 {
@@ -127,8 +130,10 @@ static int on_component_init(usb_audio_ao_t* const me)
     if (status == 0)
     {
         me->running = 1U;
+        QTimeEvt_armX(&me->poll_time_evt, USB_AUDIO_AO_POLL_TICKS, USB_AUDIO_AO_POLL_TICKS);
         post_ready(me);
-        LOG_INFO("usb-audio: capture and TCP streaming ready");
+        LOG_INFO("usb-audio: capture and TCP streaming ready, health poll=%u ms",
+                 (unsigned)USB_AUDIO_AO_POLL_PERIOD_MS);
     }
     else
     {
@@ -140,15 +145,34 @@ static int on_component_init(usb_audio_ao_t* const me)
 }
 
 /**
+ * @brief Poll worker health and convert a fatal background failure into an AO error.
+ * @param me USB audio active object.
+ * @return 0 while healthy or the negative worker failure.
+ */
+static int on_stream_poll(usb_audio_ao_t* const me)
+{
+    int const status = usb_audio_stream_get_status(&me->stream);
+
+    if (status != 0)
+    {
+        LOG_ERROR("usb-audio: background worker failed, code=%ld", (long)status);
+        enter_error(me, status);
+    }
+
+    return status;
+}
+
+/**
  * @brief Stop USB audio service and report an error.
  * @param me USB audio active object.
- * @param code Negative errorno_e value.
+ * @param code Negative errno-style value.
  * @return None.
  */
 static void enter_error(usb_audio_ao_t* const me, int32_t code)
 {
     if (me->running != 0U)
     {
+        (void)QTimeEvt_disarm(&me->poll_time_evt);
         usb_audio_stream_stop(&me->stream);
         me->running = 0U;
     }
@@ -209,13 +233,20 @@ static QState usb_audio_ao_idle(usb_audio_ao_t* const me, QEvt const* const e)
  */
 static QState usb_audio_ao_ready(usb_audio_ao_t* const me, QEvt const* const e)
 {
-    Q_UNUSED_PAR(me);
+    QState status;
 
     switch (e->sig)
     {
+    case USB_AUDIO_POLL_SIG:
+        status = (on_stream_poll(me) == 0) ? Q_HANDLED() : Q_TRAN(&usb_audio_ao_error);
+        break;
+
     default:
-        return Q_SUPER(&QHsm_top);
+        status = Q_SUPER(&QHsm_top);
+        break;
     }
+
+    return status;
 }
 
 /**
@@ -244,6 +275,7 @@ void usb_audio_ao_ctor(void)
     usb_audio_ao_t* const me = &usb_audio_ao_inst;
 
     QActive_ctor(&me->super, Q_STATE_CAST(&usb_audio_ao_initial));
+    QTimeEvt_ctorX(&me->poll_time_evt, &me->super, USB_AUDIO_POLL_SIG, 0U);
     me->running = 0U;
 }
 

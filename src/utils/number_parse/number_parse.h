@@ -1,13 +1,12 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
-
 **********************************************************************************************************************/
 
 #pragma once
 
 ///
-/// @file subtitle_text_renderer.h
-/// @brief Minimal text-to-bitmap renderer for subtitle masks
+/// @file number_parse.h
+/// @brief Checked numeric parsing helpers
 ///
 
 // === Headers files inclusions ==================================================================================== //
@@ -26,11 +25,20 @@ extern "C" {
 // === Public variable declarations ================================================================================ //
 // === Public function declarations ================================================================================ //
 
-int subtitle_text_renderer_render(char const* text,
-                                  uint8_t* dst,
-                                  size_t dst_size,
-                                  uint32_t* width,
-                                  uint32_t* height);
+/**
+ * @brief Parse an exact span of ASCII decimal digits into a bounded uint32_t.
+ * @param text Digit span; it does not need to be NUL-terminated.
+ * @param text_len Number of bytes in @p text.
+ * @param min_value Smallest accepted value.
+ * @param max_value Largest accepted value.
+ * @param value Parsed value destination, unchanged on failure.
+ * @return 0 on success, -EINVAL for malformed input, or -ERANGE outside the requested range.
+ */
+int number_parse_u32(char const* text,
+                     size_t text_len,
+                     uint32_t min_value,
+                     uint32_t max_value,
+                     uint32_t* value);
 
 // === End of documentation ======================================================================================== //
 

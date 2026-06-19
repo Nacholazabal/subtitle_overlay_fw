@@ -1,7 +1,5 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
-
-Some fancy copyright message here (if needed)
 **********************************************************************************************************************/
 
 ///
@@ -19,6 +17,7 @@ Some fancy copyright message here (if needed)
 
 #include "errorno.h"
 #include "log.h"
+#include "number_parse.h"
 
 #ifdef CONFIG_USB_AUDIO_ALSA
     #include <alsa/asoundlib.h>
@@ -50,7 +49,7 @@ static void set_capture_gain(char const* device);
  * @brief Configure ALSA hardware parameters for STT-ready PCM capture.
  * @param pcm Open ALSA PCM handle.
  * @param config Requested capture configuration.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 static int configure_pcm(snd_pcm_t* const pcm, usb_audio_capture_config_t const* const config)
 {
@@ -130,7 +129,7 @@ static int configure_pcm(snd_pcm_t* const pcm, usb_audio_capture_config_t const*
  * @brief Recover ALSA capture from transient overrun/suspend states.
  * @param pcm Open ALSA PCM handle.
  * @param err ALSA error code returned by a read operation.
- * @return 0 when recovered, or a negative errorno_e value on failure.
+ * @return 0 when recovered, or a negative errno-style value on failure.
  */
 static int recover_pcm(snd_pcm_t* const pcm, int err)
 {
@@ -220,14 +219,16 @@ static void set_capture_gain(char const* const device)
 
     if ((pct_env != NULL) && (pct_env[0] != '\0'))
     {
-        pct = strtol(pct_env, NULL, 10);
-        if (pct < 0L)
+        uint32_t parsed_pct;
+
+        if (number_parse_u32(pct_env, strlen(pct_env), 0U, 100U, &parsed_pct) == 0)
         {
-            pct = 0L;
+            pct = (long)parsed_pct;
         }
-        if (pct > 100L)
+        else
         {
-            pct = 100L;
+            LOG_WARNING("usb-audio: ignoring invalid SUBTITLE_USB_AUDIO_CAPTURE_VOL_PCT='%s'",
+                        pct_env);
         }
     }
 
@@ -290,7 +291,7 @@ static void set_capture_gain(char const* const device)
  * @brief Initialize USB audio capture through ALSA.
  * @param capture Capture adapter instance.
  * @param config Requested capture configuration.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int usb_audio_capture_init(usb_audio_capture_t* const capture,
                            usb_audio_capture_config_t const* const config)
@@ -349,7 +350,7 @@ int usb_audio_capture_init(usb_audio_capture_t* const capture,
  * @param dst Destination buffer.
  * @param dst_size Destination buffer length in bytes.
  * @param bytes_read Written with bytes captured on success.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int usb_audio_capture_read_chunk(usb_audio_capture_t* const capture,
                                  uint8_t* const dst,

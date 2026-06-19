@@ -47,9 +47,9 @@ void test_subtitle_pipeline_init_configures_default_geometry_and_stays_disabled(
     TEST_ASSERT_EQUAL_UINT32(1280U, pipeline.display_width);
     TEST_ASSERT_EQUAL_UINT32(720U, pipeline.display_height);
     TEST_ASSERT_EQUAL_UINT32(1024U, pipeline.config.width);
-    TEST_ASSERT_EQUAL_UINT32(120U, pipeline.config.height);
+    TEST_ASSERT_EQUAL_UINT32(256U, pipeline.config.height);
     TEST_ASSERT_EQUAL_UINT32(128U, pipeline.config.x);
-    TEST_ASSERT_EQUAL_UINT32(564U, pipeline.config.y);
+    TEST_ASSERT_EQUAL_UINT32(428U, pipeline.config.y);
     TEST_ASSERT_EQUAL_UINT32(SUBTITLE_PIPELINE_DEFAULT_BAR_COLOR, pipeline.config.bar_color);
     TEST_ASSERT_EQUAL_UINT32(SUBTITLE_PIPELINE_DEFAULT_TEXT_COLOR, pipeline.config.text_color);
 }
@@ -63,7 +63,7 @@ void test_subtitle_pipeline_init_enforces_minimum_mask_sized_bar(void)
     TEST_ASSERT_EQUAL_UINT32(SUBTITLE_BRAM_MASK_WIDTH, pipeline.config.width);
     TEST_ASSERT_EQUAL_UINT32(SUBTITLE_BRAM_MASK_HEIGHT, pipeline.config.height);
     TEST_ASSERT_EQUAL_UINT32(0U, pipeline.config.x);
-    TEST_ASSERT_EQUAL_UINT32(31U, pipeline.config.y);
+    TEST_ASSERT_EQUAL_UINT32(0U, pipeline.config.y);
 }
 
 void test_subtitle_pipeline_init_returns_hal_errors(void)
@@ -102,7 +102,7 @@ void test_subtitle_pipeline_cleanup_ignores_null_or_uninitialized_pipeline(void)
 void test_subtitle_pipeline_clear_requires_initialized_pipeline_and_delegates_to_bram(void)
 {
     TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_pipeline_clear(NULL));
-    TEST_ASSERT_EQUAL_INT(-ESTATE, subtitle_pipeline_clear(&pipeline));
+    TEST_ASSERT_EQUAL_INT(-APP_ESTATE, subtitle_pipeline_clear(&pipeline));
 
     pipeline.initialized = 1U;
     subtitle_bram_clear_ExpectAnyArgsAndReturn(0);
@@ -115,7 +115,7 @@ void test_subtitle_pipeline_write_bitmap_requires_initialized_pipeline_and_deleg
     TEST_ASSERT_EQUAL_INT(-EINVAL,
                           subtitle_pipeline_write_bitmap(NULL, bitmap, sizeof(bitmap), 1, 2, 3, 4));
     TEST_ASSERT_EQUAL_INT(
-        -ESTATE,
+        -APP_ESTATE,
         subtitle_pipeline_write_bitmap(&pipeline, bitmap, sizeof(bitmap), 1, 2, 3, 4));
 
     pipeline.initialized = 1U;
@@ -190,7 +190,7 @@ void test_subtitle_pipeline_enable_updates_enabled_flag(void)
 void test_subtitle_pipeline_enable_rejects_uninitialized_or_returns_hal_failure(void)
 {
     TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_pipeline_enable(NULL, 1));
-    TEST_ASSERT_EQUAL_INT(-ESTATE, subtitle_pipeline_enable(&pipeline, 1));
+    TEST_ASSERT_EQUAL_INT(-APP_ESTATE, subtitle_pipeline_enable(&pipeline, 1));
 
     pipeline.initialized = 1U;
     subtitle_overlay_enable_ExpectAnyArgsAndReturn(-EIO);

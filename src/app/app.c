@@ -1,7 +1,6 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
 
-Some fancy copyright message here (if needed)
 **********************************************************************************************************************/
 
 ///
@@ -80,6 +79,8 @@ static void app_init(void)
     LOG_INFO("app: initializing QP/C event pools and active objects");
 
     static QF_MPOOL_EL(app_event_pool_evt_t) app_event_pool_sto[APP_EVENT_POOL_LEN];
+    /* Partial subtitles are intentionally shed first through their larger Q_NEW_X margin;
+     * control/final/error traffic retains reserved pool capacity during transcript bursts. */
     QF_poolInit(app_event_pool_sto, sizeof(app_event_pool_sto), sizeof(app_event_pool_sto[0]));
 
     static QEvtPtr video_queue_sto[VIDEO_AO_QUEUE_LEN];

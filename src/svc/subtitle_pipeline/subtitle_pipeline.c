@@ -1,7 +1,6 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
 
-Some fancy copyright message here (if needed)
 **********************************************************************************************************************/
 
 ///
@@ -98,7 +97,7 @@ static uint8_t pipeline_is_initialized(subtitle_pipeline_t const* const pipeline
  * @param pipeline Pipeline instance to initialize.
  * @param display_width Active display width in pixels.
  * @param display_height Active display height in lines.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int subtitle_pipeline_init(subtitle_pipeline_t* const pipeline,
                            uint32_t display_width,
@@ -174,13 +173,13 @@ void subtitle_pipeline_cleanup(subtitle_pipeline_t* const pipeline)
 /**
  * @brief Clear the subtitle mask.
  * @param pipeline Initialized pipeline instance.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int subtitle_pipeline_clear(subtitle_pipeline_t* const pipeline)
 {
     if (!pipeline_is_initialized(pipeline))
     {
-        return (pipeline == NULL) ? -EINVAL : -ESTATE;
+        return (pipeline == NULL) ? -EINVAL : -APP_ESTATE;
     }
 
     return subtitle_bram_clear(&pipeline->bram);
@@ -195,7 +194,7 @@ int subtitle_pipeline_clear(subtitle_pipeline_t* const pipeline)
  * @param y Destination y coordinate.
  * @param width Source bitmap width in pixels.
  * @param height Source bitmap height in pixels.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int subtitle_pipeline_write_bitmap(subtitle_pipeline_t* const pipeline,
                                    uint8_t const* const src,
@@ -207,7 +206,7 @@ int subtitle_pipeline_write_bitmap(subtitle_pipeline_t* const pipeline,
 {
     if (!pipeline_is_initialized(pipeline))
     {
-        return (pipeline == NULL) ? -EINVAL : -ESTATE;
+        return (pipeline == NULL) ? -EINVAL : -APP_ESTATE;
     }
 
     return subtitle_bram_write_bitmap(&pipeline->bram, src, src_size, x, y, width, height);
@@ -217,7 +216,7 @@ int subtitle_pipeline_write_bitmap(subtitle_pipeline_t* const pipeline,
  * @brief Render text into a subtitle mask and write it to BRAM.
  * @param pipeline Initialized pipeline instance.
  * @param text Null-terminated subtitle text.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int subtitle_pipeline_write_text(subtitle_pipeline_t* const pipeline, char const* const text)
 {
@@ -228,7 +227,7 @@ int subtitle_pipeline_write_text(subtitle_pipeline_t* const pipeline, char const
 
     if (!pipeline_is_initialized(pipeline))
     {
-        return (pipeline == NULL) ? -EINVAL : -ESTATE;
+        return (pipeline == NULL) ? -EINVAL : -APP_ESTATE;
     }
 
     status = subtitle_text_renderer_render(text, bitmap, sizeof(bitmap), &width, &height);
@@ -246,7 +245,7 @@ int subtitle_pipeline_write_text(subtitle_pipeline_t* const pipeline, char const
  * This function can spin through many MMIO reads. Do not call it from QP/C AO
  * state handlers or other cooperative-loop paths.
  * @param pipeline Initialized pipeline instance.
- * @return 0 when SOF is observed, or a negative errorno_e value on failure.
+ * @return 0 when SOF is observed, or a negative errno-style value on failure.
  */
 int subtitle_pipeline_commit(subtitle_pipeline_t* const pipeline)
 {
@@ -254,7 +253,7 @@ int subtitle_pipeline_commit(subtitle_pipeline_t* const pipeline)
 
     if (!pipeline_is_initialized(pipeline))
     {
-        return (pipeline == NULL) ? -EINVAL : -ESTATE;
+        return (pipeline == NULL) ? -EINVAL : -APP_ESTATE;
     }
 
     status = subtitle_overlay_clear_sof(&pipeline->overlay);
@@ -270,13 +269,13 @@ int subtitle_pipeline_commit(subtitle_pipeline_t* const pipeline)
 /**
  * @brief Clear the overlay SOF flag without waiting for a future SOF.
  * @param pipeline Initialized pipeline instance.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int subtitle_pipeline_clear_sof(subtitle_pipeline_t* const pipeline)
 {
     if (!pipeline_is_initialized(pipeline))
     {
-        return (pipeline == NULL) ? -EINVAL : -ESTATE;
+        return (pipeline == NULL) ? -EINVAL : -APP_ESTATE;
     }
 
     return subtitle_overlay_clear_sof(&pipeline->overlay);
@@ -286,7 +285,7 @@ int subtitle_pipeline_clear_sof(subtitle_pipeline_t* const pipeline)
  * @brief Poll the overlay SOF flag once without blocking.
  * @param pipeline Initialized pipeline instance.
  * @param sof_seen Output flag set to one when SOF is currently asserted.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int subtitle_pipeline_poll_sof(subtitle_pipeline_t* const pipeline, uint8_t* const sof_seen)
 {
@@ -295,7 +294,7 @@ int subtitle_pipeline_poll_sof(subtitle_pipeline_t* const pipeline, uint8_t* con
 
     if (!pipeline_is_initialized(pipeline))
     {
-        return (pipeline == NULL) ? -EINVAL : -ESTATE;
+        return (pipeline == NULL) ? -EINVAL : -APP_ESTATE;
     }
 
     if (sof_seen == NULL)
@@ -317,7 +316,7 @@ int subtitle_pipeline_poll_sof(subtitle_pipeline_t* const pipeline, uint8_t* con
  * @brief Enable or disable subtitle overlay compositing.
  * @param pipeline Initialized pipeline instance.
  * @param enabled Nonzero enables overlay, zero disables overlay passthrough.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int subtitle_pipeline_enable(subtitle_pipeline_t* const pipeline, uint8_t enabled)
 {
@@ -325,7 +324,7 @@ int subtitle_pipeline_enable(subtitle_pipeline_t* const pipeline, uint8_t enable
 
     if (!pipeline_is_initialized(pipeline))
     {
-        return (pipeline == NULL) ? -EINVAL : -ESTATE;
+        return (pipeline == NULL) ? -EINVAL : -APP_ESTATE;
     }
 
     status = subtitle_overlay_enable(&pipeline->overlay, enabled);

@@ -133,5 +133,5 @@ void test_subtitle_overlay_rejects_invalid_control_arguments(void)
     TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_overlay_wait_sof(&overlay, 0U));
 
     overlay.base = (uintptr_t)0;
-    TEST_ASSERT_EQUAL_INT(-ESTATE, subtitle_overlay_enable(&overlay, 1));
+    TEST_ASSERT_EQUAL_INT(-APP_ESTATE, subtitle_overlay_enable(&overlay, 1));
 }

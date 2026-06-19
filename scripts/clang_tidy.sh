@@ -26,6 +26,7 @@ COMMON_FLAGS=(
     -Isrc/qpc/ports/config
     -Isrc/app
     -Isrc/utils/log
+    -Isrc/utils/number_parse
     -Isrc/svc/system
     -Isrc/hal/subtitle_bram
     -Isrc/hal/subtitle_overlay
@@ -46,6 +47,7 @@ mapfile -t SOURCES < <(
         'src/hal/**/*.c' \
         'src/svc/**/*.c' \
         'src/utils/log/*.c' \
+        'src/utils/number_parse/*.c' \
         ':!:src/bsp/**' \
         ':!:src/utils/template/**' |
     sort

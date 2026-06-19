@@ -1,7 +1,6 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
 
-Some fancy copyright message here (if needed)
 **********************************************************************************************************************/
 
 ///
@@ -94,7 +93,7 @@ static void post_ready(video_ao_t* const me)
 /**
  * @brief Post a component-error report to the system active object.
  * @param me Video active object sending the report.
- * @param code Negative errorno_e value to include in the report.
+ * @param code Negative errno-style value to include in the report.
  * @return None.
  */
 static void post_error(video_ao_t* const me, int32_t code)
@@ -121,7 +120,7 @@ static void post_error(video_ao_t* const me, int32_t code)
 /**
  * @brief Initialize the video pipeline and start periodic polling on success.
  * @param me Video active object receiving COMPONENT_INIT_SIG.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 static int on_component_init(video_ao_t* const me)
 {
@@ -150,7 +149,7 @@ static int on_component_init(video_ao_t* const me)
 /**
  * @brief Poll the video pipeline and report a component error if the pipeline fails.
  * @param me Video active object receiving VIDEO_POLL_SIG.
- * @return 0 when polling should continue, or a negative errorno_e value on failure.
+ * @return 0 when polling should continue, or a negative errno-style value on failure.
  */
 static int on_video_poll(video_ao_t* const me)
 {
@@ -194,7 +193,7 @@ static int on_video_poll(video_ao_t* const me)
 /**
  * @brief Stop periodic polling, clean up the pipeline, and report a video AO error.
  * @param me Video active object entering its terminal error state.
- * @param code Negative errorno_e value to post to system_ao_t.
+ * @param code Negative errno-style value to post to system_ao_t.
  * @return None.
  */
 static void enter_error(video_ao_t* const me, int32_t code)

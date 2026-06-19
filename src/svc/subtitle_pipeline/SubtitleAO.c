@@ -1,7 +1,5 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
-
-Some fancy copyright message here (if needed)
 **********************************************************************************************************************/
 
 ///
@@ -19,6 +17,7 @@ Some fancy copyright message here (if needed)
 
 #include "app.h"
 #include "log.h"
+#include "number_parse.h"
 #include "SubtitleAO.h"
 #include "subtitle_pipeline.h"
 
@@ -39,7 +38,7 @@ Some fancy copyright message here (if needed)
 /// text arrives for this long, so stale captions disappear instead of lingering.
 #define SUBTITLE_AO_TICKS_PER_SEC        (100U)
 #define SUBTITLE_AO_CLEAR_TIMEOUT_MS     (5000U)
-#define SUBTITLE_AO_CLEAR_TIMEOUT_MIN_MS (500U)
+#define SUBTITLE_AO_CLEAR_TIMEOUT_MIN_MS (5000U)
 
 // === Private data type declarations ============================================================================== //
 
@@ -122,7 +121,7 @@ static void post_ready(subtitle_ao_t* const me)
 /**
  * @brief Post a component-error report to the system active object.
  * @param me Subtitle active object sending the report.
- * @param code Negative errorno_e value to include in the report.
+ * @param code Negative errno-style value to include in the report.
  * @return None.
  */
 static void post_error(subtitle_ao_t* const me, int32_t code)
@@ -149,7 +148,7 @@ static void post_error(subtitle_ao_t* const me, int32_t code)
 /**
  * @brief Draw the temporary startup marker into subtitle BRAM.
  * @param me Subtitle active object owning the pipeline.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 static int draw_startup_marker(subtitle_ao_t* const me)
 {
@@ -191,7 +190,7 @@ static int draw_startup_marker(subtitle_ao_t* const me)
  * @brief Initialize the subtitle pipeline and display a temporary DONE marker.
  * @param me Subtitle active object receiving COMPONENT_INIT_SIG.
  * @param e Initialization event carrying the active video dimensions.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 static int on_component_init(subtitle_ao_t* const me, component_init_evt_t const* const e)
 {
@@ -296,17 +295,32 @@ static uint32_t resolve_clear_timeout_ticks(void)
 {
     char const* const env = getenv("SUBTITLE_CLEAR_TIMEOUT_MS");
     uint32_t timeout_ms = SUBTITLE_AO_CLEAR_TIMEOUT_MS;
+    uint32_t whole_seconds;
+    uint32_t remaining_ms;
 
     if ((env != NULL) && (env[0] != '\0'))
     {
-        unsigned long const parsed = strtoul(env, NULL, 10);
-        if (parsed >= SUBTITLE_AO_CLEAR_TIMEOUT_MIN_MS)
+        uint32_t parsed;
+
+        if (number_parse_u32(env,
+                             strlen(env),
+                             SUBTITLE_AO_CLEAR_TIMEOUT_MIN_MS,
+                             UINT32_MAX,
+                             &parsed)
+            == 0)
         {
-            timeout_ms = (uint32_t)parsed;
+            timeout_ms = parsed;
+        }
+        else
+        {
+            LOG_WARNING("subtitle: ignoring invalid SUBTITLE_CLEAR_TIMEOUT_MS='%s'", env);
         }
     }
 
-    return (timeout_ms * SUBTITLE_AO_TICKS_PER_SEC) / 1000U;
+    whole_seconds = timeout_ms / 1000U;
+    remaining_ms = timeout_ms % 1000U;
+    return (whole_seconds * SUBTITLE_AO_TICKS_PER_SEC)
+           + ((remaining_ms * SUBTITLE_AO_TICKS_PER_SEC) / 1000U);
 }
 
 /**
@@ -317,7 +331,7 @@ static uint32_t resolve_clear_timeout_ticks(void)
  * most recent words are rendered so the newest speech stays visible.
  * @param me Subtitle active object owning the pipeline.
  * @param e Subtitle text event.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 static int on_subtitle_text(subtitle_ao_t* const me, subtitle_text_evt_t const* const e)
 {
@@ -386,7 +400,7 @@ static int on_subtitle_text(subtitle_ao_t* const me, subtitle_text_evt_t const* 
 /**
  * @brief Clean up the subtitle pipeline and report a subtitle AO error.
  * @param me Subtitle active object entering its terminal error state.
- * @param code Negative errorno_e value to post to system_ao_t.
+ * @param code Negative errno-style value to post to system_ao_t.
  * @return None.
  */
 static void enter_error(subtitle_ao_t* const me, int32_t code)

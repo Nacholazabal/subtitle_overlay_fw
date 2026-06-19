@@ -1,7 +1,6 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
 
-Some fancy copyright message here (if needed)
 **********************************************************************************************************************/
 
 ///
@@ -17,6 +16,7 @@ Some fancy copyright message here (if needed)
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <stdio.h>
@@ -27,27 +27,44 @@ Some fancy copyright message here (if needed)
 
 #include "errorno.h"
 #include "log.h"
+#include "number_parse.h"
 
 // === Macros definitions ========================================================================================== //
 
 #define STT_EVENT_RX_LISTEN_BACKLOG (1)
 #define STT_EVENT_RX_PORT_STR_LEN   (16U)
 #define STT_EVENT_RX_JSON_KEY_MAX   (32U)
+#define STT_EVENT_RX_JSON_TOKEN_MAX (64U)
 #define STT_EVENT_RX_BOOL_TRUE_LEN  (4U)
 #define STT_EVENT_RX_BOOL_FALSE_LEN (5U)
 #define STT_EVENT_RX_MS_PER_SEC     (1000.0)
 #define STT_EVENT_RX_ROUND_HALF     (0.5)
+#define STT_EVENT_RX_TCP_PORT_MAX   (65535U)
+
+#define STT_FIELD_SEQ      (1U << 0U)
+#define STT_FIELD_FINAL    (1U << 1U)
+#define STT_FIELD_TYPE     (1U << 2U)
+#define STT_FIELD_START    (1U << 3U)
+#define STT_FIELD_END      (1U << 4U)
+#define STT_FIELD_TEXT     (1U << 5U)
+#define STT_REQUIRED_FIELDS (STT_FIELD_SEQ | STT_FIELD_START | STT_FIELD_END | STT_FIELD_TEXT)
 
 // === Private data type declarations ============================================================================== //
 // === Private variable declarations =============================================================================== //
 // === Private function declarations =============================================================================== //
 
 static void copy_env_string(char* dst, size_t dst_size, char const* value);
-static char const* json_value(char const* line, char const* key);
-static int json_get_u32(char const* line, char const* key, uint32_t* value);
-static int json_get_bool(char const* line, char const* key, uint8_t* value);
-static int json_get_double(char const* line, char const* key, double* value);
-static int json_get_string(char const* line, char const* key, char* dst, size_t dst_size);
+static void skip_whitespace(char const** cursor);
+static int json_parse_string(char const** cursor,
+                             char* dst,
+                             size_t dst_size,
+                             uint8_t require_non_empty,
+                             uint8_t* truncated);
+static int json_scalar_span(char const** cursor, char const** start, size_t* length);
+static int json_parse_u32(char const** cursor, uint32_t* value);
+static int json_parse_bool(char const** cursor, uint8_t* value);
+static int json_parse_double(char const** cursor, double* value);
+static int json_skip_value(char const** cursor);
 static int set_nonblocking(int fd);
 static int bind_server(char const* host, uint32_t port);
 static void close_fd(int* fd);
@@ -77,173 +94,64 @@ static void copy_env_string(char* const dst, size_t dst_size, char const* const 
     }
 }
 
-/**
- * @brief Return the JSON value cursor for a top-level key in a simple object.
- * @param line NDJSON line.
- * @param key Key to find.
- * @return Cursor after the key colon, or NULL when missing.
- */
-static char const* json_value(char const* const line, char const* const key)
+/** @brief Advance over JSON whitespace. */
+static void skip_whitespace(char const** const cursor)
 {
-    char pattern[STT_EVENT_RX_JSON_KEY_MAX];
-    char const* cursor;
-
-    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-    cursor = strstr(line, pattern);
-    if (cursor == NULL)
+    while (isspace((unsigned char)**cursor))
     {
-        return NULL;
+        (*cursor)++;
     }
-
-    cursor = strchr(cursor + strlen(pattern), ':');
-    if (cursor == NULL)
-    {
-        return NULL;
-    }
-
-    cursor++;
-    while (isspace((unsigned char)*cursor))
-    {
-        cursor++;
-    }
-
-    return cursor;
 }
 
 /**
- * @brief Parse an unsigned 32-bit integer JSON field.
- * @param line NDJSON line.
- * @param key Key to parse.
- * @param value Parsed value destination.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @brief Parse one JSON string, decoding only escapes used by the trusted sender contract.
+ * @return 0 on success or -EINVAL for malformed/unsupported escapes.
  */
-static int json_get_u32(char const* const line, char const* const key, uint32_t* const value)
+static int json_parse_string(char const** const cursor,
+                             char* const dst,
+                             size_t dst_size,
+                             uint8_t require_non_empty,
+                             uint8_t* const truncated)
 {
-    char const* const cursor = json_value(line, key);
-    char* end = NULL;
-    unsigned long parsed;
-
-    if ((cursor == NULL) || (value == NULL))
-    {
-        return -EINVAL;
-    }
-
-    parsed = strtoul(cursor, &end, 10);
-    if (end == cursor)
-    {
-        return -EINVAL;
-    }
-
-    *value = (uint32_t)parsed;
-    return 0;
-}
-
-/**
- * @brief Parse a boolean JSON field.
- * @param line NDJSON line.
- * @param key Key to parse.
- * @param value Parsed value destination.
- * @return 0 on success, or a negative errorno_e value on failure.
- */
-static int json_get_bool(char const* const line, char const* const key, uint8_t* const value)
-{
-    char const* const cursor = json_value(line, key);
-
-    if ((cursor == NULL) || (value == NULL))
-    {
-        return -EINVAL;
-    }
-
-    if (strncmp(cursor, "true", STT_EVENT_RX_BOOL_TRUE_LEN) == 0)
-    {
-        *value = 1U;
-        return 0;
-    }
-
-    if (strncmp(cursor, "false", STT_EVENT_RX_BOOL_FALSE_LEN) == 0)
-    {
-        *value = 0U;
-        return 0;
-    }
-
-    if (*cursor == '1')
-    {
-        *value = 1U;
-        return 0;
-    }
-
-    if (*cursor == '0')
-    {
-        *value = 0U;
-        return 0;
-    }
-
-    return -EINVAL;
-}
-
-/**
- * @brief Parse a floating-point JSON field.
- * @param line NDJSON line.
- * @param key Key to parse.
- * @param value Parsed value destination.
- * @return 0 on success, or a negative errorno_e value on failure.
- */
-static int json_get_double(char const* const line, char const* const key, double* const value)
-{
-    char const* const cursor = json_value(line, key);
-    char* end = NULL;
-    double parsed;
-
-    if ((cursor == NULL) || (value == NULL))
-    {
-        return -EINVAL;
-    }
-
-    parsed = strtod(cursor, &end);
-    if (end == cursor)
-    {
-        return -EINVAL;
-    }
-
-    *value = parsed;
-    return 0;
-}
-
-/**
- * @brief Parse a simple JSON string field with minimal escape handling.
- * @param line NDJSON line.
- * @param key Key to parse.
- * @param dst Destination string.
- * @param dst_size Destination capacity.
- * @return 0 on success, or a negative errorno_e value on failure.
- */
-static int json_get_string(char const* const line,
-                           char const* const key,
-                           char* const dst,
-                           size_t dst_size)
-{
-    char const* cursor = json_value(line, key);
     size_t out = 0U;
-    uint8_t original_non_empty = 0U;
-    uint8_t truncated = 0U;
+    uint8_t non_empty = 0U;
+    uint8_t was_truncated = 0U;
 
-    if ((cursor == NULL) || (dst == NULL) || (dst_size == 0U) || (*cursor != '"'))
+    if ((cursor == NULL) || (*cursor == NULL) || (**cursor != '"')
+        || ((dst != NULL) && (dst_size == 0U)))
     {
         return -EINVAL;
     }
 
-    cursor++;
-    while ((*cursor != '\0') && (*cursor != '"'))
+    (*cursor)++;
+    while ((**cursor != '\0') && (**cursor != '"'))
     {
-        char ch = *cursor++;
+        unsigned char const raw = (unsigned char)**cursor;
+        char ch;
 
-        original_non_empty = 1U;
+        if (raw < 0x20U)
+        {
+            return -EINVAL;
+        }
+
+        ch = **cursor;
+        (*cursor)++;
+        non_empty = 1U;
         if (ch == '\\')
         {
-            ch = *cursor++;
+            ch = **cursor;
+            if (ch == '\0')
+            {
+                return -EINVAL;
+            }
+            (*cursor)++;
+
             switch (ch)
             {
+            case 'b':
+            case 'f':
             case 'n':
+            case 'r':
             case 't':
                 ch = ' ';
                 break;
@@ -254,32 +162,163 @@ static int json_get_string(char const* const line,
                 break;
 
             default:
-                ch = ' ';
-                break;
+                return -EINVAL;
             }
         }
 
-        if ((out + 1U) >= dst_size)
+        if (dst != NULL)
         {
-            truncated = 1U;
-            continue;
+            if ((out + 1U) < dst_size)
+            {
+                dst[out++] = ch;
+            }
+            else
+            {
+                was_truncated = 1U;
+            }
         }
-
-        dst[out++] = ch;
     }
 
-    if (*cursor != '"')
+    if (**cursor != '"')
+    {
+        return -EINVAL;
+    }
+    (*cursor)++;
+
+    if (dst != NULL)
+    {
+        dst[out] = '\0';
+    }
+    if (truncated != NULL)
+    {
+        *truncated = was_truncated;
+    }
+
+    return ((require_non_empty == 0U) || (non_empty != 0U)) ? 0 : -EINVAL;
+}
+
+/** @brief Return and consume a non-string scalar token span. */
+static int json_scalar_span(char const** const cursor,
+                            char const** const start,
+                            size_t* const length)
+{
+    char const* end;
+
+    if ((cursor == NULL) || (*cursor == NULL) || (start == NULL) || (length == NULL))
     {
         return -EINVAL;
     }
 
-    dst[out] = '\0';
-    if (truncated != 0U)
+    *start = *cursor;
+    end = *cursor;
+    while ((*end != '\0') && (*end != ',') && (*end != '}')
+           && (isspace((unsigned char)*end) == 0))
     {
-        LOG_WARNING("stt-rx: truncated JSON string field '%s'", key);
+        end++;
     }
 
-    return (original_non_empty != 0U) ? 0 : -EINVAL;
+    *length = (size_t)(end - *start);
+    if (*length == 0U)
+    {
+        return -EINVAL;
+    }
+
+    *cursor = end;
+    return 0;
+}
+
+/** @brief Parse a uint32 JSON scalar. */
+static int json_parse_u32(char const** const cursor, uint32_t* const value)
+{
+    char const* start;
+    size_t length;
+    int status = json_scalar_span(cursor, &start, &length);
+
+    return (status == 0) ? number_parse_u32(start, length, 0U, UINT32_MAX, value) : status;
+}
+
+/** @brief Parse a boolean JSON scalar, retaining 0/1 compatibility. */
+static int json_parse_bool(char const** const cursor, uint8_t* const value)
+{
+    char const* start;
+    size_t length;
+    int status = json_scalar_span(cursor, &start, &length);
+
+    if ((status == 0) && (length == STT_EVENT_RX_BOOL_TRUE_LEN)
+        && (memcmp(start, "true", length) == 0))
+    {
+        *value = 1U;
+        return 0;
+    }
+    if ((status == 0) && (length == STT_EVENT_RX_BOOL_FALSE_LEN)
+        && (memcmp(start, "false", length) == 0))
+    {
+        *value = 0U;
+        return 0;
+    }
+    if ((status == 0) && (length == 1U) && ((start[0] == '0') || (start[0] == '1')))
+    {
+        *value = (start[0] == '1') ? 1U : 0U;
+        return 0;
+    }
+
+    return -EINVAL;
+}
+
+/** @brief Parse a finite floating-point JSON scalar with exact token consumption. */
+static int json_parse_double(char const** const cursor, double* const value)
+{
+    char const* start;
+    size_t length;
+    char token[STT_EVENT_RX_JSON_TOKEN_MAX];
+    char* end = NULL;
+    double parsed;
+    int status = json_scalar_span(cursor, &start, &length);
+
+    if ((status != 0) || (value == NULL) || (length >= sizeof(token))
+        || ((start[0] != '-') && ((start[0] < '0') || (start[0] > '9'))))
+    {
+        return -EINVAL;
+    }
+
+    memcpy(token, start, length);
+    token[length] = '\0';
+    errno = 0;
+    parsed = strtod(token, &end);
+    if ((end == token) || (*end != '\0') || (errno == ERANGE) || (isfinite(parsed) == 0))
+    {
+        return -EINVAL;
+    }
+
+    *value = parsed;
+    return 0;
+}
+
+/** @brief Skip one valid flat-object scalar value. */
+static int json_skip_value(char const** const cursor)
+{
+    char const* start;
+    size_t length;
+    double ignored;
+
+    if (**cursor == '"')
+    {
+        return json_parse_string(cursor, NULL, 0U, 0U, NULL);
+    }
+
+    if (json_scalar_span(cursor, &start, &length) != 0)
+    {
+        return -EINVAL;
+    }
+    if (((length == 4U) && ((memcmp(start, "true", length) == 0)
+                            || (memcmp(start, "null", length) == 0)))
+        || ((length == 5U) && (memcmp(start, "false", length) == 0)))
+    {
+        return 0;
+    }
+
+    *cursor = start;
+    return json_parse_double(cursor, &ignored);
 }
 
 /**
@@ -365,7 +404,7 @@ static void close_fd(int* const fd)
 /**
  * @brief Accept one pending STT client connection if available.
  * @param rx Receiver instance.
- * @return 0 on connected/no pending client, or a negative errorno_e value on failure.
+ * @return 0 on connected/no pending client, or a negative errno-style value on failure.
  */
 static int accept_client(stt_event_rx_t* const rx)
 {
@@ -407,7 +446,7 @@ static int accept_client(stt_event_rx_t* const rx)
  * @param events Event output array.
  * @param max_events Event output array capacity.
  * @param event_count Current event count, updated on parsed events.
- * @return 0 on success, or a negative errorno_e value on invalid input.
+ * @return 0 on success, or a negative errno-style value on invalid input.
  */
 static int process_byte(stt_event_rx_t* const rx,
                         char ch,
@@ -477,6 +516,12 @@ static int process_byte(stt_event_rx_t* const rx,
 void stt_event_rx_default_config(stt_event_rx_config_t* const config)
 {
     char const* env_port;
+    uint32_t parsed_port;
+
+    if (config == NULL)
+    {
+        return;
+    }
 
     memset(config, 0, sizeof(*config));
     snprintf(config->host, sizeof(config->host), "%s", STT_EVENT_RX_DEFAULT_HOST);
@@ -487,7 +532,19 @@ void stt_event_rx_default_config(stt_event_rx_config_t* const config)
     env_port = getenv("SUBTITLE_STT_RX_PORT");
     if ((env_port != NULL) && (env_port[0] != '\0'))
     {
-        config->port = (uint32_t)strtoul(env_port, NULL, 10);
+        if (number_parse_u32(env_port,
+                             strlen(env_port),
+                             1U,
+                             STT_EVENT_RX_TCP_PORT_MAX,
+                             &parsed_port)
+            == 0)
+        {
+            config->port = parsed_port;
+        }
+        else
+        {
+            LOG_WARNING("stt-rx: ignoring invalid SUBTITLE_STT_RX_PORT='%s'", env_port);
+        }
     }
 }
 
@@ -495,11 +552,12 @@ void stt_event_rx_default_config(stt_event_rx_config_t* const config)
  * @brief Initialize the nonblocking TCP NDJSON receiver.
  * @param rx Receiver instance.
  * @param config Receiver configuration.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int stt_event_rx_init(stt_event_rx_t* const rx, stt_event_rx_config_t const* const config)
 {
-    if ((rx == NULL) || (config == NULL) || (config->host[0] == '\0') || (config->port == 0U))
+    if ((rx == NULL) || (config == NULL) || (config->host[0] == '\0') || (config->port == 0U)
+        || (config->port > STT_EVENT_RX_TCP_PORT_MAX))
     {
         return -EINVAL;
     }
@@ -526,7 +584,7 @@ int stt_event_rx_init(stt_event_rx_t* const rx, stt_event_rx_config_t const* con
  * @param events Output event array.
  * @param max_events Output event array capacity.
  * @param event_count Number of parsed events.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int stt_event_rx_poll(stt_event_rx_t* const rx,
                       subtitle_text_evt_t* const events,
@@ -543,7 +601,7 @@ int stt_event_rx_poll(stt_event_rx_t* const rx,
 
     if (rx->initialized == 0U)
     {
-        return -ESTATE;
+        return -APP_ESTATE;
     }
 
     *event_count = 0U;
@@ -618,13 +676,21 @@ void stt_event_rx_cleanup(stt_event_rx_t* const rx)
  * @brief Parse one STT NDJSON line into a subtitle text event payload.
  * @param line JSON line.
  * @param event Parsed payload destination.
- * @return 0 on success, or a negative errorno_e value on failure.
+ * @return 0 on success, or a negative errno-style value on failure.
  */
 int stt_event_rx_parse_line(char const* const line, subtitle_text_evt_t* const event)
 {
+    char const* cursor = line;
+    char key[STT_EVENT_RX_JSON_KEY_MAX];
+    char type[16];
     double start_sec = 0.0;
     double end_sec = 0.0;
-    int status;
+    uint32_t seen = 0U;
+    uint8_t final_value = 0U;
+    uint8_t type_value = 0U;
+    uint8_t key_truncated;
+    uint8_t text_truncated;
+    uint8_t object_done = 0U;
 
     if ((line == NULL) || (event == NULL))
     {
@@ -632,46 +698,188 @@ int stt_event_rx_parse_line(char const* const line, subtitle_text_evt_t* const e
     }
 
     memset(event, 0, sizeof(*event));
+    type[0] = '\0';
 
-    status = json_get_u32(line, "seq", &event->seq);
-    if (status != 0)
+    skip_whitespace(&cursor);
+    if (*cursor != '{')
     {
-        return status;
+        return -EINVAL;
     }
+    cursor++;
 
-    status = json_get_bool(line, "is_final", &event->is_final);
-    if (status != 0)
+    while (object_done == 0U)
     {
-        char type[16];
-        status = json_get_string(line, "type", type, sizeof(type));
+        uint32_t field = 0U;
+        int status;
+
+        skip_whitespace(&cursor);
+        if (*cursor == '}')
+        {
+            cursor++;
+            break;
+        }
+
+        key_truncated = 0U;
+        status = json_parse_string(&cursor,
+                                   key,
+                                   sizeof(key),
+                                   0U,
+                                   &key_truncated);
         if (status != 0)
         {
             return status;
         }
-        event->is_final = (strcmp(type, "final") == 0) ? 1U : 0U;
+
+        skip_whitespace(&cursor);
+        if (*cursor != ':')
+        {
+            return -EINVAL;
+        }
+        cursor++;
+        skip_whitespace(&cursor);
+
+        if (key_truncated == 0U)
+        {
+            if (strcmp(key, "seq") == 0)
+            {
+                field = STT_FIELD_SEQ;
+            }
+            else if (strcmp(key, "is_final") == 0)
+            {
+                field = STT_FIELD_FINAL;
+            }
+            else if (strcmp(key, "type") == 0)
+            {
+                field = STT_FIELD_TYPE;
+            }
+            else if (strcmp(key, "start_sec") == 0)
+            {
+                field = STT_FIELD_START;
+            }
+            else if (strcmp(key, "end_sec") == 0)
+            {
+                field = STT_FIELD_END;
+            }
+            else if (strcmp(key, "text") == 0)
+            {
+                field = STT_FIELD_TEXT;
+            }
+        }
+
+        if ((field != 0U) && ((seen & field) != 0U))
+        {
+            return -EINVAL;
+        }
+
+        switch (field)
+        {
+        case STT_FIELD_SEQ:
+            status = json_parse_u32(&cursor, &event->seq);
+            break;
+
+        case STT_FIELD_FINAL:
+            status = json_parse_bool(&cursor, &final_value);
+            break;
+
+        case STT_FIELD_TYPE:
+            status = json_parse_string(&cursor, type, sizeof(type), 1U, NULL);
+            if (status == 0)
+            {
+                if (strcmp(type, "final") == 0)
+                {
+                    type_value = 1U;
+                }
+                else if (strcmp(type, "partial") == 0)
+                {
+                    type_value = 0U;
+                }
+                else
+                {
+                    status = -EINVAL;
+                }
+            }
+            break;
+
+        case STT_FIELD_START:
+            status = json_parse_double(&cursor, &start_sec);
+            break;
+
+        case STT_FIELD_END:
+            status = json_parse_double(&cursor, &end_sec);
+            break;
+
+        case STT_FIELD_TEXT:
+            text_truncated = 0U;
+            status = json_parse_string(&cursor,
+                                       event->text,
+                                       sizeof(event->text),
+                                       1U,
+                                       &text_truncated);
+            if ((status == 0) && (text_truncated != 0U))
+            {
+                LOG_WARNING("stt-rx: truncated JSON text field");
+            }
+            break;
+
+        default:
+            status = json_skip_value(&cursor);
+            break;
+        }
+
+        if (status != 0)
+        {
+            return status;
+        }
+        seen |= field;
+
+        skip_whitespace(&cursor);
+        if (*cursor == ',')
+        {
+            cursor++;
+            skip_whitespace(&cursor);
+            if (*cursor == '}')
+            {
+                return -EINVAL;
+            }
+        }
+        else if (*cursor == '}')
+        {
+            cursor++;
+            object_done = 1U;
+        }
+        else
+        {
+            return -EINVAL;
+        }
     }
 
-    status = json_get_double(line, "start_sec", &start_sec);
-    if (status != 0)
+    skip_whitespace(&cursor);
+    if ((*cursor != '\0') || ((seen & STT_REQUIRED_FIELDS) != STT_REQUIRED_FIELDS)
+        || ((seen & (STT_FIELD_FINAL | STT_FIELD_TYPE)) == 0U))
     {
-        return status;
+        return -EINVAL;
     }
 
-    status = json_get_double(line, "end_sec", &end_sec);
-    if (status != 0)
+    if (((seen & STT_FIELD_FINAL) != 0U) && ((seen & STT_FIELD_TYPE) != 0U)
+        && (final_value != type_value))
     {
-        return status;
+        return -EINVAL;
     }
 
-    if ((start_sec < 0.0) || (end_sec < start_sec))
+    event->is_final = ((seen & STT_FIELD_FINAL) != 0U) ? final_value : type_value;
+
+    if ((start_sec < 0.0) || (end_sec < start_sec)
+        || (start_sec > (((double)UINT32_MAX - STT_EVENT_RX_ROUND_HALF)
+                         / STT_EVENT_RX_MS_PER_SEC))
+        || (end_sec > (((double)UINT32_MAX - STT_EVENT_RX_ROUND_HALF)
+                       / STT_EVENT_RX_MS_PER_SEC)))
     {
         return -EINVAL;
     }
 
     event->start_ms = (uint32_t)((start_sec * STT_EVENT_RX_MS_PER_SEC) + STT_EVENT_RX_ROUND_HALF);
     event->end_ms = (uint32_t)((end_sec * STT_EVENT_RX_MS_PER_SEC) + STT_EVENT_RX_ROUND_HALF);
-
-    return json_get_string(line, "text", event->text, sizeof(event->text));
+    return 0;
 }
 
 // === End of documentation ======================================================================================== //

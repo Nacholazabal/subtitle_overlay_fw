@@ -1,14 +1,12 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
-
-Some fancy copyright message here (if needed)
 **********************************************************************************************************************/
 
 #pragma once
 
 ///
 /// @file video_dma.h
-/// @brief HDMI VDMA HAL adapter interface
+/// @brief Linux /dev/hdmi-vdma HAL adapter interface
 ///
 
 // === Headers files inclusions ==================================================================================== //

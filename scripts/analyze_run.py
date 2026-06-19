@@ -14,7 +14,7 @@ import wave
 from pathlib import Path
 
 # ── tunables (from firmware / run_stt_windows.sh) ───────────────────────────
-SUBTITLE_CLEAR_TIMEOUT_MS = 7000
+SUBTITLE_CLEAR_TIMEOUT_MS = 5000
 STT_MAX_WINDOW_SEC = 4.0
 STT_MIN_SILENCE_SEC = 0.5
 

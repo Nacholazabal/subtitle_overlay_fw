@@ -1,7 +1,5 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
-
-Some fancy copyright message here (if needed)
 **********************************************************************************************************************/
 
 #pragma once
@@ -17,6 +15,7 @@ Some fancy copyright message here (if needed)
 #include <stddef.h>
 #include <stdint.h>
 
+#include "errorno.h"
 #include "usb_audio_agc.h"
 #include "usb_audio_capture.h"
 
@@ -83,6 +82,7 @@ typedef struct
     pthread_t sender_thread;
     uint32_t next_sequence;
     uint32_t total_dropped;
+    int32_t fatal_error;
     int sender_fd;
     uint8_t stop_requested;
     uint8_t running;
@@ -92,8 +92,17 @@ typedef struct
 // === Public variable declarations ================================================================================ //
 // === Public function declarations ================================================================================ //
 
+/// @brief Populate defaults and valid environment overrides; invalid overrides retain defaults.
 void usb_audio_stream_default_config(usb_audio_stream_config_t* config);
+
+/// @brief Open ALSA capture and start owned worker threads; may block during device setup.
+/// @return 0 on success or a negative errno-style status. The instance must remain alive until stopped.
 int usb_audio_stream_start(usb_audio_stream_t* stream, usb_audio_stream_config_t const* config);
+
+/// @brief Return 0 while workers are healthy, their fatal error, or -APP_ESTATE when not running.
+int usb_audio_stream_get_status(usb_audio_stream_t* stream);
+
+/// @brief Request worker shutdown, join both threads, and release owned resources; may block while joining.
 void usb_audio_stream_stop(usb_audio_stream_t* stream);
 
 // === End of documentation ======================================================================================== //

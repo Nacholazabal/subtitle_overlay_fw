@@ -1,7 +1,5 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
-
-Some fancy copyright message here (if needed)
 **********************************************************************************************************************/
 
 #pragma once
@@ -56,13 +54,23 @@ typedef struct
 // === Public variable declarations ================================================================================ //
 // === Public function declarations ================================================================================ //
 
+/// @brief Populate defaults and valid environment overrides; invalid overrides retain defaults.
 void stt_event_rx_default_config(stt_event_rx_config_t* config);
+
+/// @brief Bind the Linux TCP listener and initialize owned receiver state.
+/// @return 0 on success or a negative errno-style status.
 int stt_event_rx_init(stt_event_rx_t* rx, stt_event_rx_config_t const* config);
+
+/// @brief Perform one bounded, nonblocking socket poll into caller-owned event storage.
 int stt_event_rx_poll(stt_event_rx_t* rx,
                       subtitle_text_evt_t* events,
                       uint32_t max_events,
                       uint32_t* event_count);
+
+/// @brief Close owned Linux file descriptors; safe for null and partially initialized instances.
 void stt_event_rx_cleanup(stt_event_rx_t* rx);
+
+/// @brief Parse the project sender's flat top-level NDJSON object; this is not a general JSON API.
 int stt_event_rx_parse_line(char const* line, subtitle_text_evt_t* event);
 
 // === End of documentation ======================================================================================== //
