@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell.exe -NoProfile -Command 'python '\\\\''__TRACKED_VAR__\\\\scripts\\\\stt_receiver.py'\\\\'' --audio-file '\\\\''__TRACKED_VAR__\\\\logs\\\\input.m4a'\\\\'' --model small --beam-size 5 --chunk-sec 3 --partial-sec 0.7 --vad-filter --jsonl '\\\\''__TRACKED_VAR__\\\\logs\\\\stt_events_small.jsonl'\\\\''')",
+      "Bash(python3 -c ' *)",
+      "Read(//mnt/c/Users/nacho/**)",
+      "Bash(powershell.exe -NoProfile -Command \"python -c \\\\\"import inspect, numpy as np; from faster_whisper import vad; print\\('funcs:', [n for n in dir\\(vad\\) if not n.startswith\\('_'\\)]\\); print\\('sig:', inspect.signature\\(vad.get_speech_timestamps\\)\\); import dataclasses; print\\('VadOptions:', [f.name for f in dataclasses.fields\\(vad.VadOptions\\)]\\); a=\\(0.01*np.random.randn\\(16000*2\\)\\).astype\\('float32'\\); a[8000:12000]=0.0; r=vad.get_speech_timestamps\\(a, vad.VadOptions\\(\\)\\); print\\('ret type', type\\(r\\)\\); print\\('sample', r[:2]\\)\\\\\"\")",
+      "Bash(python3 -m py_compile scripts/stt_receiver.py)",
+      "Bash(powershell.exe -NoProfile -Command 'python '\\\\''__TRACKED_VAR__\\\\scripts\\\\stt_receiver.py'\\\\'' --audio-file '\\\\''__TRACKED_VAR__\\\\logs\\\\input.m4a'\\\\'' --model small --beam-size 5 --max-window-sec 8 --min-silence-sec 0.5 --partial-sec 0.7 --vad-filter --jsonl '\\\\''__TRACKED_VAR__\\\\logs\\\\stt_events_vad.jsonl'\\\\''')",
+      "Bash(python3 scripts/subtitle_debug.py logs/stt_events_vad.jsonl)",
+      "Bash(bash -n scripts/run_stt_windows.sh)",
+      "Bash(powershell.exe -NoProfile -Command 'python '\\\\''__TRACKED_VAR__\\\\scripts\\\\stt_receiver.py'\\\\'' --audio-file '\\\\''__TRACKED_VAR__\\\\logs\\\\input.m4a'\\\\'' --model small --beam-size 5 --max-window-sec 8 --min-silence-sec 0.5 --partial-sec 0 --vad-filter --jsonl '\\\\''__TRACKED_VAR__\\\\logs\\\\stt_finalsonly.jsonl'\\\\''')",
+      "Bash(powershell.exe -NoProfile -Command 'python -c \"import wave,numpy as np; w=wave.open\\(r'\\\\''__TRACKED_VAR__\\\\logs\\\\board_audio.wav'\\\\'','\\\\''rb'\\\\''\\); a=np.frombuffer\\(w.readframes\\(w.getnframes\\(\\)\\),dtype='\\\\''<i2'\\\\''\\).astype\\(np.float32\\)/32768.0; import numpy as np; peak=float\\(np.max\\(np.abs\\(a\\)\\)\\); rms=float\\(np.sqrt\\(np.mean\\(a**2\\)\\)\\); clip=float\\(np.mean\\(np.abs\\(a\\)>0.98\\)*100\\); sil=float\\(np.mean\\(np.abs\\(a\\)<0.01\\)*100\\); print\\(f'\\\\''peak={peak:.3f} rms={rms:.4f} rms_dBFS={20*np.log10\\(rms+1e-9\\):.1f}dB clip%={clip:.3f} near_silence%={sil:.1f}'\\\\''\\)\"')",
+      "Bash(powershell.exe -NoProfile -Command 'python -c \"import wave,numpy as np; w=wave.open\\(r'\\\\''__TRACKED_VAR__\\\\logs\\\\board_audio.wav'\\\\'','\\\\''rb'\\\\''\\); rate=w.getframerate\\(\\); a=np.frombuffer\\(w.readframes\\(w.getnframes\\(\\)\\),dtype='\\\\''<i2'\\\\''\\).astype\\(np.float32\\); g=0.45/ \\(np.max\\(np.abs\\(a\\)\\)/32768.0\\); a=np.clip\\(a*g,-32768,32767\\).astype\\('\\\\''<i2'\\\\''\\); o=wave.open\\(r'\\\\''__TRACKED_VAR__\\\\logs\\\\board_audio_gain.wav'\\\\'','\\\\''wb'\\\\''\\); o.setnchannels\\(1\\); o.setsampwidth\\(2\\); o.setframerate\\(rate\\); o.writeframes\\(a.tobytes\\(\\)\\); o.close\\(\\); print\\('\\\\''gain x%.1f -> peak 0.45'\\\\''%g\\)\"')",
+      "Bash(powershell.exe -NoProfile -Command 'python '\\\\''__TRACKED_VAR__\\\\scripts\\\\stt_receiver.py'\\\\'' --audio-file '\\\\''__TRACKED_VAR__\\\\logs\\\\board_audio.wav'\\\\'' --model small --beam-size 5 --max-window-sec 8 --min-silence-sec 0.5 --partial-sec 0 --gain 0 --vad-filter --jsonl '\\\\''__TRACKED_VAR__\\\\logs\\\\stt_autogain.jsonl'\\\\''')",
+      "Bash(exit 1)",
+      "Bash(python3 scripts/subtitle_debug.py logs/stt_autogain.jsonl)",
+      "Bash(timeout 25 ssh -o BatchMode=yes -o ConnectTimeout=8 -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa hdmi-overlay ' *)",
+      "Bash(timeout 480 ./scripts/build.sh)",
+      "Bash(mkdir -p /home/nacho/subtitle_overlay_fw/.claude/skills/subtitle-review)",
+      "Edit(/.claude/skills/subtitle-review/**)",
+      "Bash(python scripts/analyze_run.py)",
+      "Bash(python3 scripts/analyze_run.py)",
+      "Bash(python3 /home/nacho/subtitle_overlay_fw/scripts/analyze_run.py --jsonl /tmp/no_such.jsonl --wav /tmp/no_such.wav)",
+      "Bash(python3 scripts/analyze_run.py --wav logs/board_audio_noise.wav)",
+      "Bash(python3 scripts/analyze_run.py --wav logs/board_audio.wav)",
+      "Bash(ssh hdmi-overlay *)",
+      "Bash(chmod +x /home/nacho/subtitle_overlay_fw/scripts/analyze_noise.py)",
+      "Bash(python3 scripts/analyze_noise.py logs/board_audio_noise.wav logs/board_audio.wav)",
+      "Bash(python3 scripts/analyze_noise_spectrum.py logs/board_audio_noise.wav)",
+      "Bash(pip3 install *)",
+      "Bash(python3 scripts/analyze_noise_spectrum.py logs/board_audio.wav)",
+      "Bash(python3 scripts/analyze_noise_spectrum.py logs/board_audio_test.wav)"
+    ],
+    "additionalDirectories": [
+      "/home/nacho/subtitle_overlay_fw/.claude/skills"
+    ]
+  }
+}

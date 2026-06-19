@@ -53,6 +53,7 @@ typedef enum
     VIDEO_POLL_SIG,      ///< Private video AO timer signal used to poll the video pipeline.
     STT_POLL_SIG,        ///< Private STT AO timer signal used to poll TCP transcript input.
     SUBTITLE_TEXT_SIG,   ///< Directed event from stt_ao_t to subtitle_ao_t.
+    SUBTITLE_CLEAR_SIG,  ///< Private subtitle AO timer signal to clear stale subtitles.
 
     MAX_SIG
 } app_signal_e;

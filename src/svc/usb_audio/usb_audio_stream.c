@@ -554,6 +554,7 @@ static void* capture_thread_main(void* const arg)
     while (stream_stop_requested(stream) == 0U)
     {
         usb_audio_stream_chunk_t chunk;
+        usb_audio_agc_metrics_t metrics;
         size_t bytes_read = 0U;
         uint32_t dropped;
         int status;
@@ -581,6 +582,13 @@ static void* capture_thread_main(void* const arg)
             break;
         }
 
+        // Normalize the captured level on the board so the PC always receives a
+        // healthy signal regardless of TV volume, and meter it for tuning.
+        usb_audio_agc_process(&stream->agc,
+                              (int16_t*)chunk.payload,
+                              bytes_read / USB_AUDIO_STREAM_SAMPLE_BYTES,
+                              &metrics);
+
         chunk.timestamp_ns = now_ns();
         chunk.sequence = stream_next_sequence(stream);
         chunk.bytes_used = (uint32_t)bytes_read;
@@ -589,10 +597,16 @@ static void* capture_thread_main(void* const arg)
 
         if ((first_read_pending != 0U) || ((chunk.sequence % 50U) == 0U))
         {
-            LOG_INFO("usb-audio: captured chunk seq=%lu bytes=%lu dropped=%lu",
-                     (unsigned long)chunk.sequence,
-                     (unsigned long)chunk.bytes_used,
-                     (unsigned long)stream_get_total_dropped(stream));
+            // Level as % of full scale: in_peak ~1% means a too-quiet capture,
+            // ~45% is healthy, >95% risks clipping. gain is the digital AGC factor.
+            LOG_INFO("usb-audio: level in_peak=%.1f%% gain=%.1fx out_peak=%.1f%%",
+                     (double)(metrics.raw_peak * 100.0f),
+                     (double)metrics.applied_gain,
+                     (double)(metrics.out_peak * 100.0f));
+            LOG_DEBUG("usb-audio: captured chunk seq=%lu bytes=%lu dropped=%lu",
+                      (unsigned long)chunk.sequence,
+                      (unsigned long)chunk.bytes_used,
+                      (unsigned long)stream_get_total_dropped(stream));
             first_read_pending = 0U;
         }
     }
@@ -669,10 +683,10 @@ static void* sender_thread_main(void* const arg)
         }
         else if ((chunk.sequence % 50U) == 0U)
         {
-            LOG_INFO("usb-audio: sent chunk seq=%lu bytes=%lu dropped=%lu",
-                     (unsigned long)chunk.sequence,
-                     (unsigned long)chunk.bytes_used,
-                     (unsigned long)stream_get_total_dropped(stream));
+            LOG_DEBUG("usb-audio: sent chunk seq=%lu bytes=%lu dropped=%lu",
+                      (unsigned long)chunk.sequence,
+                      (unsigned long)chunk.bytes_used,
+                      (unsigned long)stream_get_total_dropped(stream));
         }
     }
 
@@ -748,6 +762,19 @@ int usb_audio_stream_start(usb_audio_stream_t* const stream,
     pthread_mutex_init(&stream->state_mutex, NULL);
     stream->state_initialized = 1U;
     queue_init(&stream->queue);
+
+    usb_audio_agc_init(&stream->agc);
+    {
+        char const* const target = getenv("SUBTITLE_USB_AUDIO_AGC_TARGET_PCT");
+        if ((target != NULL) && (target[0] != '\0'))
+        {
+            long const pct = strtol(target, NULL, 10);
+            if ((pct > 0) && (pct <= 100))
+            {
+                stream->agc.target_peak = (float)pct / 100.0f;
+            }
+        }
+    }
 
     memset(&capture_config, 0, sizeof(capture_config));
     snprintf(capture_config.device, sizeof(capture_config.device), "%s", config->pcm_device);

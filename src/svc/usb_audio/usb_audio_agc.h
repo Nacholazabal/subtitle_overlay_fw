@@ -7,8 +7,8 @@ Some fancy copyright message here (if needed)
 #pragma once
 
 ///
-/// @file subtitle_bram.h
-/// @brief Subtitle mask BRAM HAL adapter interface
+/// @file usb_audio_agc.h
+/// @brief Adaptive digital gain (AGC) and level metering for captured PCM
 ///
 
 // === Headers files inclusions ==================================================================================== //
@@ -23,34 +23,36 @@ extern "C" {
 #endif
 
 // === Public macros definitions =================================================================================== //
-
-#define SUBTITLE_BRAM_MASK_WIDTH    1024U
-#define SUBTITLE_BRAM_MASK_HEIGHT   256U
-#define SUBTITLE_BRAM_WORDS_PER_ROW (SUBTITLE_BRAM_MASK_WIDTH / 32U)
-#define SUBTITLE_BRAM_SIZE_BYTES    ((SUBTITLE_BRAM_MASK_WIDTH * SUBTITLE_BRAM_MASK_HEIGHT) / 8U)
-#define SUBTITLE_BRAM_WORD_COUNT    (SUBTITLE_BRAM_SIZE_BYTES / sizeof(uint32_t))
-
 // === Public data type declarations =============================================================================== //
 
+/// @brief Adaptive gain state and tuning for one capture stream.
 typedef struct
 {
-    uintptr_t base;
-} subtitle_bram_t;
+    float gain;          ///< Current smoothed gain multiplier.
+    float target_peak;   ///< Desired output peak in 0..1 full-scale.
+    float max_gain;      ///< Upper clamp for gain.
+    float min_gain;      ///< Lower clamp for gain (allows attenuation).
+    float attack;        ///< Smoothing coefficient when reducing gain (fast).
+    float release;       ///< Smoothing coefficient when raising gain (slow).
+    float silence_floor; ///< Below this input peak the gain is held (avoid noise pumping).
+} usb_audio_agc_t;
+
+/// @brief Per-chunk metering produced by the AGC for diagnostics.
+typedef struct
+{
+    float raw_peak;     ///< Input peak in 0..1 full-scale before gain.
+    float applied_gain; ///< Gain multiplier applied to this chunk.
+    float out_peak;     ///< Output peak in 0..1 full-scale after gain.
+} usb_audio_agc_metrics_t;
 
 // === Public variable declarations ================================================================================ //
 // === Public function declarations ================================================================================ //
 
-int subtitle_bram_init(subtitle_bram_t* bram);
-int subtitle_bram_clear(subtitle_bram_t* bram);
-int subtitle_bram_set_pixel(subtitle_bram_t* bram, int32_t x, int32_t y);
-int subtitle_bram_clear_pixel(subtitle_bram_t* bram, int32_t x, int32_t y);
-int subtitle_bram_write_bitmap(subtitle_bram_t* bram,
-                               uint8_t const* src,
-                               size_t src_size,
-                               int32_t x,
-                               int32_t y,
-                               uint32_t width,
-                               uint32_t height);
+void usb_audio_agc_init(usb_audio_agc_t* agc);
+void usb_audio_agc_process(usb_audio_agc_t* agc,
+                           int16_t* samples,
+                           size_t count,
+                           usb_audio_agc_metrics_t* metrics);
 
 // === End of documentation ======================================================================================== //
 

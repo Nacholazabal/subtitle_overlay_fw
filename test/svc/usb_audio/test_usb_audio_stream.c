@@ -8,6 +8,9 @@
 
 #include "mock_usb_audio_capture.h"
 
+// usb_audio_stream pulls in the real AGC (not mocked); link it explicitly.
+TEST_SOURCE_FILE("usb_audio_agc.c")
+
 static usb_audio_stream_t stream;
 static usb_audio_stream_config_t config;
 

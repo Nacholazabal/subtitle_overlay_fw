@@ -22,3 +22,6 @@ build/
 .venv-stt/
 
 subtitle_overlay_fw.code-workspace
+
+# Local STT debug captures
+logs/
