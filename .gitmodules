@@ -1,3 +1,0 @@
-[submodule "src/qpc"]
-	path = src/qpc
-	url = https://github.com/QuantumLeaps/qpc.git

@@ -1,27 +1,37 @@
-# Local LLM / assistant context and tool state
-.llm_context/
-.localdev/
-.agents/
+# LLM / AI tooling — all local, never committed
+.claude/
 .codex/
-AGENTS.md
+.agents/
+.claude-temp/
+.codex-temp/
+.claude-backups/
+.codex-backups/
+.code-review-graph/
+.code-review-graphignore
+.mcp.json
+qubika-agentic-framework-main/
+legacy_llm/
+docs/llm-wiki/
 CLAUDE.md
+AGENTS.md
 .cursorrules
 .cursor/
+.llm_context/
+.localdev/
 
-# Common editor-local files
+# Editor / IDE
 .vscode/
 .idea/
+subtitle_overlay_fw.code-workspace
 *.swp
 *.swo
 *~
+
+# Build outputs
+build/
+.venv-stt/
 __pycache__/
 *.pyc
 
-# Local build outputs
-build/
-.venv-stt/
-
-subtitle_overlay_fw.code-workspace
-
-# Local STT debug captures
+# Runtime logs / captures
 logs/
