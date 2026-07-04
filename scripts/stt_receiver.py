@@ -32,9 +32,29 @@ HALLUCINATION_MARKERS = (
 )
 
 
+WORD_COMPARE_STRIP = ".,;:!?¿¡\"'()[]{}"
+
+
 def is_hallucination(text):
     lowered = text.lower()
     return any(marker in lowered for marker in HALLUCINATION_MARKERS)
+
+
+def comparable_word(word):
+    return word.strip(WORD_COMPARE_STRIP).casefold()
+
+
+def word_prefix_len(left, right):
+    left_words = left.split()
+    right_words = right.split()
+    limit = min(len(left_words), len(right_words))
+    index = 0
+    while (
+        index < limit
+        and comparable_word(left_words[index]) == comparable_word(right_words[index])
+    ):
+        index += 1
+    return index
 
 
 def recv_exact(sock, size):
@@ -117,8 +137,46 @@ class TcpTranscriptSink(TranscriptSink):
     def handle_event(self, event):
         try:
             self.events.put_nowait(event)
+            return
         except queue.Full:
-            print("subtitle TCP queue full: dropping transcript event", flush=True)
+            pass
+
+        if not event.get("is_final", False):
+            print("subtitle TCP queue full: dropping partial transcript", flush=True)
+            return
+
+        if self._drop_one_partial_from_queue():
+            try:
+                self.events.put_nowait(event)
+                return
+            except queue.Full:
+                pass
+
+        print("subtitle TCP queue full: dropping final transcript", flush=True)
+
+    def _drop_one_partial_from_queue(self):
+        kept = []
+        dropped = False
+
+        while True:
+            try:
+                queued = self.events.get_nowait()
+            except queue.Empty:
+                break
+
+            if (not dropped) and (not queued.get("is_final", False)):
+                dropped = True
+                continue
+
+            kept.append(queued)
+
+        for queued in kept:
+            try:
+                self.events.put_nowait(queued)
+            except queue.Full:
+                break
+
+        return dropped
 
     def _connect(self):
         if self.sock is None:
@@ -178,16 +236,74 @@ class CompositeTranscriptSink(TranscriptSink):
             sink.close()
 
 
+class PartialStabilityFilter:
+    """Suppress unstable partial hypotheses using word-prefix local agreement."""
+
+    def __init__(self, agreement):
+        if agreement < 1:
+            raise ValueError("agreement must be positive")
+        self.agreement = agreement
+        self.history = []
+        self.last_emitted_partial = ""
+
+    def handle_event(self, event):
+        if event.get("is_final", False):
+            self.reset()
+            return [event]
+
+        if self.agreement <= 1:
+            return [event]
+
+        text = event.get("text", "").strip()
+        if not text:
+            return []
+
+        self.history.append(text)
+        self.history = self.history[-self.agreement :]
+        if len(self.history) < self.agreement:
+            return []
+
+        stable_words = self.history[0].split()
+        stable_len = len(stable_words)
+        for candidate in self.history[1:]:
+            stable_len = min(stable_len, word_prefix_len(" ".join(stable_words), candidate))
+
+        stable_text = " ".join(stable_words[:stable_len]).strip()
+        if not stable_text or stable_text == self.last_emitted_partial:
+            return []
+
+        stabilized = dict(event)
+        stabilized["text"] = stable_text
+        self.last_emitted_partial = stable_text
+        return [stabilized]
+
+    def reset(self):
+        self.history = []
+        self.last_emitted_partial = ""
+
+
 class FasterWhisperEngine:
-    def __init__(self, model_size, device, compute_type, language, beam_size, vad_filter):
+    def __init__(
+        self,
+        model_size,
+        device,
+        compute_type,
+        language,
+        beam_size,
+        vad_filter,
+        cpu_threads=0,
+    ):
         from faster_whisper import WhisperModel
 
         print(
             f"loading faster-whisper model={model_size} device={device} "
-            f"compute_type={compute_type}",
+            f"compute_type={compute_type} cpu_threads={cpu_threads or 'auto'}",
             flush=True,
         )
-        self.model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        model_kwargs = {}
+        if cpu_threads > 0:
+            model_kwargs["cpu_threads"] = cpu_threads
+        self.model = WhisperModel(model_size, device=device, compute_type=compute_type, **model_kwargs)
         self.language = language
         self.beam_size = beam_size
         self.vad_filter = vad_filter
@@ -221,6 +337,68 @@ class FasterWhisperEngine:
         return event
 
 
+class ColabWhisperEngine:
+    """Remote inference via Colab notebook server."""
+
+    def __init__(self, colab_url, language, beam_size, vad_filter, timeout=30.0):
+        import requests
+
+        self.colab_url = colab_url.rstrip("/")
+        self.session = requests.Session()
+        self.timeout = timeout
+        self.seq = 0
+        print(f"connecting to Colab inference server at {self.colab_url}", flush=True)
+
+        # Health check
+        try:
+            resp = self.session.get(f"{self.colab_url}/health", timeout=5.0)
+            resp.raise_for_status()
+            info = resp.json()
+            print(
+                f"colab server ready: model={info.get('model')} device={info.get('device')}",
+                flush=True,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"colab server health check failed: {exc}") from exc
+
+    def transcribe_chunk(self, audio, start_sec, end_sec, is_final):
+        import base64
+
+        import numpy as np
+
+        # Send audio as base64-encoded float32 to avoid precision loss
+        audio_float32 = audio.astype(np.float32)
+        audio_bytes = audio_float32.tobytes()
+        audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+
+        payload = {
+            "audio_base64": audio_b64,
+            "start_sec": start_sec,
+            "end_sec": end_sec,
+            "is_final": is_final,
+            "seq": self.seq,
+        }
+
+        try:
+            resp = self.session.post(
+                f"{self.colab_url}/transcribe", json=payload, timeout=self.timeout
+            )
+            resp.raise_for_status()
+            result = resp.json()
+
+            inference_sec = result.get("inference_sec", 0.0)
+            event = result.get("event")
+            if event is None:
+                return None
+
+            # Colab already set the seq, but we track it locally too
+            self.seq = event["seq"] + 1
+            return event
+        except Exception as exc:
+            print(f"colab transcription request failed: {exc}", flush=True)
+            return None
+
+
 class ChunkTranscriber:
     def __init__(
         self,
@@ -231,6 +409,7 @@ class ChunkTranscriber:
         partial_sec=0.7,
         min_silence_sec=0.5,
         gain=0.0,
+        partial_agreement=1,
         max_pending_chunks=4,
         drop_oldest=True,
     ):
@@ -239,6 +418,7 @@ class ChunkTranscriber:
 
         self.engine = engine
         self.sink = sink
+        self.partial_filter = PartialStabilityFilter(partial_agreement)
         # gain > 0 applies a fixed multiplier; gain == 0 auto-normalizes each
         # phrase to a healthy peak (fixes a too-quiet capture without a magic
         # constant, and keeps working if the hardware level is later raised).
@@ -426,17 +606,25 @@ class ChunkTranscriber:
             )
             return
 
-        print(f"stt inference {kind} dt={elapsed:.3f}s", flush=True)
-        self.sink.handle_event(event)
+        filtered_events = self.partial_filter.handle_event(event)
+        if not filtered_events:
+            print(f"stt suppressed unstable {kind} dt={elapsed:.3f}s", flush=True)
+            return
+
+        for filtered_event in filtered_events:
+            print(f"stt inference {kind} dt={elapsed:.3f}s", flush=True)
+            self.sink.handle_event(filtered_event)
 
 
 class TcpAudioReceiver:
-    def __init__(self, host, port, transcriber, save_wav=None):
+    def __init__(self, host, port, transcriber, save_wav=None, lossless_live=False):
         self.host = host
         self.port = port
         self.transcriber = transcriber
         self.save_wav = save_wav
+        self.lossless_live = lossless_live
         self._wav = None
+        self._processing_error = None
 
     def run(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
@@ -475,8 +663,14 @@ class TcpAudioReceiver:
             self._wav.setframerate(rate)
             print(f"saving exact board audio to {self.save_wav}", flush=True)
 
+        if self.lossless_live:
+            print("live audio buffering: lossless mode enabled", flush=True)
+
         try:
             while True:
+                if self.lossless_live:
+                    self._receive_stream_lossless(conn, rate, channels, fmt, bytes_per_chunk)
+                    break
                 self._receive_chunk(conn, rate, channels, fmt, bytes_per_chunk)
         except EOFError:
             print("audio connection closed", flush=True)
@@ -485,6 +679,40 @@ class TcpAudioReceiver:
             if self._wav is not None:
                 self._wav.close()
                 self._wav = None
+
+    def _receive_stream_lossless(self, conn, rate, channels, fmt, bytes_per_chunk):
+        frames = queue.Queue()
+        stop_marker = object()
+
+        def process_frames():
+            try:
+                while True:
+                    payload = frames.get()
+                    try:
+                        if payload is stop_marker:
+                            return
+                        self.transcriber.push_pcm(payload)
+                    finally:
+                        frames.task_done()
+            except Exception as exc:  # pragma: no cover - re-raised on reader thread
+                self._processing_error = exc
+
+        worker = threading.Thread(target=process_frames, daemon=True)
+        worker.start()
+
+        try:
+            while True:
+                payload = self._receive_chunk(conn, rate, channels, fmt, bytes_per_chunk)
+                frames.put(payload)
+                if self._processing_error is not None:
+                    raise self._processing_error
+        except EOFError:
+            frames.put(stop_marker)
+            frames.join()
+            worker.join(timeout=2.0)
+            if self._processing_error is not None:
+                raise self._processing_error
+            raise
 
     def _receive_chunk(self, conn, rate, channels, fmt, bytes_per_chunk):
         chunk_header = recv_exact(conn, struct.calcsize(CHUNK_HEADER))
@@ -504,7 +732,10 @@ class TcpAudioReceiver:
         if self._wav is not None:
             self._wav.writeframes(payload)
 
-        self.transcriber.push_pcm(payload)
+        if not self.lossless_live:
+            self.transcriber.push_pcm(payload)
+
+        return payload
 
 
 def validate_audio_format(rate, channels, fmt):
@@ -563,7 +794,8 @@ def build_sink(args):
     if args.jsonl:
         sinks.append(JsonlTranscriptSink(args.jsonl))
     if args.send_subtitles:
-        sinks.append(TcpTranscriptSink(args.subtitle_host, args.subtitle_port))
+        max_queue = 0 if args.lossless_live else 32
+        sinks.append(TcpTranscriptSink(args.subtitle_host, args.subtitle_port, max_queue=max_queue))
     return CompositeTranscriptSink(sinks)
 
 
@@ -597,6 +829,12 @@ def parse_args():
         help="emit a partial (is_final=false) hypothesis every N seconds; 0 disables partials",
     )
     parser.add_argument(
+        "--partial-agreement",
+        type=int,
+        default=1,
+        help="require N consecutive partials to share a word prefix before emitting; 1 disables",
+    )
+    parser.add_argument(
         "--gain",
         type=float,
         default=0.0,
@@ -605,9 +843,24 @@ def parse_args():
     parser.add_argument("--model", default="small")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--compute-type", default="int8")
+    parser.add_argument(
+        "--cpu-threads",
+        type=int,
+        default=0,
+        help="CPU threads for faster-whisper/CTranslate2; 0 lets the backend choose",
+    )
     parser.add_argument("--language", default="es")
     parser.add_argument("--beam-size", type=int, default=5)
     parser.add_argument("--vad-filter", action="store_true")
+    parser.add_argument(
+        "--colab-url",
+        help="use remote Colab inference server instead of local Faster Whisper (e.g., https://xxx.ngrok.io)",
+    )
+    parser.add_argument(
+        "--lossless-live",
+        action="store_true",
+        help="buffer live TCP audio/transcript work instead of dropping when STT falls behind",
+    )
     parser.add_argument("--jsonl", help="write transcript events as JSON Lines")
     parser.add_argument(
         "--save-wav",
@@ -627,8 +880,12 @@ def parse_args():
         parser.error("--min-silence-sec must be zero or positive")
     if args.partial_sec < 0.0:
         parser.error("--partial-sec must be zero or positive")
+    if args.partial_agreement < 1:
+        parser.error("--partial-agreement must be positive")
     if args.gain < 0.0:
         parser.error("--gain must be zero (auto) or positive")
+    if args.cpu_threads < 0:
+        parser.error("--cpu-threads must be zero or positive")
     if args.partial_sec >= args.max_window_sec:
         print(
             "warning: --partial-sec >= --max-window-sec disables partial updates in practice",
@@ -644,14 +901,23 @@ def main():
     transcriber = None
 
     try:
-        engine = FasterWhisperEngine(
-            model_size=args.model,
-            device=args.device,
-            compute_type=args.compute_type,
-            language=args.language,
-            beam_size=args.beam_size,
-            vad_filter=args.vad_filter,
-        )
+        if args.colab_url:
+            engine = ColabWhisperEngine(
+                colab_url=args.colab_url,
+                language=args.language,
+                beam_size=args.beam_size,
+                vad_filter=args.vad_filter,
+            )
+        else:
+            engine = FasterWhisperEngine(
+                model_size=args.model,
+                device=args.device,
+                compute_type=args.compute_type,
+                language=args.language,
+                beam_size=args.beam_size,
+                vad_filter=args.vad_filter,
+                cpu_threads=args.cpu_threads,
+            )
         offline = bool(args.audio_file) or bool(args.wav)
         transcriber = ChunkTranscriber(
             engine,
@@ -661,7 +927,8 @@ def main():
             partial_sec=args.partial_sec,
             min_silence_sec=args.min_silence_sec,
             gain=args.gain,
-            drop_oldest=not offline,
+            partial_agreement=args.partial_agreement,
+            drop_oldest=not (offline or args.lossless_live),
         )
 
         if args.audio_file:
@@ -669,7 +936,13 @@ def main():
         elif args.wav:
             run_wav(args.wav, transcriber)
         else:
-            TcpAudioReceiver(args.host, args.port, transcriber, save_wav=args.save_wav).run()
+            TcpAudioReceiver(
+                args.host,
+                args.port,
+                transcriber,
+                save_wav=args.save_wav,
+                lossless_live=args.lossless_live,
+            ).run()
     finally:
         if transcriber is not None:
             transcriber.close()
