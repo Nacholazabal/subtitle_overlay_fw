@@ -79,6 +79,30 @@ class TcpTranscriptSinkTests(unittest.TestCase):
         self.assertEqual(2, queued["seq"])
         self.assertTrue(queued["is_final"])
 
+    def test_wire_event_strips_analysis_only_fields(self):
+        event = {
+            "seq": 3,
+            "is_final": False,
+            "start_sec": 1.0,
+            "end_sec": 2.0,
+            "text": "hola",
+            "infer_sec": 0.123,
+            "config_max_window_sec": 4.0,
+        }
+
+        wire = TcpTranscriptSink._wire_event(event)
+
+        self.assertEqual(
+            {
+                "seq": 3,
+                "is_final": False,
+                "start_sec": 1.0,
+                "end_sec": 2.0,
+                "text": "hola",
+            },
+            wire,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

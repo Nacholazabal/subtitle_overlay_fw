@@ -189,9 +189,20 @@ class TcpTranscriptSink(TranscriptSink):
             print(f"subtitle TCP connected to {self.host}:{self.port}", flush=True)
 
     def _send_event(self, event):
-        line = json.dumps(event, ensure_ascii=False) + "\n"
+        line = json.dumps(self._wire_event(event), ensure_ascii=False) + "\n"
         self._connect()
         self.sock.sendall(line.encode("utf-8"))
+
+    @staticmethod
+    def _wire_event(event):
+        """Keep the firmware-facing NDJSON small and contract-only."""
+        return {
+            "seq": event["seq"],
+            "is_final": event["is_final"],
+            "start_sec": event["start_sec"],
+            "end_sec": event["end_sec"],
+            "text": event["text"],
+        }
 
     def _worker_main(self):
         while not self.stop_event.is_set():
@@ -398,6 +409,10 @@ class ColabWhisperEngine:
             event = result.get("event")
             if event is None:
                 return None
+            try:
+                event["remote_infer_sec"] = round(float(inference_sec), 3)
+            except (TypeError, ValueError):
+                pass
 
             # Colab already set the seq, but we track it locally too
             self.seq = event["seq"] + 1
@@ -420,6 +435,8 @@ class ChunkTranscriber:
         partial_agreement=1,
         max_pending_chunks=4,
         drop_oldest=True,
+        realtime=True,
+        run_config=None,
     ):
         import numpy as np
         from faster_whisper.vad import VadOptions
@@ -435,11 +452,20 @@ class ChunkTranscriber:
         # Live audio must drop backlog to stay real-time; offline files instead
         # apply backpressure so no chunk is lost.
         self.drop_oldest = drop_oldest
+        self.realtime = realtime
         self.source_rate = target_rate
         self.target_rate = target_rate
         self.max_window_samples = int(round(target_rate * max_window_sec))
         self.min_silence_samples = int(round(target_rate * min_silence_sec))
         self.partial_samples = int(round(target_rate * partial_sec)) if partial_sec > 0.0 else 0
+        self.max_window_sec = float(max_window_sec)
+        self.min_silence_sec = float(min_silence_sec)
+        self.partial_sec = float(partial_sec)
+        self.partial_agreement = int(partial_agreement)
+        self.run_config = dict(run_config or {})
+        self._audio_start_monotonic = None
+        self._job_seq = 0
+        self._dropped_jobs = 0
         # Tight VAD segments so the trailing-silence measurement is accurate; the
         # finalize decision uses our own min_silence threshold below.
         self._vad_options = VadOptions(min_silence_duration_ms=100, speech_pad_ms=30)
@@ -471,6 +497,8 @@ class ChunkTranscriber:
         # Apply gain at the input so VAD segmentation and transcription both see a
         # healthy level (a too-quiet capture otherwise breaks VAD boundaries).
         samples = self._apply_gain(np, samples)
+        if self._audio_start_monotonic is None:
+            self._audio_start_monotonic = time.monotonic()
 
         self.window = np.concatenate((self.window, samples))
         self.samples_since_partial += samples.size
@@ -488,7 +516,7 @@ class ChunkTranscriber:
 
     def flush(self):
         if self.window.size > 0:
-            self._finalize_upto(self.window.size)
+            self._finalize_upto(self.window.size, reason="flush")
         self.pending_chunks.join()
 
     def close(self):
@@ -517,12 +545,14 @@ class ChunkTranscriber:
 
         if trailing_silence >= self.min_silence_samples:
             # Cut at the end of speech so the pause (not a word) splits the phrase.
-            self._finalize_upto(last_speech_end)
+            self._finalize_upto(last_speech_end,
+                                reason="silence",
+                                trailing_silence_samples=trailing_silence)
             return True
 
         if self.window.size >= self.max_window_samples:
             # Speaker never paused; force a cut so latency and cost stay bounded.
-            self._finalize_upto(self.window.size)
+            self._finalize_upto(self.window.size, reason="max_window")
             return True
 
         return False
@@ -550,9 +580,14 @@ class ChunkTranscriber:
         start_sample = self.window_start_sample
         end_sample = start_sample + chunk.size
         self.samples_since_partial = 0
-        self._queue_job(chunk, start_sample, end_sample, is_final=False)
+        self._queue_job(chunk,
+                        start_sample,
+                        end_sample,
+                        is_final=False,
+                        reason="partial_tick",
+                        trailing_silence_samples=0)
 
-    def _finalize_upto(self, count):
+    def _finalize_upto(self, count, reason, trailing_silence_samples=0):
         chunk = self.window[:count].copy()
         start_sample = self.window_start_sample
         end_sample = start_sample + count
@@ -560,17 +595,34 @@ class ChunkTranscriber:
         self.window = self.window[count:].copy()
         self.window_start_sample = end_sample
         self.samples_since_partial = 0
-        self._queue_job(chunk, start_sample, end_sample, is_final=True)
+        self._queue_job(chunk,
+                        start_sample,
+                        end_sample,
+                        is_final=True,
+                        reason=reason,
+                        trailing_silence_samples=trailing_silence_samples)
 
-    def _queue_job(self, chunk, start_sample, end_sample, is_final):
-        item = (chunk, start_sample, end_sample, is_final)
+    def _queue_job(self, chunk, start_sample, end_sample, is_final, reason, trailing_silence_samples):
+        queued_at = time.monotonic()
+        job = {
+            "job_id": self._job_seq,
+            "chunk": chunk,
+            "start_sample": start_sample,
+            "end_sample": end_sample,
+            "is_final": is_final,
+            "reason": reason,
+            "trailing_silence_samples": trailing_silence_samples,
+            "queued_at": queued_at,
+            "audio_end_monotonic": self._audio_end_monotonic(end_sample),
+        }
+        self._job_seq += 1
         if not self.drop_oldest:
             # Offline: block until the worker frees space so nothing is dropped.
-            self.pending_chunks.put(item)
+            self.pending_chunks.put(job)
             return
 
         try:
-            self.pending_chunks.put_nowait(item)
+            self.pending_chunks.put_nowait(job)
             return
         except queue.Full:
             pass
@@ -578,30 +630,42 @@ class ChunkTranscriber:
         try:
             self.pending_chunks.get_nowait()
             self.pending_chunks.task_done()
+            self._dropped_jobs += 1
             print("stt queue full: dropping oldest audio chunk", flush=True)
         except queue.Empty:
             pass
 
         try:
-            self.pending_chunks.put_nowait(item)
+            self.pending_chunks.put_nowait(job)
         except queue.Full:
+            self._dropped_jobs += 1
             print("stt queue full: dropping newest audio chunk", flush=True)
+
+    def _audio_end_monotonic(self, end_sample):
+        if (self._audio_start_monotonic is None) or (not self.realtime):
+            return None
+        return self._audio_start_monotonic + (end_sample / self.target_rate)
 
     def _worker_main(self):
         while not self.stop_event.is_set():
             try:
-                chunk, start_sample, end_sample, is_final = self.pending_chunks.get(timeout=0.1)
+                job = self.pending_chunks.get(timeout=0.1)
             except queue.Empty:
                 continue
 
             try:
-                self._transcribe(chunk, start_sample, end_sample, is_final)
+                self._transcribe(job)
             finally:
                 self.pending_chunks.task_done()
 
-    def _transcribe(self, chunk, start_sample, end_sample, is_final):
+    def _transcribe(self, job):
+        chunk = job["chunk"]
+        start_sample = job["start_sample"]
+        end_sample = job["end_sample"]
+        is_final = job["is_final"]
         start_sec = start_sample / self.target_rate
         end_sec = end_sample / self.target_rate
+        queue_wait = time.monotonic() - job["queued_at"]
 
         t0 = time.monotonic()
         event = self.engine.transcribe_chunk(chunk, start_sec, end_sec, is_final)
@@ -614,14 +678,38 @@ class ChunkTranscriber:
             )
             return
 
+        emitted_at = time.monotonic()
+        self._annotate_event(event, job, queue_wait, elapsed, emitted_at)
         filtered_events = self.partial_filter.handle_event(event)
         if not filtered_events:
             print(f"stt suppressed unstable {kind} dt={elapsed:.3f}s", flush=True)
             return
 
         for filtered_event in filtered_events:
-            print(f"stt inference {kind} dt={elapsed:.3f}s", flush=True)
+            print(
+                f"stt inference {kind} dt={elapsed:.3f}s "
+                f"queue={queue_wait:.3f}s reason={job['reason']}",
+                flush=True,
+            )
             self.sink.handle_event(filtered_event)
+
+    def _annotate_event(self, event, job, queue_wait, infer_sec, emitted_at):
+        event["chunk_sec"] = round(event["end_sec"] - event["start_sec"], 3)
+        event["segment_reason"] = job["reason"]
+        event["queue_wait_sec"] = round(queue_wait, 3)
+        event["infer_sec"] = round(infer_sec, 3)
+        event["stt_wall_sec"] = round(queue_wait + infer_sec, 3)
+        event["queue_depth_after_get"] = self.pending_chunks.qsize()
+        event["dropped_audio_jobs"] = self._dropped_jobs
+        event["job_id"] = job["job_id"]
+        event["trailing_silence_sec"] = round(
+            job["trailing_silence_samples"] / self.target_rate,
+            3,
+        )
+        if job["audio_end_monotonic"] is not None:
+            event["emit_lag_sec"] = round(emitted_at - job["audio_end_monotonic"], 3)
+        for key, value in self.run_config.items():
+            event[key] = value
 
 
 class TcpAudioReceiver:
@@ -807,6 +895,35 @@ def build_sink(args):
     return CompositeTranscriptSink(sinks)
 
 
+def build_run_config(args, offline):
+    engine = "colab" if args.colab_url else "local"
+    config = {
+        "run_engine": engine,
+        "config_max_window_sec": float(args.max_window_sec),
+        "config_min_silence_sec": float(args.min_silence_sec),
+        "config_partial_sec": float(args.partial_sec),
+        "config_partial_agreement": int(args.partial_agreement),
+        "config_beam_size": int(args.beam_size),
+        "config_vad_filter": bool(args.vad_filter),
+        "config_lossless_live": bool(args.lossless_live),
+        "config_realtime": not offline,
+        "config_gain": float(args.gain),
+    }
+    if args.colab_url:
+        config["config_model"] = "colab"
+    else:
+        config["config_model"] = args.model
+        config["config_device"] = args.device
+        config["config_compute_type"] = args.compute_type
+        config["config_cpu_threads"] = int(args.cpu_threads)
+    return config
+
+
+def print_run_config(config):
+    shown = " ".join(f"{key}={value}" for key, value in sorted(config.items()))
+    print(f"stt run config: {shown}", flush=True)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Receive PCM audio and run faster-whisper STT")
     parser.add_argument("--host", default="0.0.0.0")
@@ -927,6 +1044,8 @@ def main():
                 cpu_threads=args.cpu_threads,
             )
         offline = bool(args.audio_file) or bool(args.wav)
+        run_config = build_run_config(args, offline)
+        print_run_config(run_config)
         transcriber = ChunkTranscriber(
             engine,
             sink,
@@ -937,6 +1056,8 @@ def main():
             gain=args.gain,
             partial_agreement=args.partial_agreement,
             drop_oldest=not (offline or args.lossless_live),
+            realtime=not offline,
+            run_config=run_config,
         )
 
         if args.audio_file:
