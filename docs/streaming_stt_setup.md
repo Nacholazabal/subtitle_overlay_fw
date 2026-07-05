@@ -45,6 +45,19 @@ Defaults del servidor streaming:
 | beam | `5` |
 | gain | `0.0` auto-normaliza en server; `1.0` usa el audio de la board sin ganancia extra |
 
+La board corre sin AGC digital por default y manda PCM crudo:
+
+```bash
+./scripts/run.sh -x
+```
+
+En ese modo la board sigue logueando niveles, pero manda el PCM capturado sin modificar.
+Para reactivar el AGC digital de la board en una prueba puntual:
+
+```bash
+SUBTITLE_USB_AUDIO_AGC_ENABLE=1 ./scripts/run.sh -x
+```
+
 El bridge:
 
 - recibe el SAUDPCM TCP actual de la board en `:5000`;

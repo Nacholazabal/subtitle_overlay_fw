@@ -30,6 +30,7 @@ void setUp(void)
     unsetenv("USB_AUDIO_PCM_DEVICE");
     unsetenv("USB_AUDIO_TCP_HOST");
     unsetenv("USB_AUDIO_TCP_PORT");
+    unsetenv("SUBTITLE_USB_AUDIO_AGC_ENABLE");
     unsetenv("SUBTITLE_USB_AUDIO_AGC_TARGET_PCT");
 }
 
@@ -39,6 +40,7 @@ void tearDown(void)
     unsetenv("USB_AUDIO_PCM_DEVICE");
     unsetenv("USB_AUDIO_TCP_HOST");
     unsetenv("USB_AUDIO_TCP_PORT");
+    unsetenv("SUBTITLE_USB_AUDIO_AGC_ENABLE");
     unsetenv("SUBTITLE_USB_AUDIO_AGC_TARGET_PCT");
 }
 
@@ -103,6 +105,33 @@ void test_usb_audio_stream_invalid_agc_override_retains_default(void)
 
     TEST_ASSERT_EQUAL_INT(-EIO, usb_audio_stream_start(&stream, &config));
     TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.35f, stream.agc.target_peak);
+}
+
+void test_usb_audio_stream_agc_enable_override_can_disable_digital_agc(void)
+{
+    setenv("SUBTITLE_USB_AUDIO_AGC_ENABLE", "0", 1);
+    usb_audio_capture_init_ExpectAnyArgsAndReturn(-EIO);
+
+    TEST_ASSERT_EQUAL_INT(-EIO, usb_audio_stream_start(&stream, &config));
+    TEST_ASSERT_EQUAL_UINT8(0U, stream.agc_enabled);
+}
+
+void test_usb_audio_stream_agc_enable_override_can_enable_digital_agc(void)
+{
+    setenv("SUBTITLE_USB_AUDIO_AGC_ENABLE", "1", 1);
+    usb_audio_capture_init_ExpectAnyArgsAndReturn(-EIO);
+
+    TEST_ASSERT_EQUAL_INT(-EIO, usb_audio_stream_start(&stream, &config));
+    TEST_ASSERT_EQUAL_UINT8(1U, stream.agc_enabled);
+}
+
+void test_usb_audio_stream_invalid_agc_enable_override_keeps_default_disabled(void)
+{
+    setenv("SUBTITLE_USB_AUDIO_AGC_ENABLE", "off", 1);
+    usb_audio_capture_init_ExpectAnyArgsAndReturn(-EIO);
+
+    TEST_ASSERT_EQUAL_INT(-EIO, usb_audio_stream_start(&stream, &config));
+    TEST_ASSERT_EQUAL_UINT8(0U, stream.agc_enabled);
 }
 
 void test_usb_audio_stream_get_status_reports_lifecycle_and_fatal_error(void)

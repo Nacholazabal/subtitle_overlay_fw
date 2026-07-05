@@ -380,6 +380,177 @@ Paso 5: calidad STT.
 - Solo despues de mejorar audio/VAD, comparar `small` contra modelo mayor o `VAD_FILTER=False` en `transcribe`.
 - Si los cortes naturales mejoran pero palabras siguen malas, el siguiente sospechoso pasa a ser modelo/config de inferencia.
 
+## Run S005 - 2026-07-05 18:41 - Board AGC Off, Colab Auto Gain
+
+Fuente: `python3 scripts/analyze_run.py` sobre `logs/stt_events.jsonl` y `logs/board_audio.wav`.
+
+### Config
+
+| Parametro | Valor |
+| --- | ---: |
+| engine | `stream_server` |
+| transport | `websocket` |
+| model | `small` |
+| max_window_sec | `4.0` |
+| min_silence_sec | `0.5` |
+| partial_sec | `0.8` |
+| partial_agreement | `2` |
+| beam_size | `5` |
+| VAD/filter | `True` |
+| lossless | `True` |
+| partial backpressure | `True` |
+| board digital AGC | off |
+| server gain | `0.0` auto-normalizacion |
+
+### Resultado
+
+Veredicto subjetivo: mejoro bastante la calidad percibida de transcripcion. Es la primera run reciente donde el transcript vuelve a ser mayormente entendible.
+
+Resumen numerico:
+
+| Area | Resultado |
+| --- | --- |
+| Audio | `CLIPPING`, 0.054% samples at ceiling |
+| Duracion | 70.7s |
+| Peak | 100% full scale |
+| RMS | -17.3 dBFS |
+| Noise floor | p10=-63.8 dBFS, median=-17.9 dBFS, p90=-14.8 dBFS |
+| Dynamic range | 49.0 dB |
+| Events | 38 total, 15 finals, 23 partials |
+| Segment reasons | 15 `max_window`, 23 `partial_tick` |
+| Dropped audio jobs | 0 |
+| First partial | 1.60s window |
+| First final | 4.00s window |
+| GPU infer | p50=0.25s, p90=0.38s, max=0.47s |
+| Server queue | p50=0.00s, p90=0.00s, max=0.20s |
+| Bridge recv lag | p50=0.51s, p90=0.90s, max=1.68s |
+| Display spacing | p50=1.50s, p90=2.67s |
+| Updates under 1.5s | 18/37 all, 18/23 partials, 0/14 finals |
+
+Transcript sample:
+
+```text
+HEAD: Senores, hasta aca ha llegado la participacion. de Paraguay en el Mundial 2026, perdio. 1 a 0 contra Francia...
+TAIL: ...queria que paraguaya avance, pero tambien es cierto que se termino dandolo luego.
+```
+
+### Lectura
+
+- Apagar el AGC digital de la board fue una mejora clara para calidad STT.
+- El piso de ruido medido por ventanas mejoro fuerte respecto a S002/S003/S004: p10=-63.8 dBFS contra alrededor de -21.7 dBFS.
+- El pipeline esta sano: `dropped=0`, cola casi cero, inferencia p90=0.38s.
+- La UX tambien mejoro: ningun final duro menos de 1.5s visible.
+- El problema que queda es VAD/segmentacion: `15/15` finals siguen por `max_window=4.0s`; no hubo finals por `silence`.
+- Aunque el analyzer marque clipping, la transcripcion fue mejor. Esto sugiere que el problema principal era el AGC board-side elevando/alterando el piso o la dinamica, mas que el clipping aislado.
+
+### Decision
+
+Default nuevo: correr sin AGC digital en la board.
+
+La board debe mandar PCM crudo por defecto y dejar que Colab/server haga la normalizacion durante esta etapa de tuning.
+
+### Proximo Experimento Propuesto
+
+Mantener:
+
+| Parametro | Valor |
+| --- | ---: |
+| board digital AGC | off |
+| server `GAIN` | `0.0` |
+| max_window_sec | `4.0` |
+| min_silence_sec | `0.5` |
+| partial_sec | `0.8` |
+| partial_agreement | `2` |
+
+Siguiente foco: instrumentar VAD internamente. Necesitamos saber si Silero ve todo como speech continuo o si ve pausas cortas que no alcanzan `min_silence_sec`.
+
+## Run S006 - 2026-07-05 19:10 - Football Background, Board AGC Off
+
+Fuente: `python3 scripts/analyze_run.py` sobre `logs/stt_events.jsonl` y `logs/board_audio.wav`.
+
+### Config
+
+| Parametro | Valor |
+| --- | ---: |
+| engine | `stream_server` |
+| transport | `websocket` |
+| model | `small` |
+| max_window_sec | `4.0` |
+| min_silence_sec | `0.5` |
+| partial_sec | `0.8` |
+| partial_agreement | `2` |
+| beam_size | `5` |
+| VAD/filter | `True` |
+| lossless | `True` |
+| partial backpressure | `True` |
+| board digital AGC | off |
+
+### Resultado
+
+Veredicto subjetivo: escenario mas dificil por audio de partido de futbol de fondo. La transcripcion produjo contenido reconocible, pero el audio esta mucho mas comprimido en dinamica y el sistema tuvo updates demasiado rapidos para lectura comoda.
+
+Resumen numerico:
+
+| Area | Resultado |
+| --- | --- |
+| Audio | `NOISY FLOOR` |
+| Duracion | 117.3s |
+| Peak | 73.3% full scale |
+| RMS | -20.4 dBFS |
+| Noise floor | p10=-25.8 dBFS, median=-20.2 dBFS, p90=-18.3 dBFS |
+| Dynamic range | 7.5 dB |
+| Events | 73 total, 33 finals, 40 partials |
+| Segment reasons | 17 `max_window`, 16 `silence`, 40 `partial_tick` |
+| Dropped audio jobs | 4 |
+| First event | final at 3.49s window |
+| First partial | 1.60s window |
+| First final | 3.49s window |
+| GPU infer | p50=0.22s, p90=0.31s, max=0.64s |
+| Server queue | p50=0.00s, p90=0.00s, max=0.05s |
+| Bridge recv lag | p50=0.49s, p90=1.00s, max=1.79s |
+| Display spacing | p50=1.19s, p90=3.22s |
+| Updates under 1.5s | 42/72 all, 35/40 partials, 7/32 finals |
+
+Transcript sample:
+
+```text
+HEAD: Jugar, empujar y empatar el equipo de Carletto, Vinicius. Se escapa a Vinny...
+TAIL: ...reaccion de niran nueva reaccion de niran y tambien un que de mucha fortuna juega. Brasil...
+```
+
+### Lectura
+
+- El audio no clipeo fuerte en esta corrida: peak 73.3%. El problema fue otro: el piso de ruido esta altisimo.
+- La ventana mas silenciosa ya esta en -25.8 dBFS, y el rango p90-p10 es solo 7.5 dB. Eso significa que para el VAD casi nunca hay un contraste claro entre "silencio" y "contenido".
+- A diferencia de S005, el VAD si detecto silencios: `16/33` finals fueron por `silence`. Esto es una buena noticia; Silero no esta totalmente inutilizado.
+- Igual seguimos `CAP-LIMITED`: `17/33` finals pegaron en `max_window=4.0s`. El sistema corta por silencio casi la mitad de las veces, pero todavia demasiadas frases mueren por cap.
+- El pipeline sigue sano: cola casi cero, GPU p90=0.31s, server queue p90=0.00s. La latencia grande viene de audio buffer/segmentacion, no de inferencia.
+- La UX empeoro en estabilidad visual: `42/72` updates duraron menos de 1.5s, incluyendo `7/32` finals. Con futbol de fondo hay mas eventos y algunos textos se reemplazan antes de que se puedan leer.
+- Los `4` dropped audio jobs son nuevos contra S005. No parecen catastroficos, pero conviene vigilarlos porque pueden indicar que el bridge/server descarto trabajos mientras priorizaba frescura.
+
+### Hipotesis
+
+- El partido de fondo genera un "silencio" electrico/acustico que no baja lo suficiente, entonces el VAD alterna entre algunos cortes por silencio y muchos cortes por cap.
+- `min_silence_sec=0.5` puede estar bien para audio limpio, pero con fondo constante quizas las pausas reales no duran lo bastante o no bajan lo bastante para Silero.
+- El problema principal no parece ser GPU/modelo en esta run; es segmentacion bajo ruido y politica de display para updates muy frecuentes.
+
+### Proximo Experimento
+
+Mantener board AGC off. Antes de tocar mas parametros a ciegas, instrumentar VAD internamente:
+
+| Metrica nueva | Para que sirve |
+| --- | --- |
+| `vad_segment_count` | saber cuantos bloques de speech ve Silero por ventana |
+| `vad_speech_ratio` | saber si ve casi toda la ventana como speech |
+| `vad_last_speech_end_sec` | ver si hay pausas, aunque no alcancen `min_silence_sec` |
+| `trailing_silence_sec` | medir cuanto silencio acumula antes de decidir final |
+| `window_rms_dbfs` / `tail_rms_dbfs` | distinguir silencio acustico real de ruido de fondo |
+
+Despues de eso probar una de estas dos ramas:
+
+- Si Silero ve speech continuo: subir threshold VAD o agregar gate RMS adaptive.
+- Si Silero ve pausas cortas: probar `min_silence_sec=0.35` manteniendo `max_window_sec=4.0`.
+
 ## Template
 
 ```md
