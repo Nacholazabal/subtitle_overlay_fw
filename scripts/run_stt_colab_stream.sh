@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Streaming Colab launcher. The board still connects to this PC for now, but
 # inference/segmentation run on the Colab WebSocket server.
-# Override with STT_STREAM_URL=wss://your-ngrok-host/stt/stream.
+# Fixed dev Colab tunnel.
 
-STT_STREAM_URL="${STT_STREAM_URL:-wss://passage-capacity-wistful.ngrok-free.dev/stt/stream}"
+STT_STREAM_URL="wss://passage-capacity-wistful.ngrok-free.dev/stt/stream"
 
 echo "Using streaming STT URL: $STT_STREAM_URL"
 

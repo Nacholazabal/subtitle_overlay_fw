@@ -30,7 +30,7 @@ pip install websockets
 ```
 
 ```bash
-STT_STREAM_URL=wss://abc123.ngrok-free.dev/stt/stream ./scripts/run_stt_colab_stream.sh
+./scripts/run_stt_colab_stream.sh
 ```
 
 Defaults del servidor streaming:
