@@ -65,6 +65,19 @@ def _rms(samples_flat):
     return math.sqrt(total / len(samples_flat))
 
 
+def window_rms_dbfs(samples, framerate, window_ms=200):
+    if not samples or framerate <= 0:
+        return []
+
+    window_samples = max(1, int(framerate * window_ms / 1000.0))
+    values = []
+    for start in range(0, len(samples), window_samples):
+        chunk = samples[start : start + window_samples]
+        if chunk:
+            values.append(_dbfs(_rms(chunk)))
+    return values
+
+
 def percentile(values, q):
     if not values:
         return None
@@ -143,11 +156,27 @@ def analyze_wav(path):
     rms_db = _dbfs(_rms(samples))
     clipped = sum(1 for sample in samples if abs(sample) >= 32765)
     clipped_pct = 100.0 * clipped / len(samples) if samples else 0.0
+    window_levels = window_rms_dbfs(samples, framerate)
+    floor_db = percentile(window_levels, 0.10)
+    median_db = percentile(window_levels, 0.50)
+    loud_db = percentile(window_levels, 0.90)
+    dynamic_range_db = (
+        (loud_db - floor_db)
+        if floor_db is not None and loud_db is not None and math.isfinite(floor_db)
+        else None
+    )
 
     if peak_pct < 5.0:
         verdict = "TOO QUIET"
     elif clipped_pct > 0.01:
         verdict = f"CLIPPING ({clipped_pct:.3f}% samples at ceiling)"
+    elif (
+        floor_db is not None
+        and dynamic_range_db is not None
+        and floor_db > -35.0
+        and dynamic_range_db < 15.0
+    ):
+        verdict = "NOISY FLOOR"
     else:
         verdict = "OK"
 
@@ -155,6 +184,15 @@ def analyze_wav(path):
     print(f"  duration : {duration_sec:.1f}s")
     print(f"  peak     : {peak_pct:.1f}% of full scale  ({peak_abs})")
     print(f"  RMS      : {rms_db:.1f} dBFS")
+    if floor_db is not None and median_db is not None and loud_db is not None:
+        print(
+            f"  windows  : floor p10={floor_db:.1f} dBFS  "
+            f"median={median_db:.1f} dBFS  loud p90={loud_db:.1f} dBFS"
+        )
+    if dynamic_range_db is not None:
+        print(f"  range    : p90-p10={dynamic_range_db:.1f} dB")
+        if floor_db is not None and floor_db > -35.0:
+            print("  NOTE: quietest windows are loud; VAD may never see real silence")
     print()
 
 
