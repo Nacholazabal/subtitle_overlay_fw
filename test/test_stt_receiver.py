@@ -1,12 +1,13 @@
 import queue
 import sys
+import threading
 import unittest
 from pathlib import Path
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.stt_receiver import PartialStabilityFilter, TcpTranscriptSink
+from scripts.stt_receiver import ChunkTranscriber, PartialStabilityFilter, TcpTranscriptSink
 
 
 class PartialStabilityFilterTests(unittest.TestCase):
@@ -102,6 +103,66 @@ class TcpTranscriptSinkTests(unittest.TestCase):
             },
             wire,
         )
+
+
+class ChunkTranscriberQueuePolicyTests(unittest.TestCase):
+    def make_transcriber(self, maxsize=4):
+        transcriber = ChunkTranscriber.__new__(ChunkTranscriber)
+        transcriber.pending_chunks = queue.Queue(maxsize=maxsize)
+        transcriber.drop_oldest = True
+        transcriber.realtime = False
+        transcriber.target_rate = 16000
+        transcriber._audio_start_monotonic = None
+        transcriber._job_seq = 0
+        transcriber._dropped_jobs = 0
+        transcriber._queue_lock = threading.Lock()
+        transcriber._partial_jobs_outstanding = 0
+        return transcriber
+
+    def queue_job(self, transcriber, is_final, start=0, end=16000):
+        transcriber._queue_job(
+            chunk=object(),
+            start_sample=start,
+            end_sample=end,
+            is_final=is_final,
+            reason="max_window" if is_final else "partial_tick",
+            trailing_silence_samples=0,
+        )
+
+    def test_drops_new_partial_when_partial_is_already_pending(self):
+        transcriber = self.make_transcriber()
+
+        self.queue_job(transcriber, is_final=False)
+        self.queue_job(transcriber, is_final=False, end=32000)
+
+        self.assertEqual(1, transcriber.pending_chunks.qsize())
+        self.assertEqual(1, transcriber._partial_jobs_outstanding)
+        self.assertEqual(1, transcriber._dropped_jobs)
+
+    def test_final_purges_pending_partial_and_is_preserved(self):
+        transcriber = self.make_transcriber()
+
+        self.queue_job(transcriber, is_final=False)
+        self.queue_job(transcriber, is_final=True)
+
+        self.assertEqual(1, transcriber.pending_chunks.qsize())
+        queued = transcriber.pending_chunks.get_nowait()
+        self.assertTrue(queued["is_final"])
+        self.assertEqual(0, transcriber._partial_jobs_outstanding)
+        self.assertEqual(1, transcriber._dropped_jobs)
+
+    def test_finished_partial_allows_later_partial(self):
+        transcriber = self.make_transcriber()
+
+        self.queue_job(transcriber, is_final=False)
+        queued = transcriber.pending_chunks.get_nowait()
+        transcriber._finish_job(queued)
+        transcriber.pending_chunks.task_done()
+        self.queue_job(transcriber, is_final=False, start=16000, end=32000)
+
+        self.assertEqual(1, transcriber.pending_chunks.qsize())
+        self.assertEqual(1, transcriber._partial_jobs_outstanding)
+        self.assertEqual(0, transcriber._dropped_jobs)
 
 
 if __name__ == "__main__":

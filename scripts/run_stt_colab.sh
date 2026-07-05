@@ -2,13 +2,10 @@
 set -euo pipefail
 
 # Colab inference launcher - uses remote GPU inference via ngrok tunnel.
-# Usage via alias: sttcolab -u https://xxx.ngrok-free.dev
+# Usage: ./scripts/run_stt_colab.sh
+# Override the default tunnel with STT_COLAB_URL=https://xxx.ngrok-free.dev if it changes.
 
-if [[ -z "${STT_COLAB_URL:-}" ]]; then
-    echo "Error: STT_COLAB_URL not set"
-    echo "Usage: sttcolab -u https://xxx.ngrok-free.dev"
-    exit 1
-fi
+STT_COLAB_URL="${STT_COLAB_URL:-https://passage-capacity-wistful.ngrok-free.dev/}"
 
 echo "Using Colab URL: $STT_COLAB_URL"
 

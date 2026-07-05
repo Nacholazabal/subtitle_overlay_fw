@@ -39,9 +39,11 @@ CONFIG_KEYS = (
     "config_lossless_live",
     "config_realtime",
     "config_gain",
+    "config_partial_backpressure",
     "config_device",
     "config_compute_type",
     "config_cpu_threads",
+    "config_transport",
 )
 
 
@@ -182,6 +184,9 @@ def analyze_config(events):
     print(f"  beam         : {config.get('config_beam_size')}")
     print(f"  VAD/filter   : {config.get('config_vad_filter')}")
     print(f"  lossless     : {config.get('config_lossless_live')}")
+    print(f"  partial bp   : {config.get('config_partial_backpressure', False)}")
+    if "config_transport" in config:
+        print(f"  transport    : {config.get('config_transport')}")
     print()
 
 
@@ -287,8 +292,22 @@ def analyze_pipeline(events):
     remote_infer = numeric_values(events, "remote_infer_sec")
     wall = numeric_values(events, "stt_wall_sec")
     emit_lag = numeric_values(events, "emit_lag_sec")
+    server_queue = numeric_values(events, "server_queue_sec")
+    gpu_infer = numeric_values(events, "gpu_infer_sec")
+    server_emit_lag = numeric_values(events, "server_emit_lag_sec")
+    bridge_receive_lag = numeric_values(events, "bridge_receive_lag_sec")
+    audio_buffer = numeric_values(events, "audio_buffer_sec")
 
-    if not (queue_wait or infer or wall or emit_lag):
+    if not (
+        queue_wait
+        or infer
+        or wall
+        or emit_lag
+        or server_queue
+        or gpu_infer
+        or server_emit_lag
+        or bridge_receive_lag
+    ):
         print_header("PIPELINE", "legacy log")
         print("  no queue/inference/lag metrics in JSONL")
         print()
@@ -308,6 +327,13 @@ def analyze_pipeline(events):
         print_stat_line("remote infer", remote_infer)
     print_stat_line("queue+infer", wall)
     print_stat_line("emit lag", emit_lag)
+    if server_queue or gpu_infer or server_emit_lag or bridge_receive_lag:
+        print("  -- streaming breakdown --")
+        print_stat_line("audio buffer", audio_buffer)
+        print_stat_line("server queue", server_queue)
+        print_stat_line("GPU infer", gpu_infer)
+        print_stat_line("server emit lag", server_emit_lag)
+        print_stat_line("bridge recv lag", bridge_receive_lag)
     for note in notes:
         print(f"  NOTE: {note}")
     print()
