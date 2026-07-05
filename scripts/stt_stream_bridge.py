@@ -111,7 +111,19 @@ class StreamingBridge:
             ready = decode_json_message(await websocket.recv())
             if ready.get("type") != MESSAGE_SESSION_READY:
                 raise RuntimeError(f"unexpected server response: {ready}")
+            run_config = ready.get("run_config")
             print(f"stream server session ready: {ready}", flush=True)
+            if isinstance(run_config, dict):
+                print(
+                    "stream server config: "
+                    f"max_window={run_config.get('config_max_window_sec')} "
+                    f"min_silence={run_config.get('config_min_silence_sec')} "
+                    f"partial={run_config.get('config_partial_sec')} "
+                    f"agreement={run_config.get('config_partial_agreement')} "
+                    f"model={run_config.get('config_model')} "
+                    f"beam={run_config.get('config_beam_size')}",
+                    flush=True,
+                )
 
             receiver = asyncio.create_task(self._receive_transcripts(websocket))
             try:

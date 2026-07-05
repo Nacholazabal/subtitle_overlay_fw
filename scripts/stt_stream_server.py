@@ -264,6 +264,7 @@ def create_app(config):
             "device": config.device,
             "compute_type": config.compute_type,
             "transport": "websocket",
+            "run_config": build_run_config(config),
         }
 
     @app.websocket("/stt/stream")
@@ -302,6 +303,7 @@ def create_app(config):
                         "type": MESSAGE_SESSION_READY,
                         "version": session["version"],
                         "sample_rate_hz": session["sample_rate_hz"],
+                        "run_config": build_run_config(config),
                     }
                 )
             )

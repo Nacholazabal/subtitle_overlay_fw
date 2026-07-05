@@ -186,6 +186,100 @@ Criterios de exito:
 
 Idea pendiente si el problema visual persiste: agregar una politica de display hold/coalescing para que los parciales no reemplacen texto visible en menos de ~1.0s-1.5s, sin perder finals.
 
+## Run S003 - 2026-07-05 17:59 - Streaming Defaults, Calidad Muy Mala
+
+Fuente: `python3 scripts/analyze_run.py` sobre `logs/stt_events.jsonl` y `logs/board_audio.wav`.
+
+### Config
+
+| Parametro | Valor |
+| --- | ---: |
+| engine | `stream_server` |
+| transport | `websocket` |
+| model | `small` |
+| max_window_sec | `3.0` |
+| min_silence_sec | `0.3` |
+| partial_sec | `0.5` |
+| partial_agreement | `1` |
+| beam_size | `5` |
+| VAD/filter | `True` |
+| lossless | `True` |
+| partial backpressure | `True` |
+
+Comparacion contra commits tempranos del streaming:
+
+| Archivo/commit | Parametros relevantes |
+| --- | --- |
+| `scripts/stt_stream_server.py` en `ebfbd2e`, `5ebaf2c`, `d0c6ccc`, `39c8f1d` | `small`, `max_window=3.0`, `min_silence=0.35`, `partial=0.5`, `agreement=1`, `beam=5`, `vad_filter=True` |
+| `scripts/colab_streaming_server.ipynb` en `d0c6ccc` y `39c8f1d` | `small`, `max_window=3.0`, `min_silence=0.30`, `partial=0.5`, `agreement=1`, `beam=5`, `vad_filter=True` |
+
+Conclusion: no hay evidencia de una regresion de parametros default respecto a los primeros commits del streaming. Los knobs efectivos de esta run coinciden con el perfil inicial/agresivo del notebook.
+
+### Resultado
+
+Veredicto subjetivo: muy mala run; muchas palabras incorrectas y baja inteligibilidad.
+
+Resumen numerico:
+
+| Area | Resultado |
+| --- | --- |
+| Audio | `CLIPPING`, 0.062% samples at ceiling |
+| Duracion | 72.0s |
+| Peak | 100% full scale |
+| RMS | -16.9 dBFS |
+| Noise floor | p10=-21.7 dBFS, median=-17.7 dBFS, p90=-14.9 dBFS |
+| Dynamic range | 6.8 dB |
+| Events | 106 total, 22 finals, 84 partials |
+| Segment reasons | 22 `max_window`, 84 `partial_tick` |
+| Dropped audio jobs | 15 |
+| First partial | 0.50s window |
+| First final | 3.00s window |
+| GPU infer | p50=0.20s, p90=0.37s, max=0.81s |
+| Server queue | p50=0.00s, p90=0.00s, max=0.37s |
+| Bridge recv lag | p50=0.43s, p90=1.44s, max=3.44s |
+| Display spacing | p50=0.53s, p90=0.99s |
+| Updates under 1.5s | 101/105 all, 80/83 partials, 21/22 finals |
+
+Transcript sample:
+
+```text
+HEAD: Senor ha llegado la participacion de pa... Aguay en el Mundial 2026...
+TAIL: ...Francia. es una seleccion que tiene muy buenos jugadores para mi la mejor del Mundial hasta ahora...
+```
+
+### Lectura
+
+- El pipeline sigue rapido y sin cola sostenida. No parece un problema de GPU ni de WebSocket.
+- La captura esta muy mala para STT/VAD: p10=-21.7 dBFS y rango de solo 6.8 dB significa que incluso las ventanas mas "silenciosas" estan muy altas.
+- La segmentacion esta completamente cap-limited: `22/22` finals pegaron en `max_window=3.0s`; no hubo ningun final por silencio.
+- La mala calidad de palabras probablemente viene de dos fuentes juntas: audio ruidoso/clipeado y frases cortadas artificialmente cada 3s.
+- El churn visual sigue muy alto: casi todos los eventos duran menos de 1.5s, y los finals tambien se pisan rapido.
+- Comparado contra los primeros commits del streaming, los parametros efectivos son esencialmente los mismos; por ahora el candidato principal no es "cambio de knobs", sino "calidad/estado del audio de esta captura + segmentacion sin silencio".
+
+### Hipotesis
+
+1. El ruido/senal de entrada esta variando muchisimo entre runs. S001 tuvo p10=-69 dBFS; S002/S003 estan cerca de -22 dBFS, que es demasiado alto para silencio.
+2. Cuando el piso de ruido sube, el VAD no encuentra pausas y todo cae por `max_window`.
+3. Cortar por `max_window=3.0s` cada vez es aceptable como emergencia de latencia, pero no como segmentacion principal para calidad.
+4. Aunque el modelo `small` sea el mismo, Whisper recibe ventanas peores que en el flujo HTTP/default: mas ruido y cortes menos naturales.
+
+### Proximo Experimento Propuesto
+
+Antes de tocar modelo, aislar audio/segmentacion:
+
+1. Confirmar en la consola de la board los niveles `in_peak`, `gain`, `out_peak` durante silencio y durante voz.
+2. Si el silencio vuelve a tener p10 alrededor de -22 dBFS, no seguir tuneando STT todavia: hay que corregir captura/AGC/fuente.
+3. Probar una run con knobs menos agresivos, verificando en `CONFIG`:
+
+| Parametro | Probar |
+| --- | ---: |
+| max_window_sec | `4.0` |
+| min_silence_sec | `0.5` |
+| partial_sec | `0.8` |
+| partial_agreement | `2` |
+
+4. Si la calidad sigue mala con audio limpio y ventanas mas largas, recien ahi comparar `small` contra un modelo mayor o cambiar estrategia de segmentacion.
+
 ## Template
 
 ```md
