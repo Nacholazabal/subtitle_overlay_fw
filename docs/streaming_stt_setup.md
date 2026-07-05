@@ -43,6 +43,7 @@ Defaults del servidor streaming:
 | partial | `0.5s` |
 | partial agreement | `1` |
 | beam | `5` |
+| gain | `0.0` auto-normaliza en server; `1.0` usa el audio de la board sin ganancia extra |
 
 El bridge:
 

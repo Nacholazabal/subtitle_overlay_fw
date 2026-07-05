@@ -280,6 +280,106 @@ Antes de tocar modelo, aislar audio/segmentacion:
 
 4. Si la calidad sigue mala con audio limpio y ventanas mas largas, recien ahi comparar `small` contra un modelo mayor o cambiar estrategia de segmentacion.
 
+## Run S004 - 2026-07-05 18:18 - Knobs 4.0/0.5/0.8/2
+
+Fuente: `python3 scripts/analyze_run.py` sobre `logs/stt_events.jsonl` y `logs/board_audio.wav`.
+
+### Config
+
+Esta run si tomo los knobs del experimento.
+
+| Parametro | Valor |
+| --- | ---: |
+| engine | `stream_server` |
+| transport | `websocket` |
+| model | `small` |
+| max_window_sec | `4.0` |
+| min_silence_sec | `0.5` |
+| partial_sec | `0.8` |
+| partial_agreement | `2` |
+| beam_size | `5` |
+| VAD/filter | `True` |
+| lossless | `True` |
+| partial backpressure | `True` |
+
+### Resultado
+
+Veredicto subjetivo: mejor cadencia visual que S002/S003, pero la transcripcion sigue con errores importantes. El VAD sigue siendo el problema central.
+
+Resumen numerico:
+
+| Area | Resultado |
+| --- | --- |
+| Audio | `CLIPPING`, 0.042% samples at ceiling |
+| Duracion | 93.5s |
+| Peak | 100% full scale |
+| RMS | -17.0 dBFS |
+| Noise floor | p10=-21.7 dBFS, median=-17.7 dBFS, p90=-14.9 dBFS |
+| Dynamic range | 6.8 dB |
+| Events | 65 total, 24 finals, 41 partials |
+| Segment reasons | 21 `max_window`, 3 `silence`, 41 `partial_tick` |
+| Dropped audio jobs | 1 |
+| First visible partial | 1.60s+ late-ish, first emitted event window 2.40s |
+| First final | 4.00s window |
+| GPU infer | p50=0.23s, p90=0.35s, max=0.64s |
+| Server queue | p50=0.00s, p90=0.00s, max=0.00s |
+| Bridge recv lag | p50=0.46s, p90=0.81s, max=1.14s |
+| Display spacing | p50=0.90s, p90=2.43s |
+| Updates under 1.5s | 42/64 all, 37/41 partials, 5/23 finals |
+
+Transcript sample:
+
+```text
+HEAD: igual con dos delanteros con cuatro defensores, lo mas probable es que te comas una bolida...
+TAIL: ...la seleccion paraguaya en un partido que tuvo de todo...
+```
+
+### Lectura
+
+- Los knobs nuevos si se aplicaron.
+- La cadencia visual mejoro: finals bajo 1.5s bajaron de casi todos a `5/23`.
+- La cola practicamente desaparecio: `dropped=1`, `server queue max=0.00s`.
+- El costo es que el primer parcial visible llega mas tarde: con `partial_sec=0.8` y `agreement=2`, el primer texto estable puede aparecer recien cerca de 1.6s-2.4s.
+- El VAD sigue cap-limited: `21/24` finals por `max_window=4.0s`; solo 3 por `silence`.
+- El audio sigue sin silencios claros: p10=-21.7 dBFS y rango 6.8 dB, igual de malo que S003 para detectar pausas.
+
+### Hipotesis
+
+1. `partial_sec=0.8` y `agreement=2` son mejores para UX estable, pero pueden sentirse lentos al inicio.
+2. El VAD no falla por `min_silence_sec=0.5` solamente; falla porque el input que ve tiene muy poco contraste entre "silencio" y voz.
+3. El server aplica una segunda etapa de gain/normalizacion cuando `gain=0.0`; con AGC en la board, esto puede estar ayudando poco o contaminando la decision de VAD.
+4. Necesitamos instrumentar el VAD por dentro: cuantos segmentos Silero ve, donde termina el ultimo speech, trailing silence real, y speech ratio por ventana.
+
+### Plan VAD
+
+Paso 1: aislar gain antes de tocar modelo.
+
+- Probar `GAIN = 1.0` en Colab/server para que el VAD use el audio tal cual llega de la board, sin auto-normalizacion server-side.
+- Mantener `max_window=4.0`, `min_silence=0.5`, `partial=0.8`, `agreement=2`.
+- Criterio: si suben finals por `silence`, la segunda normalizacion estaba perjudicando el VAD.
+
+Paso 2: instrumentar VAD.
+
+- Agregar a eventos: `vad_segment_count`, `vad_speech_ratio`, `vad_last_speech_end_sec`, `trailing_silence_sec` ya existe pero falta reportarlo mejor.
+- Agregar al analyze una seccion VAD con stats de trailing silence y ratio de speech.
+- Criterio: saber si Silero ve todo como speech continuo o si ve pausas pero no llegan a `min_silence_sec`.
+
+Paso 3: tuning de VAD.
+
+- Exponer `VAD_THRESHOLD` y/o opciones Silero si `faster_whisper.vad.VadOptions` las soporta.
+- Probar threshold mas alto para ruido (`0.6`/`0.7`) si Silero marca ruido como speech.
+- Probar `min_silence_sec=0.35` con `max_window=4.0` si vemos pausas reales de 0.35-0.5s.
+
+Paso 4: fallback de segmentacion.
+
+- Si Silero sigue viendo todo como speech, agregar detector RMS/noise-floor adaptive como criterio auxiliar de pausa.
+- No reemplazar Silero de una; usarlo como "silence candidate" para cortar cuando hay baja energia sostenida.
+
+Paso 5: calidad STT.
+
+- Solo despues de mejorar audio/VAD, comparar `small` contra modelo mayor o `VAD_FILTER=False` en `transcribe`.
+- Si los cortes naturales mejoran pero palabras siguen malas, el siguiente sospechoso pasa a ser modelo/config de inferencia.
+
 ## Template
 
 ```md
