@@ -45,6 +45,16 @@ class PartialStabilityFilterTests(unittest.TestCase):
         self.assertEqual(1, len(events))
         self.assertEqual("Hola, mundo", events[0]["text"])
 
+    def test_duplicate_partial_is_suppressed_after_normalization(self):
+        filt = PartialStabilityFilter(agreement=2)
+
+        filt.handle_event({"seq": 1, "is_final": False, "text": "Gracias a Dios"})
+        emitted = filt.handle_event({"seq": 2, "is_final": False, "text": "gracias a Dios."})
+        duplicate = filt.handle_event({"seq": 3, "is_final": False, "text": "Gracias a Dios."})
+
+        self.assertEqual(1, len(emitted))
+        self.assertEqual([], duplicate)
+
     def test_final_resets_partial_history_and_passes_through(self):
         filt = PartialStabilityFilter(agreement=2)
 

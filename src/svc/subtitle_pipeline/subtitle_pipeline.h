@@ -58,6 +58,9 @@ int subtitle_pipeline_write_bitmap(subtitle_pipeline_t* pipeline,
                                    uint32_t width,
                                    uint32_t height);
 int subtitle_pipeline_write_text(subtitle_pipeline_t* pipeline, char const* text);
+int subtitle_pipeline_write_caption(subtitle_pipeline_t* pipeline,
+                                    char const* text,
+                                    uint8_t current_is_final);
 /*
  * Blocking debug/manual synchronization helper. It can spin through many MMIO
  * reads and must not be called from QP/C AO state handlers.

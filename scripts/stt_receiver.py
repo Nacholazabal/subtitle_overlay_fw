@@ -57,6 +57,10 @@ def word_prefix_len(left, right):
     return index
 
 
+def comparable_text(text):
+    return " ".join(comparable_word(word) for word in text.split())
+
+
 def recv_exact(sock, size):
     data = bytearray()
     while len(data) < size:
@@ -245,6 +249,7 @@ class PartialStabilityFilter:
         self.agreement = agreement
         self.history = []
         self.last_emitted_partial = ""
+        self.last_emitted_partial_key = ""
 
     def handle_event(self, event):
         if event.get("is_final", False):
@@ -269,17 +274,20 @@ class PartialStabilityFilter:
             stable_len = min(stable_len, word_prefix_len(" ".join(stable_words), candidate))
 
         stable_text = " ".join(stable_words[:stable_len]).strip()
-        if not stable_text or stable_text == self.last_emitted_partial:
+        stable_key = comparable_text(stable_text)
+        if not stable_text or stable_key == self.last_emitted_partial_key:
             return []
 
         stabilized = dict(event)
         stabilized["text"] = stable_text
         self.last_emitted_partial = stable_text
+        self.last_emitted_partial_key = stable_key
         return [stabilized]
 
     def reset(self):
         self.history = []
         self.last_emitted_partial = ""
+        self.last_emitted_partial_key = ""
 
 
 class FasterWhisperEngine:

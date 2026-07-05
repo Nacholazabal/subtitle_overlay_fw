@@ -54,6 +54,7 @@ typedef enum
     STT_POLL_SIG,        ///< Private STT AO timer signal used to poll TCP transcript input.
     SUBTITLE_TEXT_SIG,   ///< Directed event from stt_ao_t to subtitle_ao_t.
     SUBTITLE_CLEAR_SIG,  ///< Private subtitle AO timer signal to clear stale subtitles.
+    SUBTITLE_PREVIOUS_EXPIRE_SIG, ///< Private subtitle AO timer signal to hide previous final text.
 
     MAX_SIG
 } app_signal_e;

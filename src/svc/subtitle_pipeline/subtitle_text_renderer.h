@@ -31,6 +31,12 @@ int subtitle_text_renderer_render(char const* text,
                                   size_t dst_size,
                                   uint32_t* width,
                                   uint32_t* height);
+int subtitle_text_renderer_render_caption(char const* text,
+                                          uint8_t current_is_final,
+                                          uint8_t* dst,
+                                          size_t dst_size,
+                                          uint32_t* width,
+                                          uint32_t* height);
 
 // === End of documentation ======================================================================================== //
 

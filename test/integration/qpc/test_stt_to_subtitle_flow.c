@@ -30,6 +30,7 @@ static QEvtPtr subtitle_queue[16];
 QActive* const AO_System = &system_fake.super;
 
 static char captured_text[SUBTITLE_TEXT_MAX_LEN * 2U];
+static uint8_t captured_current_is_final;
 static int write_text_status;
 static subtitle_text_evt_t poll_events[STT_EVENT_RX_MAX_EVENTS_PER_POLL];
 static uint32_t poll_event_count;
@@ -70,14 +71,16 @@ static void post_component_init(QActive* const target, uint32_t width, uint32_t 
     (void)QACTIVE_POST_X(target, &event->super, APP_CONTROL_EVENT_MARGIN, (void*)0);
 }
 
-static int subtitle_pipeline_write_text_capture(subtitle_pipeline_t* pipeline,
-                                                char const* text,
-                                                int call_count)
+static int subtitle_pipeline_write_caption_capture(subtitle_pipeline_t* pipeline,
+                                                   char const* text,
+                                                   uint8_t current_is_final,
+                                                   int call_count)
 {
     Q_UNUSED_PAR(pipeline);
     Q_UNUSED_PAR(call_count);
 
     snprintf(captured_text, sizeof(captured_text), "%s", text);
+    captured_current_is_final = current_is_final;
     return write_text_status;
 }
 
@@ -128,12 +131,23 @@ static void expect_subtitle_init_success(void)
     subtitle_pipeline_enable_IgnoreAndReturn(0);
 }
 
+static void init_subtitle_ready(void)
+{
+    expect_subtitle_init_success();
+    start_subtitle_ao();
+
+    post_component_init(AO_Subtitle, 1280U, 720U);
+    qpc_test_dispatch_one(AO_Subtitle);
+    qpc_test_gc(qpc_test_pop(AO_System));
+}
+
 static void expect_subtitle_render_success(void)
 {
     write_text_status = 0;
     captured_text[0] = '\0';
+    captured_current_is_final = 0U;
     subtitle_pipeline_clear_IgnoreAndReturn(0);
-    subtitle_pipeline_write_text_Stub(subtitle_pipeline_write_text_capture);
+    subtitle_pipeline_write_caption_Stub(subtitle_pipeline_write_caption_capture);
     subtitle_pipeline_enable_IgnoreAndReturn(0);
 }
 
@@ -164,6 +178,7 @@ void setUp(void)
     start_system_fake();
     write_text_status = 0;
     captured_text[0] = '\0';
+    captured_current_is_final = 0U;
     memset(poll_events, 0, sizeof(poll_events));
     poll_event_count = 0U;
     poll_status = 0;
@@ -204,7 +219,7 @@ void test_subtitle_init_success_draws_marker_and_posts_ready_to_system(void)
     qpc_test_gc(&ready->super);
 }
 
-void test_stt_poll_partial_reaches_subtitle_without_committing_history(void)
+void test_stt_poll_partial_and_final_render_as_current_segment(void)
 {
     subtitle_text_evt_t events[1];
 
@@ -233,6 +248,7 @@ void test_stt_poll_partial_reaches_subtitle_without_committing_history(void)
     expect_subtitle_render_success();
     qpc_test_dispatch_one(AO_Subtitle);
     TEST_ASSERT_EQUAL_STRING("hola parcial", captured_text);
+    TEST_ASSERT_EQUAL_UINT8(0U, captured_current_is_final);
 
     memset(events, 0, sizeof(events));
     events[0].seq = 2U;
@@ -246,6 +262,66 @@ void test_stt_poll_partial_reaches_subtitle_without_committing_history(void)
     expect_subtitle_render_success();
     qpc_test_dispatch_one(AO_Subtitle);
     TEST_ASSERT_EQUAL_STRING("final", captured_text);
+    TEST_ASSERT_EQUAL_UINT8(1U, captured_current_is_final);
+}
+
+void test_subtitle_broadcast_promotes_final_when_new_partial_arrives(void)
+{
+    init_subtitle_ready();
+
+    expect_subtitle_render_success();
+    qpc_test_post_subtitle_text(AO_Subtitle, 1U, 1U, "segmento final");
+    qpc_test_dispatch_one(AO_Subtitle);
+    TEST_ASSERT_EQUAL_STRING("segmento final", captured_text);
+    TEST_ASSERT_EQUAL_UINT8(1U, captured_current_is_final);
+
+    expect_subtitle_render_success();
+    qpc_test_post_subtitle_text(AO_Subtitle, 2U, 0U, "parcial nuevo");
+    qpc_test_dispatch_one(AO_Subtitle);
+    TEST_ASSERT_EQUAL_STRING("segmento final\nparcial nuevo", captured_text);
+    TEST_ASSERT_EQUAL_UINT8(0U, captured_current_is_final);
+}
+
+void test_subtitle_previous_expire_keeps_current_live_segment(void)
+{
+    init_subtitle_ready();
+
+    expect_subtitle_render_success();
+    qpc_test_post_subtitle_text(AO_Subtitle, 1U, 1U, "anterior");
+    qpc_test_dispatch_one(AO_Subtitle);
+
+    expect_subtitle_render_success();
+    qpc_test_post_subtitle_text(AO_Subtitle, 2U, 0U, "actual");
+    qpc_test_dispatch_one(AO_Subtitle);
+
+    expect_subtitle_render_success();
+    qpc_test_post_signal(AO_Subtitle, SUBTITLE_PREVIOUS_EXPIRE_SIG);
+    qpc_test_dispatch_one(AO_Subtitle);
+    TEST_ASSERT_EQUAL_STRING("actual", captured_text);
+    TEST_ASSERT_EQUAL_UINT8(0U, captured_current_is_final);
+}
+
+void test_subtitle_clear_signal_clears_all_broadcast_slots(void)
+{
+    init_subtitle_ready();
+
+    expect_subtitle_render_success();
+    qpc_test_post_subtitle_text(AO_Subtitle, 1U, 1U, "anterior");
+    qpc_test_dispatch_one(AO_Subtitle);
+
+    expect_subtitle_render_success();
+    qpc_test_post_subtitle_text(AO_Subtitle, 2U, 0U, "actual");
+    qpc_test_dispatch_one(AO_Subtitle);
+
+    subtitle_pipeline_clear_ExpectAnyArgsAndReturn(0);
+    subtitle_pipeline_enable_ExpectAnyArgsAndReturn(0);
+    qpc_test_post_signal(AO_Subtitle, SUBTITLE_CLEAR_SIG);
+    qpc_test_dispatch_one(AO_Subtitle);
+
+    expect_subtitle_render_success();
+    qpc_test_post_subtitle_text(AO_Subtitle, 3U, 0U, "solo actual");
+    qpc_test_dispatch_one(AO_Subtitle);
+    TEST_ASSERT_EQUAL_STRING("solo actual", captured_text);
 }
 
 void test_stt_discards_duplicate_transcript_sequence(void)
@@ -312,7 +388,7 @@ void test_subtitle_render_error_posts_component_error(void)
 
     write_text_status = -EIO;
     subtitle_pipeline_clear_IgnoreAndReturn(0);
-    subtitle_pipeline_write_text_Stub(subtitle_pipeline_write_text_capture);
+    subtitle_pipeline_write_caption_Stub(subtitle_pipeline_write_caption_capture);
     subtitle_pipeline_cleanup_Ignore();
 
     qpc_test_post_subtitle_text(AO_Subtitle, 1U, 1U, "rompe");
