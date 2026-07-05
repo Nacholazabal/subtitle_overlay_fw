@@ -90,6 +90,17 @@ La sección `PIPELINE` ahora muestra un breakdown streaming si los eventos lo tr
 - `server emit lag`;
 - `bridge recv lag`.
 
+La sección `VAD` aparece cuando la run fue hecha con el server instrumentado. Muestra:
+
+- `segments/event`;
+- `speech ratio`;
+- `vad trailing`;
+- `window RMS`;
+- `tail RMS`;
+- conteo de finals por `silence` vs `max_window`.
+
+Si aparece `VAD [not instrumented]`, la run fue generada con un server viejo o con eventos anteriores a esta instrumentación.
+
 ## Próximo Paso
 
 Cuando el servidor streaming esté validado con Colab, el siguiente salto es firmware board-direct:

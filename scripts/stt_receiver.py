@@ -466,6 +466,7 @@ class ChunkTranscriber:
         self._audio_start_monotonic = None
         self._job_seq = 0
         self._dropped_jobs = 0
+        self._last_vad_metrics = {}
         self._queue_lock = threading.Lock()
         self._partial_jobs_outstanding = 0
         # Tight VAD segments so the trailing-silence measurement is accurate; the
@@ -518,7 +519,9 @@ class ChunkTranscriber:
 
     def flush(self):
         if self.window.size > 0:
-            self._finalize_upto(self.window.size, reason="flush")
+            self._finalize_upto(self.window.size,
+                                reason="flush",
+                                vad_metrics=self._last_vad_metrics)
         self.pending_chunks.join()
 
     def close(self):
@@ -535,6 +538,7 @@ class ChunkTranscriber:
 
         speech = get_speech_timestamps(self.window, self._vad_options, self.target_rate)
         if not speech:
+            self._last_vad_metrics = self._vad_metrics(speech, last_speech_end=0)
             # Drop accumulated non-speech so leading silence never piles up.
             if self.window.size >= self.min_silence_samples:
                 self.window_start_sample += self.window.size
@@ -544,20 +548,58 @@ class ChunkTranscriber:
 
         last_speech_end = int(speech[-1]["end"])
         trailing_silence = self.window.size - last_speech_end
+        self._last_vad_metrics = self._vad_metrics(speech, last_speech_end)
 
         if trailing_silence >= self.min_silence_samples:
             # Cut at the end of speech so the pause (not a word) splits the phrase.
             self._finalize_upto(last_speech_end,
                                 reason="silence",
-                                trailing_silence_samples=trailing_silence)
+                                trailing_silence_samples=trailing_silence,
+                                vad_metrics=self._last_vad_metrics)
             return True
 
         if self.window.size >= self.max_window_samples:
             # Speaker never paused; force a cut so latency and cost stay bounded.
-            self._finalize_upto(self.window.size, reason="max_window")
+            self._finalize_upto(self.window.size,
+                                reason="max_window",
+                                vad_metrics=self._last_vad_metrics)
             return True
 
         return False
+
+    def _vad_metrics(self, speech, last_speech_end):
+        import numpy as np
+
+        window_samples = int(self.window.size)
+        speech_samples = sum(max(0, int(item["end"]) - int(item["start"])) for item in speech)
+        trailing_samples = max(0, window_samples - int(last_speech_end))
+        tail_count = min(window_samples, max(self.min_silence_samples, 1))
+        tail = self.window[-tail_count:] if tail_count > 0 else self.window[:0]
+
+        metrics = {
+            "vad_segment_count": len(speech),
+            "vad_speech_ratio": round(speech_samples / window_samples, 3) if window_samples > 0 else 0.0,
+            "vad_window_sec": round(window_samples / self.target_rate, 3),
+            "vad_trailing_silence_sec": round(trailing_samples / self.target_rate, 3),
+            "window_rms_dbfs": self._dbfs_float(np, self.window),
+            "tail_rms_dbfs": self._dbfs_float(np, tail),
+        }
+        if speech:
+            metrics["vad_last_speech_end_sec"] = round(
+                (self.window_start_sample + int(last_speech_end)) / self.target_rate,
+                3,
+            )
+        return metrics
+
+    @staticmethod
+    def _dbfs_float(np, samples):
+        if samples.size == 0:
+            return -120.0
+        values = samples.astype(np.float64, copy=False)
+        rms = float(np.sqrt(np.mean(values * values)))
+        if rms <= 1e-12:
+            return -120.0
+        return round(max(-120.0, 20.0 * np.log10(rms)), 1)
 
     def _apply_gain(self, np, samples):
         if self.gain > 0.0:
@@ -587,9 +629,10 @@ class ChunkTranscriber:
                         end_sample,
                         is_final=False,
                         reason="partial_tick",
-                        trailing_silence_samples=0)
+                        trailing_silence_samples=0,
+                        vad_metrics=self._last_vad_metrics)
 
-    def _finalize_upto(self, count, reason, trailing_silence_samples=0):
+    def _finalize_upto(self, count, reason, trailing_silence_samples=0, vad_metrics=None):
         chunk = self.window[:count].copy()
         start_sample = self.window_start_sample
         end_sample = start_sample + count
@@ -602,9 +645,19 @@ class ChunkTranscriber:
                         end_sample,
                         is_final=True,
                         reason=reason,
-                        trailing_silence_samples=trailing_silence_samples)
+                        trailing_silence_samples=trailing_silence_samples,
+                        vad_metrics=vad_metrics)
 
-    def _queue_job(self, chunk, start_sample, end_sample, is_final, reason, trailing_silence_samples):
+    def _queue_job(
+        self,
+        chunk,
+        start_sample,
+        end_sample,
+        is_final,
+        reason,
+        trailing_silence_samples,
+        vad_metrics=None,
+    ):
         queued_at = time.monotonic()
         job = {
             "job_id": self._job_seq,
@@ -614,6 +667,7 @@ class ChunkTranscriber:
             "is_final": is_final,
             "reason": reason,
             "trailing_silence_samples": trailing_silence_samples,
+            "vad_metrics": dict(vad_metrics or {}),
             "queued_at": queued_at,
             "audio_end_monotonic": self._audio_end_monotonic(end_sample),
         }
@@ -738,6 +792,8 @@ class ChunkTranscriber:
             job["trailing_silence_samples"] / self.target_rate,
             3,
         )
+        for key, value in job.get("vad_metrics", {}).items():
+            event[key] = value
         if job["audio_end_monotonic"] is not None:
             event["emit_lag_sec"] = round(emitted_at - job["audio_end_monotonic"], 3)
         for key, value in self.run_config.items():

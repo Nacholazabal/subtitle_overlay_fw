@@ -324,6 +324,68 @@ def analyze_segmentation(events):
     print()
 
 
+def analyze_vad(events):
+    vad_events = [
+        event
+        for event in events
+        if "vad_speech_ratio" in event
+        or "vad_segment_count" in event
+        or "tail_rms_dbfs" in event
+    ]
+    if not vad_events:
+        print_header("VAD", "not instrumented")
+        print("  no VAD diagnostics in JSONL")
+        print()
+        return
+
+    finals = [event for event in vad_events if event.get("is_final")]
+    silence_finals = [event for event in finals if event.get("segment_reason") == "silence"]
+    cap_finals = [event for event in finals if event.get("segment_reason") == "max_window"]
+    speech_ratio = numeric_values(vad_events, "vad_speech_ratio")
+    segment_counts = numeric_values(vad_events, "vad_segment_count")
+    vad_trailing = numeric_values(vad_events, "vad_trailing_silence_sec")
+    trailing = numeric_values(vad_events, "trailing_silence_sec")
+    window_rms = numeric_values(vad_events, "window_rms_dbfs")
+    tail_rms = numeric_values(vad_events, "tail_rms_dbfs")
+    cap_speech_ratio = numeric_values(cap_finals, "vad_speech_ratio")
+    silence_trailing = numeric_values(silence_finals, "vad_trailing_silence_sec")
+
+    notes = []
+    if cap_finals and len(cap_finals) >= len(silence_finals):
+        notes.append(f"{len(cap_finals)}/{len(finals)} finals still reached max_window")
+    if speech_ratio and percentile(speech_ratio, 0.50) >= 0.85:
+        notes.append("median VAD speech ratio is high; VAD may be seeing near-continuous speech")
+    if tail_rms and percentile(tail_rms, 0.50) > -35.0:
+        notes.append(f"tail RMS is noisy (p50={percentile(tail_rms, 0.50):.1f} dBFS)")
+    if silence_finals:
+        notes.append(f"{len(silence_finals)} final(s) were cut by VAD silence")
+
+    if not notes:
+        verdict = "OK"
+    elif silence_finals and cap_finals:
+        verdict = "MIXED"
+    elif cap_finals:
+        verdict = "CAP-LIMITED"
+    else:
+        verdict = "ATTENTION"
+
+    print_header("VAD", verdict)
+    print_stat_line("segments/event", segment_counts, unit="")
+    print_stat_line("speech ratio", speech_ratio, unit="")
+    print_stat_line("vad trailing", vad_trailing)
+    print_stat_line("job trailing", trailing)
+    print_stat_line("window RMS", window_rms, unit=" dBFS")
+    print_stat_line("tail RMS", tail_rms, unit=" dBFS")
+    print(f"  final reasons     : silence={len(silence_finals)} max_window={len(cap_finals)} total={len(finals)}")
+    if cap_speech_ratio:
+        print_stat_line("cap speech ratio", cap_speech_ratio, unit="")
+    if silence_trailing:
+        print_stat_line("silence trailing", silence_trailing)
+    for note in notes:
+        print(f"  NOTE: {note}")
+    print()
+
+
 def analyze_pipeline(events):
     queue_wait = numeric_values(events, "queue_wait_sec")
     infer = numeric_values(events, "infer_sec")
@@ -529,6 +591,7 @@ def main():
     analyze_config(events)
     analyze_events(events)
     analyze_segmentation(events)
+    analyze_vad(events)
     analyze_pipeline(events)
     analyze_display_cadence(events)
     analyze_timing(events)

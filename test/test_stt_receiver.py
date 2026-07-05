@@ -164,6 +164,59 @@ class ChunkTranscriberQueuePolicyTests(unittest.TestCase):
         self.assertEqual(1, transcriber._partial_jobs_outstanding)
         self.assertEqual(0, transcriber._dropped_jobs)
 
+    def test_queue_job_preserves_vad_metrics(self):
+        transcriber = self.make_transcriber()
+        vad_metrics = {
+            "vad_segment_count": 2,
+            "vad_speech_ratio": 0.75,
+            "tail_rms_dbfs": -42.0,
+        }
+
+        transcriber._queue_job(
+            chunk=object(),
+            start_sample=0,
+            end_sample=16000,
+            is_final=True,
+            reason="silence",
+            trailing_silence_samples=8000,
+            vad_metrics=vad_metrics,
+        )
+        vad_metrics["vad_speech_ratio"] = 0.1
+
+        queued = transcriber.pending_chunks.get_nowait()
+        self.assertEqual(
+            {
+                "vad_segment_count": 2,
+                "vad_speech_ratio": 0.75,
+                "tail_rms_dbfs": -42.0,
+            },
+            queued["vad_metrics"],
+        )
+
+    def test_annotate_event_adds_vad_metrics(self):
+        transcriber = self.make_transcriber()
+        transcriber.run_config = {}
+        job = {
+            "reason": "silence",
+            "trailing_silence_samples": 8000,
+            "audio_end_monotonic": None,
+            "job_id": 7,
+            "vad_metrics": {
+                "vad_segment_count": 1,
+                "vad_speech_ratio": 0.62,
+                "vad_trailing_silence_sec": 0.5,
+                "window_rms_dbfs": -21.0,
+            },
+        }
+        event = {"start_sec": 1.0, "end_sec": 2.0}
+
+        transcriber._annotate_event(event, job, queue_wait=0.1, infer_sec=0.2, emitted_at=0.0)
+
+        self.assertEqual(1, event["vad_segment_count"])
+        self.assertEqual(0.62, event["vad_speech_ratio"])
+        self.assertEqual(0.5, event["vad_trailing_silence_sec"])
+        self.assertEqual(-21.0, event["window_rms_dbfs"])
+
 
 if __name__ == "__main__":
     unittest.main()
