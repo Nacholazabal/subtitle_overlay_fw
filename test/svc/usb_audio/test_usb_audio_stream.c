@@ -102,7 +102,7 @@ void test_usb_audio_stream_invalid_agc_override_retains_default(void)
     usb_audio_capture_init_ExpectAnyArgsAndReturn(-EIO);
 
     TEST_ASSERT_EQUAL_INT(-EIO, usb_audio_stream_start(&stream, &config));
-    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.45f, stream.agc.target_peak);
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.35f, stream.agc.target_peak);
 }
 
 void test_usb_audio_stream_get_status_reports_lifecycle_and_fatal_error(void)

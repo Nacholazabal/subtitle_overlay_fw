@@ -24,6 +24,7 @@ from scripts.stt_receiver import (
     validate_audio_format,
 )
 from scripts.stt_stream_protocol import (
+    AudioAvailabilityTimeline,
     MESSAGE_ERROR,
     MESSAGE_SESSION_END,
     MESSAGE_SESSION_READY,
@@ -45,21 +46,23 @@ async def read_exactly(reader, size):
 
 
 class BridgeTranscriptSink:
-    def __init__(self, sink, audio_start_monotonic=None):
+    def __init__(self, sink, timeline=None):
         self.sink = sink
-        self.audio_start_monotonic = audio_start_monotonic
+        self.timeline = timeline or AudioAvailabilityTimeline()
 
-    def set_audio_start(self, value):
-        self.audio_start_monotonic = value
+    def set_timeline(self, timeline):
+        self.timeline = timeline
 
     def handle_event(self, event):
         event = dict(event)
         event.pop("type", None)
         received_at = time.monotonic()
         event["bridge_received_monotonic"] = round(received_at, 6)
-        if self.audio_start_monotonic is not None and "end_sec" in event:
-            audio_end = self.audio_start_monotonic + float(event["end_sec"])
-            event["bridge_receive_lag_sec"] = round(received_at - audio_end, 3)
+        if "end_sec" in event:
+            available_at = self.timeline.available_at(float(event["end_sec"]))
+            if available_at is not None:
+                event["bridge_receive_lag_sec"] = round(received_at - available_at, 3)
+                event["bridge_audio_available_monotonic"] = round(available_at, 6)
         self.sink.handle_event(event)
 
     def close(self):
@@ -152,6 +155,9 @@ class StreamingBridge:
         rate, channels, fmt, _chunk_ms, _samples_per_chunk, bytes_per_chunk = stream_info
         first_timestamp_ns = None
         audio_start_monotonic = None
+        audio_end_sec = 0.0
+        timeline = AudioAvailabilityTimeline()
+        self.bridge_sink.set_timeline(timeline)
         forwarded = 0
 
         while True:
@@ -165,13 +171,15 @@ class StreamingBridge:
                 raise RuntimeError("chunk format changed")
 
             payload = await read_exactly(reader, payload_bytes)
+            payload_received_at = time.monotonic()
             if first_timestamp_ns is None:
                 first_timestamp_ns = timestamp_ns
-                audio_start_monotonic = time.monotonic()
-                self.bridge_sink.set_audio_start(audio_start_monotonic)
+                audio_start_monotonic = payload_received_at
 
             await websocket.send(encode_audio_frame(seq, timestamp_ns, dropped, payload))
             forwarded += 1
+            audio_end_sec += payload_bytes / float(rate * channels * EXPECTED_SAMPLE_WIDTH)
+            timeline.mark_available(audio_end_sec, payload_received_at)
 
             if self.wav is not None:
                 self.wav.writeframes(payload)

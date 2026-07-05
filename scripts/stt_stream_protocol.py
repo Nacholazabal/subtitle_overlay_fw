@@ -3,7 +3,8 @@
 
 import json
 import struct
-from dataclasses import dataclass
+from bisect import bisect_left
+from dataclasses import dataclass, field
 
 
 PROTOCOL_VERSION = 1
@@ -26,6 +27,31 @@ class AudioFrame:
     timestamp_ns: int
     dropped: int
     payload: bytes
+
+
+@dataclass
+class AudioAvailabilityTimeline:
+    """Map audio end seconds to the local monotonic time when those samples arrived."""
+
+    points: list[tuple[float, float]] = field(default_factory=list)
+
+    def mark_available(self, audio_end_sec, monotonic_time):
+        audio_end_sec = float(audio_end_sec)
+        monotonic_time = float(monotonic_time)
+        if self.points and audio_end_sec < self.points[-1][0]:
+            return
+        self.points.append((audio_end_sec, monotonic_time))
+
+    def available_at(self, audio_end_sec):
+        if not self.points:
+            return None
+
+        audio_end_sec = float(audio_end_sec)
+        ends = [point[0] for point in self.points]
+        index = bisect_left(ends, audio_end_sec)
+        if index >= len(self.points):
+            return self.points[-1][1]
+        return self.points[index][1]
 
 
 def encode_json_message(message):

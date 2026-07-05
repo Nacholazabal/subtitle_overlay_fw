@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.stt_stream_bridge import BridgeTranscriptSink
 from scripts.stt_stream_protocol import (
+    AudioAvailabilityTimeline,
     FORMAT_S16_LE,
     MESSAGE_SESSION_START,
     PROTOCOL_VERSION,
@@ -57,6 +58,16 @@ class SttStreamProtocolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_session_start(message)
 
+    def test_audio_timeline_maps_to_first_available_chunk(self):
+        timeline = AudioAvailabilityTimeline()
+
+        timeline.mark_available(0.5, 100.0)
+        timeline.mark_available(1.0, 100.5)
+
+        self.assertEqual(100.0, timeline.available_at(0.25))
+        self.assertEqual(100.5, timeline.available_at(0.75))
+        self.assertEqual(100.5, timeline.available_at(1.5))
+
 
 class RecordingSink:
     def __init__(self):
@@ -72,7 +83,9 @@ class RecordingSink:
 class BridgeTranscriptSinkTests(unittest.TestCase):
     def test_strips_protocol_type_before_forwarding(self):
         sink = RecordingSink()
-        bridge = BridgeTranscriptSink(sink, audio_start_monotonic=100.0)
+        timeline = AudioAvailabilityTimeline()
+        timeline.mark_available(1.0, 100.0)
+        bridge = BridgeTranscriptSink(sink, timeline=timeline)
 
         bridge.handle_event(
             {

@@ -318,6 +318,10 @@ def analyze_pipeline(events):
         notes.append(f"queue backlog reached {max(queue_wait):.2f}s")
     if emit_lag and percentile(emit_lag, 0.90) > 2.0:
         notes.append(f"p90 emit lag is {percentile(emit_lag, 0.90):.2f}s")
+    if server_emit_lag and min(server_emit_lag) < -0.05:
+        notes.append(f"server emit lag still has negative samples (min={min(server_emit_lag):.2f}s)")
+    if bridge_receive_lag and min(bridge_receive_lag) < -0.05:
+        notes.append(f"bridge receive lag still has negative samples (min={min(bridge_receive_lag):.2f}s)")
 
     verdict = "OK" if not notes else "ATTENTION"
     print_header("PIPELINE", verdict)
@@ -336,6 +340,52 @@ def analyze_pipeline(events):
         print_stat_line("bridge recv lag", bridge_receive_lag)
     for note in notes:
         print(f"  NOTE: {note}")
+    print()
+
+
+def analyze_display_cadence(events):
+    timed = [
+        event
+        for event in events
+        if isinstance(event.get("bridge_received_monotonic"), (int, float))
+    ]
+    if len(timed) < 2:
+        print_header("DISPLAY", "not enough receive timestamps")
+        print("  no bridge receive timestamps available")
+        print()
+        return
+
+    timed = sorted(timed, key=lambda event: event.get("seq", 0))
+    intervals = [
+        float(b["bridge_received_monotonic"]) - float(a["bridge_received_monotonic"])
+        for a, b in zip(timed, timed[1:])
+    ]
+    partial_intervals = [
+        interval
+        for event, interval in zip(timed, intervals)
+        if not event.get("is_final")
+    ]
+    final_intervals = [
+        interval
+        for event, interval in zip(timed, intervals)
+        if event.get("is_final")
+    ]
+    short_all = sum(1 for interval in intervals if interval < 1.5)
+    short_partials = sum(1 for interval in partial_intervals if interval < 1.5)
+    short_finals = sum(1 for interval in final_intervals if interval < 1.5)
+
+    verdict = "OK" if short_all == 0 else "FAST UPDATES"
+    print_header("DISPLAY", verdict)
+    print_stat_line("event spacing", intervals)
+    print_stat_line("partial spacing", partial_intervals)
+    print_stat_line("final spacing", final_intervals)
+    print(
+        f"  <1.5s visible    : all={short_all}/{len(intervals)} "
+        f"partials={short_partials}/{len(partial_intervals)} "
+        f"finals={short_finals}/{len(final_intervals)}"
+    )
+    if short_all > 0:
+        print("  NOTE: events are replacing text faster than a 1.5s readability target")
     print()
 
 
@@ -442,6 +492,7 @@ def main():
     analyze_events(events)
     analyze_segmentation(events)
     analyze_pipeline(events)
+    analyze_display_cadence(events)
     analyze_timing(events)
     transcript_sample(events)
 

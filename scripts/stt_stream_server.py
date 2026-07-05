@@ -18,6 +18,7 @@ from scripts.stt_receiver import (
     is_hallucination,
 )
 from scripts.stt_stream_protocol import (
+    AudioAvailabilityTimeline,
     MESSAGE_ERROR,
     MESSAGE_PING,
     MESSAGE_PONG,
@@ -112,9 +113,10 @@ class SessionWhisperEngine:
 class AsyncTranscriptSink:
     """Thread-safe sink from ChunkTranscriber worker thread to an asyncio queue."""
 
-    def __init__(self, loop, event_queue, jsonl_path=None):
+    def __init__(self, loop, event_queue, timeline, jsonl_path=None):
         self.loop = loop
         self.event_queue = event_queue
+        self.timeline = timeline
         self.jsonl_path = jsonl_path
         self.jsonl = open(jsonl_path, "w", encoding="utf-8") if jsonl_path else None
 
@@ -125,8 +127,14 @@ class AsyncTranscriptSink:
             event["server_queue_sec"] = event["queue_wait_sec"]
         if "infer_sec" in event:
             event["gpu_infer_sec"] = event["infer_sec"]
-        if "emit_lag_sec" in event:
-            event["server_emit_lag_sec"] = event["emit_lag_sec"]
+        if "end_sec" in event:
+            available_at = self.timeline.available_at(float(event["end_sec"]))
+            if available_at is not None:
+                now = time.monotonic()
+                corrected_lag = round(now - available_at, 3)
+                event["server_emit_lag_sec"] = corrected_lag
+                event["emit_lag_sec"] = corrected_lag
+                event["server_audio_available_monotonic"] = round(available_at, 6)
         if "chunk_sec" in event:
             event["audio_buffer_sec"] = event["chunk_sec"]
         event.setdefault("server_sent_monotonic", round(time.monotonic(), 6))
@@ -205,11 +213,18 @@ async def _send_events(websocket, event_queue):
             event_queue.task_done()
 
 
-async def _receive_audio(websocket, transcriber):
+async def _receive_audio(websocket, transcriber, session, timeline):
+    rate = int(session["sample_rate_hz"])
+    channels = int(session["channels"])
+    audio_end_sec = 0.0
+
     while True:
         message = await websocket.receive()
         if "bytes" in message and message["bytes"] is not None:
             frame = decode_audio_frame(message["bytes"])
+            received_at = time.monotonic()
+            audio_end_sec += len(frame.payload) / float(rate * channels * 2)
+            timeline.mark_available(audio_end_sec, received_at)
             transcriber.push_pcm(frame.payload)
             continue
 
@@ -264,7 +279,8 @@ def create_app(config):
             validate_session_start(session)
 
             event_queue = asyncio.Queue(maxsize=config.event_queue_size)
-            sink = AsyncTranscriptSink(asyncio.get_running_loop(), event_queue, config.jsonl)
+            timeline = AudioAvailabilityTimeline()
+            sink = AsyncTranscriptSink(asyncio.get_running_loop(), event_queue, timeline, config.jsonl)
             engine = SessionWhisperEngine(app.state.shared_model)
             transcriber = ChunkTranscriber(
                 engine,
@@ -291,7 +307,7 @@ def create_app(config):
             )
 
             sender = asyncio.create_task(_send_events(websocket, event_queue))
-            normal_end = await _receive_audio(websocket, transcriber)
+            normal_end = await _receive_audio(websocket, transcriber, session, timeline)
             if normal_end and event_queue is not None:
                 try:
                     await asyncio.wait_for(event_queue.join(), timeout=5.0)
