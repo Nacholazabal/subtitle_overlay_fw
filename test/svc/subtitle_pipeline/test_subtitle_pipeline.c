@@ -10,6 +10,7 @@
 
 static subtitle_pipeline_t pipeline;
 static uint8_t bitmap[2];
+static uint8_t captured_caption_is_final;
 
 static void expect_init_success(void)
 {
@@ -20,10 +21,30 @@ static void expect_init_success(void)
     subtitle_overlay_enable_ExpectAnyArgsAndReturn(0);
 }
 
+static int renderer_caption_stub(char const* text,
+                                 uint8_t current_is_final,
+                                 uint8_t* dst,
+                                 size_t dst_size,
+                                 uint32_t* width,
+                                 uint32_t* height,
+                                 int call_count)
+{
+    (void)text;
+    (void)dst;
+    (void)dst_size;
+    (void)call_count;
+
+    captured_caption_is_final = current_is_final;
+    *width = SUBTITLE_BRAM_MASK_WIDTH;
+    *height = SUBTITLE_BRAM_MASK_HEIGHT;
+    return 0;
+}
+
 void setUp(void)
 {
     memset(&pipeline, 0, sizeof(pipeline));
     memset(bitmap, 0xFF, sizeof(bitmap));
+    captured_caption_is_final = 0U;
 }
 
 void tearDown(void)
@@ -124,6 +145,29 @@ void test_subtitle_pipeline_write_bitmap_requires_initialized_pipeline_and_deleg
     TEST_ASSERT_EQUAL_INT(
         0,
         subtitle_pipeline_write_bitmap(&pipeline, bitmap, sizeof(bitmap), 1, 2, 3, 4));
+}
+
+void test_subtitle_pipeline_write_caption_passes_current_final_state_to_renderer(void)
+{
+    TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_pipeline_write_caption(NULL, "hola", 0U));
+    TEST_ASSERT_EQUAL_INT(-APP_ESTATE, subtitle_pipeline_write_caption(&pipeline, "hola", 0U));
+
+    pipeline.initialized = 1U;
+    subtitle_text_renderer_render_caption_Stub(renderer_caption_stub);
+    subtitle_bram_write_bitmap_ExpectAnyArgsAndReturn(0);
+
+    TEST_ASSERT_EQUAL_INT(0, subtitle_pipeline_write_caption(&pipeline, "hola", 0U));
+    TEST_ASSERT_EQUAL_UINT8(0U, captured_caption_is_final);
+}
+
+void test_subtitle_pipeline_write_text_treats_text_as_final_caption(void)
+{
+    pipeline.initialized = 1U;
+    subtitle_text_renderer_render_caption_Stub(renderer_caption_stub);
+    subtitle_bram_write_bitmap_ExpectAnyArgsAndReturn(0);
+
+    TEST_ASSERT_EQUAL_INT(0, subtitle_pipeline_write_text(&pipeline, "manual"));
+    TEST_ASSERT_EQUAL_UINT8(1U, captured_caption_is_final);
 }
 
 void test_subtitle_pipeline_commit_clears_and_waits_for_sof(void)

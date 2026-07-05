@@ -3,9 +3,8 @@
 
 This mirrors the firmware so a run can be inspected without the board:
 - subtitle_text_sanitize.c  -> UTF-8 folded to approximate ASCII
-- SubtitleAO.c              -> rolling transcript (last N words; finals commit,
-                               partials show history + in-progress text)
-- subtitle_text_renderer.c  -> newest text wrapped into the 5-line 1024x256 mask
+- SubtitleAO.c              -> previous final + current live segment
+- subtitle_text_renderer.c  -> broadcast text wrapped into the 3-line 1024x256 mask
 
 Usage:
   python scripts/subtitle_debug.py [events.jsonl]      # replay a recorded run
@@ -20,16 +19,17 @@ import sys
 import time
 
 # Must match the firmware constants.
-HISTORY_WORDS = 48           # SUBTITLE_AO_HISTORY_WORDS
 MASK_WIDTH = 1024            # SUBTITLE_BRAM_MASK_WIDTH
-GLYPH_SCALE = 4              # GLYPH_SCALE
-GLYPH_ADVANCE = 7 * GLYPH_SCALE
+GLYPH_SCALE = 2              # GLYPH_SCALE
+GLYPH_ADVANCE = 9 * GLYPH_SCALE
 RENDER_TEXT_X = 24           # RENDER_TEXT_X
-GLYPH_RENDERED_WIDTH = 5 * GLYPH_SCALE
+GLYPH_RENDERED_WIDTH = 8 * GLYPH_SCALE
 GLYPHS_PER_LINE = (
     ((MASK_WIDTH - RENDER_TEXT_X - GLYPH_RENDERED_WIDTH) // GLYPH_ADVANCE) + 1
 )
-MAX_LINES = 5                # RENDER_MAX_LINES
+MAX_LINES = 3                # RENDER_MAX_LINES
+PREVIOUS_LINES = 1           # RENDER_PREVIOUS_LINES
+CURRENT_LINES = 2            # RENDER_CURRENT_LINES
 
 # UTF-8 -> ASCII folding, matching subtitle_text_sanitize.c.
 _SANITIZE_MAP = {
@@ -54,15 +54,8 @@ def sanitize(text):
     return "".join(out)
 
 
-def last_n_words(text, n):
-    words = text.split()
-    if len(words) <= n:
-        return text.strip()
-    return " ".join(words[-n:])
-
-
-def wrap_tail(text, width, max_lines):
-    """Greedy word-wrap, then keep the last max_lines lines (the newest text)."""
+def wrap_lines(text, width):
+    """Greedy word-wrap, hyphenating only single words wider than the line."""
     lines = []
     current = ""
     for word in text.split():
@@ -72,28 +65,53 @@ def wrap_tail(text, width, max_lines):
         else:
             if current:
                 lines.append(current)
-            # A single word longer than the line is hard-cut.
+            # A single word longer than the line is hyphenated.
             while len(word) > width:
-                lines.append(word[:width])
-                word = word[width:]
+                lines.append(word[: width - 1] + "-")
+                word = word[width - 1 :]
             current = word
     if current:
         lines.append(current)
-    return lines[-max_lines:] if lines else [""]
+    return lines if lines else [""]
+
+
+def wrap_broadcast(text, width):
+    if "\n" not in text:
+        return wrap_lines(sanitize(text), width)[-MAX_LINES:]
+
+    previous, current = text.split("\n", 1)
+    lines = []
+    if previous.strip():
+        lines.extend(wrap_lines(sanitize(previous), width)[-PREVIOUS_LINES:])
+    if current.strip():
+        lines.extend(wrap_lines(sanitize(current), width)[-CURRENT_LINES:])
+    return lines if lines else [""]
 
 
 class SubtitleModel:
     def __init__(self):
-        self.history = ""
+        self.previous_final = ""
+        self.current_text = ""
+        self.current_is_final = False
+        self.previous_visible = False
+        self.full_transcript = ""
 
     def apply(self, text, is_final):
-        combined = f"{self.history} {text}".strip() if self.history else text
+        if self.current_is_final and self.current_text:
+            self.previous_final = self.current_text
+            self.previous_visible = True
+
+        self.current_text = text
+        self.current_is_final = is_final
+
         if is_final:
-            self.history = last_n_words(combined, HISTORY_WORDS)
-            display = self.history
+            self.full_transcript = f"{self.full_transcript} {text}".strip()
+
+        if self.previous_visible and self.previous_final:
+            display = f"{self.previous_final}\n{self.current_text}"
         else:
-            display = last_n_words(combined, HISTORY_WORDS)
-        return wrap_tail(sanitize(display), GLYPHS_PER_LINE, MAX_LINES)
+            display = self.current_text
+        return wrap_broadcast(display, GLYPHS_PER_LINE)
 
 
 def render_box(lines):
@@ -157,7 +175,7 @@ def main():
         print()
 
     print("=== full transcript (committed finals) ===")
-    print(model.history)
+    print(model.full_transcript)
 
 
 if __name__ == "__main__":

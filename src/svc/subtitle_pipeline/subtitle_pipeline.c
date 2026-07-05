@@ -220,6 +220,20 @@ int subtitle_pipeline_write_bitmap(subtitle_pipeline_t* const pipeline,
  */
 int subtitle_pipeline_write_text(subtitle_pipeline_t* const pipeline, char const* const text)
 {
+    return subtitle_pipeline_write_caption(pipeline, text, 1U);
+}
+
+/**
+ * @brief Render a broadcast caption into the subtitle mask and write it to BRAM.
+ * @param pipeline Initialized pipeline instance.
+ * @param text Null-terminated subtitle text.
+ * @param current_is_final Nonzero when the current/live segment is final.
+ * @return 0 on success, or a negative errno-style value on failure.
+ */
+int subtitle_pipeline_write_caption(subtitle_pipeline_t* const pipeline,
+                                    char const* const text,
+                                    uint8_t const current_is_final)
+{
     uint8_t bitmap[SUBTITLE_BRAM_SIZE_BYTES];
     uint32_t width;
     uint32_t height;
@@ -230,7 +244,12 @@ int subtitle_pipeline_write_text(subtitle_pipeline_t* const pipeline, char const
         return (pipeline == NULL) ? -EINVAL : -APP_ESTATE;
     }
 
-    status = subtitle_text_renderer_render(text, bitmap, sizeof(bitmap), &width, &height);
+    status = subtitle_text_renderer_render_caption(text,
+                                                   current_is_final,
+                                                   bitmap,
+                                                   sizeof(bitmap),
+                                                   &width,
+                                                   &height);
     if (status != 0)
     {
         return status;

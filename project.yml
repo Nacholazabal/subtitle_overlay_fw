@@ -15,9 +15,13 @@
   :test:
     - test/**
   :source:
+    - test/support/**
     - src/hal/subtitle_bram/**
     - src/hal/subtitle_overlay/**
     - src/hal/usb_audio/**
+    - src/qpc/ports/posix-qv/**
+    - src/qpc/src/qf/**
+    - src/svc/system/**
     - src/svc/stt/**
     - src/svc/subtitle_pipeline/**
     - src/svc/usb_audio/**
@@ -42,9 +46,11 @@
     - src/hal/video_vtc
     - src/hal/usb_audio
     - src/svc/stt
+    - src/svc/system
     - src/svc/subtitle_pipeline
     - src/svc/usb_audio
     - src/svc/video_pipeline
+    - test/support
     - src/utils/log
     - src/utils/number_parse
 

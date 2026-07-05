@@ -29,16 +29,17 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #define SUBTITLE_AO_DONE_Y             ((SUBTITLE_BRAM_MASK_HEIGHT - SUBTITLE_AO_DONE_HEIGHT) / 2)
 #define SUBTITLE_AO_DONE_BYTES_PER_ROW (SUBTITLE_AO_DONE_WIDTH / 8)
 
-/// Rolling transcript: keep the most recent words across finals so complete
-/// phrases stay visible instead of being wiped every time a new event arrives.
-#define SUBTITLE_AO_HISTORY_WORDS (48U)
-#define SUBTITLE_AO_HISTORY_MAX   (512U)
+/// Broadcast captions: keep one previous final segment briefly above the live segment.
+#define SUBTITLE_AO_SLOT_MAX   (SUBTITLE_TEXT_MAX_LEN)
+#define SUBTITLE_AO_RENDER_MAX ((SUBTITLE_AO_SLOT_MAX * 2U) + 2U)
 
-/// Inactivity timeout: clear the overlay and reset history when no new subtitle
+/// Inactivity timeout: clear the overlay and reset broadcast slots when no new subtitle
 /// text arrives for this long, so stale captions disappear instead of lingering.
-#define SUBTITLE_AO_TICKS_PER_SEC        (100U)
-#define SUBTITLE_AO_CLEAR_TIMEOUT_MS     (5000U)
-#define SUBTITLE_AO_CLEAR_TIMEOUT_MIN_MS (5000U)
+#define SUBTITLE_AO_TICKS_PER_SEC            (100U)
+#define SUBTITLE_AO_CLEAR_TIMEOUT_MS         (5000U)
+#define SUBTITLE_AO_CLEAR_TIMEOUT_MIN_MS     (1000U)
+#define SUBTITLE_AO_PREVIOUS_HOLD_MS         (3000U)
+#define SUBTITLE_AO_PREVIOUS_HOLD_MIN_MS     (250U)
 
 // === Private data type declarations ============================================================================== //
 
@@ -46,10 +47,16 @@ typedef struct
 {
     QActive super;
     QTimeEvt clear_time_evt;
+    QTimeEvt previous_expire_evt;
 
     subtitle_pipeline_t pipeline;
-    char history[SUBTITLE_AO_HISTORY_MAX];
+    char previous_final[SUBTITLE_AO_SLOT_MAX];
+    char current_text[SUBTITLE_AO_SLOT_MAX];
     uint32_t clear_timeout_ticks;
+    uint32_t previous_hold_ticks;
+    uint8_t previous_visible;
+    uint8_t current_valid;
+    uint8_t current_is_final;
     uint8_t running;
 } subtitle_ao_t;
 
@@ -65,10 +72,15 @@ static void post_ready(subtitle_ao_t* const me);
 static void post_error(subtitle_ao_t* const me, int32_t code);
 static int on_component_init(subtitle_ao_t* const me, component_init_evt_t const* const e);
 static int on_subtitle_text(subtitle_ao_t* const me, subtitle_text_evt_t const* const e);
-static char const* last_n_words(char const* text, uint32_t n);
-static void copy_last_words(char* dst, size_t dst_size, char const* src, uint32_t n);
+static int on_previous_expired(subtitle_ao_t* const me);
+static int render_current_state(subtitle_ao_t* const me);
+static void promote_current_to_previous(subtitle_ao_t* const me);
+static void reset_text_state(subtitle_ao_t* const me);
 static void clear_subtitle(subtitle_ao_t* const me);
+static uint32_t ms_to_ticks(uint32_t timeout_ms);
+static uint32_t resolve_timeout_ticks(char const* env_name, uint32_t default_ms, uint32_t min_ms);
 static uint32_t resolve_clear_timeout_ticks(void);
+static uint32_t resolve_previous_hold_ticks(void);
 static int draw_startup_marker(subtitle_ao_t* const me);
 static void enter_error(subtitle_ao_t* const me, int32_t code);
 
@@ -228,62 +240,69 @@ static int on_component_init(subtitle_ao_t* const me, component_init_evt_t const
     return status;
 }
 
-/**
- * @brief Return the start of the last @p n whitespace-separated words in @p text.
- * @param text Null-terminated text.
- * @param n Number of trailing words to keep.
- * @return Pointer into @p text at the start of the last @p n words.
- */
-static char const* last_n_words(char const* const text, uint32_t n)
+static void reset_text_state(subtitle_ao_t* const me)
 {
-    size_t const len = strlen(text);
-    uint32_t count = 0U;
-    size_t i = len;
+    me->previous_final[0] = '\0';
+    me->current_text[0] = '\0';
+    me->previous_visible = 0U;
+    me->current_valid = 0U;
+    me->current_is_final = 0U;
+}
 
-    if ((n == 0U) || (len == 0U))
+static void promote_current_to_previous(subtitle_ao_t* const me)
+{
+    if ((me->current_valid != 0U) && (me->current_text[0] != '\0'))
     {
-        return text + len;
+        snprintf(me->previous_final, sizeof(me->previous_final), "%s", me->current_text);
+        me->previous_visible = 1U;
+        QTimeEvt_rearm(&me->previous_expire_evt, me->previous_hold_ticks);
     }
-
-    while (i > 0U)
-    {
-        i--;
-        if ((text[i] != ' ') && ((i == 0U) || (text[i - 1U] == ' ')))
-        {
-            count++;
-            if (count == n)
-            {
-                return text + i;
-            }
-        }
-    }
-
-    return text;
 }
 
 /**
- * @brief Copy the last @p n words of @p src into @p dst, dropping older words.
- * @param dst Destination buffer.
- * @param dst_size Destination capacity.
- * @param src Source text.
- * @param n Number of trailing words to keep.
- * @return None.
- */
-static void copy_last_words(char* const dst, size_t dst_size, char const* const src, uint32_t n)
-{
-    snprintf(dst, dst_size, "%s", last_n_words(src, n));
-}
-
-/**
- * @brief Blank the overlay and reset the rolling transcript.
+ * @brief Blank the overlay and reset the visible broadcast caption slots.
  * @param me Subtitle active object owning the pipeline.
  * @return None.
  */
 static void clear_subtitle(subtitle_ao_t* const me)
 {
-    me->history[0] = '\0';
+    reset_text_state(me);
+    (void)QTimeEvt_disarm(&me->previous_expire_evt);
     (void)subtitle_pipeline_clear(&me->pipeline);
     (void)subtitle_pipeline_enable(&me->pipeline, 0U);
+}
+
+static uint32_t ms_to_ticks(uint32_t const timeout_ms)
+{
+    uint32_t const whole_seconds = timeout_ms / 1000U;
+    uint32_t const remaining_ms = timeout_ms % 1000U;
+
+    return (whole_seconds * SUBTITLE_AO_TICKS_PER_SEC)
+           + ((remaining_ms * SUBTITLE_AO_TICKS_PER_SEC) / 1000U);
+}
+
+static uint32_t resolve_timeout_ticks(char const* const env_name,
+                                      uint32_t const default_ms,
+                                      uint32_t const min_ms)
+{
+    char const* const env = getenv(env_name);
+    uint32_t timeout_ms = default_ms;
+
+    if ((env != NULL) && (env[0] != '\0'))
+    {
+        uint32_t parsed;
+
+        if (number_parse_u32(env, strlen(env), min_ms, UINT32_MAX, &parsed) == 0)
+        {
+            timeout_ms = parsed;
+        }
+        else
+        {
+            LOG_WARNING("subtitle: ignoring invalid %s='%s'", env_name, env);
+        }
+    }
+
+    return ms_to_ticks(timeout_ms);
 }
 
 /**
@@ -293,50 +312,71 @@ static void clear_subtitle(subtitle_ao_t* const me)
  */
 static uint32_t resolve_clear_timeout_ticks(void)
 {
-    char const* const env = getenv("SUBTITLE_CLEAR_TIMEOUT_MS");
-    uint32_t timeout_ms = SUBTITLE_AO_CLEAR_TIMEOUT_MS;
-    uint32_t whole_seconds;
-    uint32_t remaining_ms;
+    return resolve_timeout_ticks("SUBTITLE_CLEAR_TIMEOUT_MS",
+                                 SUBTITLE_AO_CLEAR_TIMEOUT_MS,
+                                 SUBTITLE_AO_CLEAR_TIMEOUT_MIN_MS);
+}
 
-    if ((env != NULL) && (env[0] != '\0'))
+static uint32_t resolve_previous_hold_ticks(void)
+{
+    return resolve_timeout_ticks("SUBTITLE_PREVIOUS_HOLD_MS",
+                                 SUBTITLE_AO_PREVIOUS_HOLD_MS,
+                                 SUBTITLE_AO_PREVIOUS_HOLD_MIN_MS);
+}
+
+static int render_current_state(subtitle_ao_t* const me)
+{
+    char render_text[SUBTITLE_AO_RENDER_MAX];
+    int status;
+
+    if ((me->previous_visible == 0U) && (me->current_valid == 0U))
     {
-        uint32_t parsed;
-
-        if (number_parse_u32(env,
-                             strlen(env),
-                             SUBTITLE_AO_CLEAR_TIMEOUT_MIN_MS,
-                             UINT32_MAX,
-                             &parsed)
-            == 0)
+        status = subtitle_pipeline_clear(&me->pipeline);
+        if (status == 0)
         {
-            timeout_ms = parsed;
+            status = subtitle_pipeline_enable(&me->pipeline, 0U);
         }
-        else
-        {
-            LOG_WARNING("subtitle: ignoring invalid SUBTITLE_CLEAR_TIMEOUT_MS='%s'", env);
-        }
+        return status;
     }
 
-    whole_seconds = timeout_ms / 1000U;
-    remaining_ms = timeout_ms % 1000U;
-    return (whole_seconds * SUBTITLE_AO_TICKS_PER_SEC)
-           + ((remaining_ms * SUBTITLE_AO_TICKS_PER_SEC) / 1000U);
+    if ((me->previous_visible != 0U) && (me->current_valid != 0U))
+    {
+        snprintf(render_text, sizeof(render_text), "%s\n%s", me->previous_final, me->current_text);
+    }
+    else if (me->previous_visible != 0U)
+    {
+        snprintf(render_text, sizeof(render_text), "%s", me->previous_final);
+    }
+    else
+    {
+        snprintf(render_text, sizeof(render_text), "%s", me->current_text);
+    }
+
+    status = subtitle_pipeline_clear(&me->pipeline);
+    if (status == 0)
+    {
+        status = subtitle_pipeline_write_caption(&me->pipeline,
+                                                 render_text,
+                                                 me->current_is_final);
+    }
+    if (status == 0)
+    {
+        status = subtitle_pipeline_enable(&me->pipeline, 1U);
+    }
+
+    return status;
 }
 
 /**
- * @brief Render one subtitle text event as part of a rolling transcript.
+ * @brief Render one subtitle text event as part of a broadcast caption pair.
  *
- * Finals are appended to a trimmed history so coherent phrases accumulate, while
- * partials are shown appended to the history without being committed. Only the
- * most recent words are rendered so the newest speech stays visible.
+ * A short previous-final slot provides context above the live/current segment.
  * @param me Subtitle active object owning the pipeline.
  * @param e Subtitle text event.
  * @return 0 on success, or a negative errno-style value on failure.
  */
 static int on_subtitle_text(subtitle_ao_t* const me, subtitle_text_evt_t const* const e)
 {
-    char combined[SUBTITLE_AO_HISTORY_MAX + SUBTITLE_TEXT_MAX_LEN];
-    char const* render_src;
     int status;
 
     if ((e == NULL) || (e->text[0] == '\0'))
@@ -344,50 +384,24 @@ static int on_subtitle_text(subtitle_ao_t* const me, subtitle_text_evt_t const* 
         return -EINVAL;
     }
 
-    if (me->history[0] != '\0')
+    if ((me->current_valid != 0U) && (me->current_is_final != 0U))
     {
-        snprintf(combined, sizeof(combined), "%s %s", me->history, e->text);
-    }
-    else
-    {
-        snprintf(combined, sizeof(combined), "%s", e->text);
+        promote_current_to_previous(me);
     }
 
-    if (e->is_final != 0U)
-    {
-        // Commit the newest words into the rolling history.
-        copy_last_words(me->history, sizeof(me->history), combined, SUBTITLE_AO_HISTORY_WORDS);
-        render_src = me->history;
-    }
-    else
-    {
-        // Show the in-progress partial without committing it to history.
-        render_src = last_n_words(combined, SUBTITLE_AO_HISTORY_WORDS);
-    }
+    snprintf(me->current_text, sizeof(me->current_text), "%s", e->text);
+    me->current_valid = 1U;
+    me->current_is_final = (e->is_final != 0U) ? 1U : 0U;
 
     LOG_INFO("subtitle: rendering %s seq=%lu text=\"%s\"",
              (e->is_final != 0U) ? "final" : "partial",
              (unsigned long)e->seq,
              e->text);
 
-    status = subtitle_pipeline_clear(&me->pipeline);
+    status = render_current_state(me);
     if (status != 0)
     {
-        LOG_ERROR("subtitle: clear failed, code=%ld", (long)status);
-        return status;
-    }
-
-    status = subtitle_pipeline_write_text(&me->pipeline, render_src);
-    if (status != 0)
-    {
-        LOG_ERROR("subtitle: text render failed, code=%ld", (long)status);
-        return status;
-    }
-
-    status = subtitle_pipeline_enable(&me->pipeline, 1U);
-    if (status != 0)
-    {
-        LOG_ERROR("subtitle: enable failed, code=%ld", (long)status);
+        LOG_ERROR("subtitle: render failed, code=%ld", (long)status);
         return status;
     }
 
@@ -395,6 +409,13 @@ static int on_subtitle_text(subtitle_ao_t* const me, subtitle_text_evt_t const* 
     QTimeEvt_rearm(&me->clear_time_evt, me->clear_timeout_ticks);
 
     return status;
+}
+
+static int on_previous_expired(subtitle_ao_t* const me)
+{
+    me->previous_final[0] = '\0';
+    me->previous_visible = 0U;
+    return render_current_state(me);
 }
 
 /**
@@ -407,6 +428,7 @@ static void enter_error(subtitle_ao_t* const me, int32_t code)
 {
     LOG_WARNING("subtitle: cleaning up after error code %ld", (long)code);
     (void)QTimeEvt_disarm(&me->clear_time_evt);
+    (void)QTimeEvt_disarm(&me->previous_expire_evt);
     subtitle_pipeline_cleanup(&me->pipeline);
     me->running = 0U;
 
@@ -488,6 +510,18 @@ static QState subtitle_ao_ready(subtitle_ao_t* const me, QEvt const* const e)
         status = Q_HANDLED();
         break;
 
+    case SUBTITLE_PREVIOUS_EXPIRE_SIG:
+        if (on_previous_expired(me) == 0)
+        {
+            status = Q_HANDLED();
+        }
+        else
+        {
+            enter_error(me, -EIO);
+            status = Q_TRAN(&subtitle_ao_error);
+        }
+        break;
+
     default:
         status = Q_SUPER(&QHsm_top);
         break;
@@ -523,8 +557,10 @@ void subtitle_ao_ctor(void)
 
     QActive_ctor(&me->super, Q_STATE_CAST(&subtitle_ao_initial));
     QTimeEvt_ctorX(&me->clear_time_evt, &me->super, SUBTITLE_CLEAR_SIG, 0U);
-    me->history[0] = '\0';
+    QTimeEvt_ctorX(&me->previous_expire_evt, &me->super, SUBTITLE_PREVIOUS_EXPIRE_SIG, 0U);
+    reset_text_state(me);
     me->clear_timeout_ticks = resolve_clear_timeout_ticks();
+    me->previous_hold_ticks = resolve_previous_hold_ticks();
     me->running = 0U;
 }
 
