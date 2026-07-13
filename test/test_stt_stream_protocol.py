@@ -1,11 +1,13 @@
 import unittest
 import sys
+import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.stt_stream_bridge import BridgeTranscriptSink
+from scripts.stt_stream_bridge import BridgeTranscriptSink, StreamingBridge
 from scripts.stt_stream_protocol import (
     AudioAvailabilityTimeline,
     FORMAT_S16_LE,
@@ -102,6 +104,29 @@ class BridgeTranscriptSinkTests(unittest.TestCase):
         self.assertNotIn("type", sink.events[0])
         self.assertEqual("hola", sink.events[0]["text"])
         self.assertIn("bridge_receive_lag_sec", sink.events[0])
+
+
+class StreamingBridgeLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stop_marker_before_board_writes_done_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            stop_file = root / "stop"
+            done_file = root / "done.json"
+            stop_file.touch()
+            args = SimpleNamespace(
+                jsonl=None,
+                send_subtitles=False,
+                subtitle_host="127.0.0.1",
+                subtitle_port=5001,
+                stop_file=str(stop_file),
+                done_file=str(done_file),
+            )
+            bridge = StreamingBridge(args)
+
+            await bridge._watch_stop_file()
+
+            self.assertTrue(bridge.session_done.is_set())
+            self.assertTrue(done_file.exists())
 
 
 if __name__ == "__main__":

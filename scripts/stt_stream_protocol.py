@@ -11,6 +11,7 @@ PROTOCOL_VERSION = 1
 MESSAGE_SESSION_START = "session_start"
 MESSAGE_SESSION_READY = "session_ready"
 MESSAGE_SESSION_END = "session_end"
+MESSAGE_SESSION_SUMMARY = "session_summary"
 MESSAGE_ERROR = "error"
 MESSAGE_PING = "ping"
 MESSAGE_PONG = "pong"

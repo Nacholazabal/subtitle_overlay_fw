@@ -3,8 +3,10 @@
 
 import argparse
 import asyncio
+import io
 import json
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +26,7 @@ from scripts.stt_stream_protocol import (
     MESSAGE_PONG,
     MESSAGE_SESSION_END,
     MESSAGE_SESSION_READY,
+    MESSAGE_SESSION_SUMMARY,
     MESSAGE_TRANSCRIPT,
     decode_audio_frame,
     decode_json_message,
@@ -74,6 +77,18 @@ class SharedWhisperModel:
             **kwargs,
         )
         self.config = config
+        self.inference_lock = threading.Lock()
+
+    def transcribe(self, audio):
+        """Run one inference at a time on the shared CTranslate2 model."""
+        with self.inference_lock:
+            segments, info = self.model.transcribe(
+                audio,
+                language=self.config.language,
+                beam_size=self.config.beam_size,
+                vad_filter=self.config.vad_filter,
+            )
+            return list(segments), info
 
 
 class SessionWhisperEngine:
@@ -84,13 +99,7 @@ class SessionWhisperEngine:
         self.seq = 0
 
     def transcribe_chunk(self, audio, start_sec, end_sec, is_final):
-        config = self.shared_model.config
-        segments, _info = self.shared_model.model.transcribe(
-            audio,
-            language=config.language,
-            beam_size=config.beam_size,
-            vad_filter=config.vad_filter,
-        )
+        segments, _info = self.shared_model.transcribe(audio)
         text = " ".join(segment.text.strip() for segment in segments).strip()
         if not text:
             return None
@@ -119,6 +128,8 @@ class AsyncTranscriptSink:
         self.timeline = timeline
         self.jsonl_path = jsonl_path
         self.jsonl = open(jsonl_path, "w", encoding="utf-8") if jsonl_path else None
+        self.emitted_event_count = 0
+        self.dropped_event_count = 0
 
     def handle_event(self, event):
         event = dict(event)
@@ -138,6 +149,7 @@ class AsyncTranscriptSink:
         if "chunk_sec" in event:
             event["audio_buffer_sec"] = event["chunk_sec"]
         event.setdefault("server_sent_monotonic", round(time.monotonic(), 6))
+        self.emitted_event_count += 1
 
         if self.jsonl is not None:
             self.jsonl.write(json.dumps(event, ensure_ascii=False) + "\n")
@@ -155,6 +167,7 @@ class AsyncTranscriptSink:
             return
 
         if not event.get("is_final", False):
+            self.dropped_event_count += 1
             print("stream server event queue full: dropping partial", flush=True)
             return
 
@@ -171,9 +184,13 @@ class AsyncTranscriptSink:
         for queued in kept:
             await self.event_queue.put(queued)
 
+        if dropped_partial:
+            self.dropped_event_count += 1
+
         if not self.event_queue.full():
             await self.event_queue.put(event)
         else:
+            self.dropped_event_count += 1
             print("stream server event queue full: dropping final", flush=True)
 
     def close(self):
@@ -186,6 +203,7 @@ def build_run_config(config):
     return {
         "run_engine": "stream_server",
         "config_model": config.model,
+        "config_language": config.language,
         "config_device": config.device,
         "config_compute_type": config.compute_type,
         "config_cpu_threads": config.cpu_threads,
@@ -200,6 +218,39 @@ def build_run_config(config):
         "config_gain": config.gain,
         "config_partial_backpressure": True,
         "config_transport": "websocket",
+    }
+
+
+def transcribe_offline_bytes(shared_model, audio_bytes, filename="audio"):
+    """Decode and transcribe a complete file with the live server's model."""
+    from faster_whisper.audio import decode_audio
+
+    if not audio_bytes:
+        raise ValueError("empty audio upload")
+
+    started_at = time.monotonic()
+    audio = decode_audio(io.BytesIO(audio_bytes), sampling_rate=WHISPER_RATE)
+    segments_iter, info = shared_model.transcribe(audio)
+    segments = [
+        {
+            "start_sec": round(float(segment.start), 3),
+            "end_sec": round(float(segment.end), 3),
+            "text": segment.text.strip(),
+        }
+        for segment in segments_iter
+        if segment.text.strip()
+    ]
+    config = build_run_config(shared_model.config)
+    config["config_realtime"] = False
+    config["config_transport"] = "http_offline"
+    return {
+        "filename": filename,
+        "text": " ".join(segment["text"] for segment in segments).strip(),
+        "segments": segments,
+        "inference_sec": round(time.monotonic() - started_at, 3),
+        "audio_duration_sec": round(len(audio) / float(WHISPER_RATE), 3),
+        "detected_language": getattr(info, "language", None),
+        "config": config,
     }
 
 
@@ -244,8 +295,8 @@ async def _receive_audio(websocket, transcriber, session, timeline):
             return False
 
 
-def create_app(config):
-    from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+def create_app(config, shared_model_factory=SharedWhisperModel):
+    from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 
     app = FastAPI(title="Subtitle Overlay Streaming STT", version="1.0")
     app.state.config = config
@@ -253,7 +304,7 @@ def create_app(config):
 
     @app.on_event("startup")
     async def startup():
-        app.state.shared_model = SharedWhisperModel(config)
+        app.state.shared_model = shared_model_factory(config)
         print("streaming STT server ready", flush=True)
 
     @app.get("/health")
@@ -266,6 +317,24 @@ def create_app(config):
             "transport": "websocket",
             "run_config": build_run_config(config),
         }
+
+    @app.post("/stt/offline")
+    async def stt_offline(request: Request):
+        audio_bytes = await request.body()
+        if not audio_bytes:
+            raise HTTPException(status_code=400, detail="empty audio upload")
+        if len(audio_bytes) > 64 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="audio upload exceeds 64 MiB")
+        filename = request.headers.get("x-audio-filename", "audio")
+        try:
+            return await asyncio.to_thread(
+                transcribe_offline_bytes,
+                app.state.shared_model,
+                audio_bytes,
+                filename,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.websocket("/stt/stream")
     async def stt_stream(websocket: WebSocket):
@@ -311,10 +380,29 @@ def create_app(config):
             sender = asyncio.create_task(_send_events(websocket, event_queue))
             normal_end = await _receive_audio(websocket, transcriber, session, timeline)
             if normal_end and event_queue is not None:
+                queue_drained = True
                 try:
-                    await asyncio.wait_for(event_queue.join(), timeout=5.0)
+                    await asyncio.wait_for(event_queue.join(), timeout=30.0)
                 except TimeoutError:
+                    queue_drained = False
                     print("stream server timed out draining final events", flush=True)
+                    sender.cancel()
+                    try:
+                        await sender
+                    except asyncio.CancelledError:
+                        pass
+                await websocket.send_text(
+                    encode_json_message(
+                        {
+                            "type": MESSAGE_SESSION_SUMMARY,
+                            "jobs_submitted": transcriber._job_seq,
+                            "dropped_audio_jobs": transcriber._dropped_jobs,
+                            "events_emitted": sink.emitted_event_count,
+                            "events_dropped": sink.dropped_event_count,
+                            "event_queue_drained": queue_drained,
+                        }
+                    )
+                )
         except WebSocketDisconnect:
             pass
         except Exception as exc:

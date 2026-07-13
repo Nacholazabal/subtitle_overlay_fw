@@ -551,6 +551,95 @@ Despues de eso probar una de estas dos ramas:
 - Si Silero ve speech continuo: subir threshold VAD o agregar gate RMS adaptive.
 - Si Silero ve pausas cortas: probar `min_silence_sec=0.35` manteniendo `max_window_sec=4.0`.
 
+## Run S007 - 2026-07-06 - Football Background, Instrumented VAD
+
+Fuente: `python3 scripts/analyze_run.py` sobre `logs/stt_events.jsonl` y `logs/board_audio.wav`.
+
+### Config
+
+| Parametro | Valor |
+| --- | ---: |
+| engine | `stream_server` |
+| transport | `websocket` |
+| model | `small` |
+| max_window_sec | `3.0` |
+| min_silence_sec | `0.3` |
+| partial_sec | `0.5` |
+| partial_agreement | `1` |
+| beam_size | `5` |
+| VAD/filter | `True` |
+| lossless | `True` |
+| partial backpressure | `True` |
+
+### Resultado
+
+Veredicto subjetivo: corrida muy util porque confirma que la instrumentacion VAD ya llega al analyzer. Segmentacion mejor que S006, pero display demasiado inestable por exceso de updates.
+
+Resumen numerico:
+
+| Area | Resultado |
+| --- | --- |
+| Audio | `NOISY FLOOR` |
+| Duracion | 112.6s |
+| Peak | 69.3% full scale |
+| RMS | -24.5 dBFS |
+| Noise floor | p10=-32.0 dBFS, median=-24.9 dBFS, p90=-21.5 dBFS |
+| Dynamic range | 10.5 dB |
+| Events | 166 total, 44 finals, 122 partials |
+| Segment reasons | 11 `max_window`, 33 `silence`, 122 `partial_tick` |
+| Dropped audio jobs | 10 |
+| Final windows | p50=1.41s, p90=3.00s, mean=1.68s |
+| Partial windows | p50=1.00s, p90=2.50s, mean=1.25s |
+| VAD speech ratio | p50=0.89, p90=1.00 |
+| VAD trailing | p50=0.00s, p90=0.31s |
+| Tail RMS | p50=-24.0 dBFS, p90=-21.5 dBFS |
+| GPU infer | p50=0.19s, p90=0.28s, max=0.88s |
+| Server queue | p50=0.00s, p90=0.00s, max=1.05s |
+| Bridge recv lag | p50=0.67s, p90=1.05s, max=2.67s |
+| Display spacing | p50=0.51s, p90=1.11s |
+| Updates under 1.5s | 154/165 all, 121/121 partials, 33/44 finals |
+
+Transcript sample:
+
+```text
+HEAD: Miriones! Fijicamente letal con... es un avion. Con la pelota dominada...
+TAIL: ...Romo te digo, son los duenos del partido. Gordon! Suscribete! El toca atras...
+```
+
+### Lectura
+
+- La instrumentacion VAD funciona: el analyzer ya muestra `VAD [MIXED]`.
+- El VAD detecto mucho mas silencio que en S006: `33/44` finals por `silence`, solo `11/44` por `max_window`.
+- Bajar `max_window` a `3.0s` y `min_silence` a `0.3s` redujo bastante la ventana de final: p50 `1.41s` contra S006 p50 `4.00s`.
+- El audio sigue siendo hostil para VAD: `tail RMS p50=-24.0 dBFS` y `speech_ratio p50=0.89`. O sea, incluso al final de las ventanas el audio sigue fuerte y Silero ve casi todo como speech.
+- El sistema ahora corta por silencio apenas llega a ~0.31s, exactamente lo esperado con `min_silence=0.3`.
+- El pipeline sigue mayormente sano, pero aparecio backlog puntual: queue max `1.05s`, dropped jobs `10`. Probablemente por exceso de parciales con `partial_sec=0.5` y `agreement=1`.
+- La UX quedo demasiado rapida: `154/165` updates duraron menos de 1.5s; todos los parciales se reemplazaron demasiado pronto.
+
+### Hipotesis
+
+- Para segmentacion, `min_silence=0.3` fue una mejora real.
+- Para UX, `partial_sec=0.5` + `partial_agreement=1` es demasiado agresivo bajo futbol de fondo.
+- El VAD no esta "roto"; esta trabajando con un piso alto. El siguiente problema no es que no vea silencios, sino que el ruido hace que esos silencios sean cortos y que los parciales salgan demasiado seguido.
+
+### Proximo Experimento
+
+Mantener la segmentacion que mejoro:
+
+| Parametro | Valor |
+| --- | ---: |
+| max_window_sec | `3.0` |
+| min_silence_sec | `0.3` |
+
+Probar calmar parciales:
+
+| Parametro | Valor |
+| --- | ---: |
+| partial_sec | `0.7` |
+| partial_agreement | `2` |
+
+Objetivo: conservar finals rapidos por silencio, pero bajar updates sub-1.5s y dropped jobs.
+
 ## Template
 
 ```md

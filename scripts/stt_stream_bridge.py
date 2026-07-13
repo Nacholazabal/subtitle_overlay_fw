@@ -3,6 +3,8 @@
 
 import argparse
 import asyncio
+import contextlib
+import json
 import struct
 import sys
 import time
@@ -28,12 +30,23 @@ from scripts.stt_stream_protocol import (
     MESSAGE_ERROR,
     MESSAGE_SESSION_END,
     MESSAGE_SESSION_READY,
+    MESSAGE_SESSION_SUMMARY,
     MESSAGE_TRANSCRIPT,
     decode_json_message,
     encode_audio_frame,
     encode_json_message,
     make_session_start,
 )
+
+
+def write_json_file(path, payload):
+    if not path:
+        return
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_suffix(output.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(output)
 
 
 async def read_exactly(reader, size):
@@ -46,23 +59,30 @@ async def read_exactly(reader, size):
 
 
 class BridgeTranscriptSink:
-    def __init__(self, sink, timeline=None):
+    def __init__(self, sink, timeline=None, wall_timeline=None):
         self.sink = sink
         self.timeline = timeline or AudioAvailabilityTimeline()
+        self.wall_timeline = wall_timeline or AudioAvailabilityTimeline()
 
-    def set_timeline(self, timeline):
+    def set_timelines(self, timeline, wall_timeline):
         self.timeline = timeline
+        self.wall_timeline = wall_timeline
 
     def handle_event(self, event):
         event = dict(event)
         event.pop("type", None)
         received_at = time.monotonic()
+        received_wall = time.time()
         event["bridge_received_monotonic"] = round(received_at, 6)
+        event["bridge_received_wall_sec"] = round(received_wall, 6)
         if "end_sec" in event:
             available_at = self.timeline.available_at(float(event["end_sec"]))
             if available_at is not None:
                 event["bridge_receive_lag_sec"] = round(received_at - available_at, 3)
                 event["bridge_audio_available_monotonic"] = round(available_at, 6)
+            available_wall = self.wall_timeline.available_at(float(event["end_sec"]))
+            if available_wall is not None:
+                event["bridge_audio_available_wall_sec"] = round(available_wall, 6)
         self.sink.handle_event(event)
 
     def close(self):
@@ -74,29 +94,79 @@ class StreamingBridge:
         self.args = args
         self.bridge_sink = BridgeTranscriptSink(build_sink(args))
         self.wav = None
+        self.session_done = asyncio.Event()
+        self.session_active = False
+        self.session_started = False
+        self.session_error = None
+        self.run_config = {}
+        self.session_summary = {}
+        self.forward_summary = {}
 
     async def run(self):
         server = await asyncio.start_server(self._handle_board, self.args.host, self.args.port)
         sockets = ", ".join(str(sock.getsockname()) for sock in server.sockets or [])
         print(f"stream bridge listening for board audio on {sockets}", flush=True)
+        stop_watcher = None
+        if self.args.stop_file:
+            stop_watcher = asyncio.create_task(self._watch_stop_file())
         try:
             async with server:
-                await server.serve_forever()
+                if self.args.single_session:
+                    await self.session_done.wait()
+                else:
+                    await server.serve_forever()
         finally:
+            if stop_watcher is not None:
+                stop_watcher.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await stop_watcher
             self.bridge_sink.close()
+        if self.session_error is not None:
+            raise RuntimeError(f"stream bridge session failed: {self.session_error}")
+
+    async def _watch_stop_file(self):
+        while not self.session_done.is_set():
+            if Path(self.args.stop_file).exists() and not self.session_started:
+                self.session_summary = {"status": "stopped_before_session"}
+                write_json_file(self.args.done_file, self.session_summary)
+                self.session_done.set()
+                return
+            await asyncio.sleep(0.1)
 
     async def _handle_board(self, reader, writer):
+        if self.session_active or (self.args.single_session and self.session_done.is_set()):
+            writer.close()
+            await writer.wait_closed()
+            return
+        self.session_active = True
+        self.session_started = True
         peer = writer.get_extra_info("peername")
         print(f"board audio connected from {peer}", flush=True)
         try:
             await self._run_session(reader)
+        except Exception as exc:
+            self.session_error = exc
+            print(f"stream bridge session failed: {exc}", flush=True)
         finally:
             writer.close()
-            await writer.wait_closed()
+            with contextlib.suppress(ConnectionError):
+                await writer.wait_closed()
             if self.wav is not None:
                 self.wav.close()
                 self.wav = None
+            self.session_active = False
+            summary = {
+                "status": "error" if self.session_error is not None else "complete",
+                "finished_wall_sec": round(time.time(), 6),
+                "error": str(self.session_error) if self.session_error is not None else None,
+                "run_config": self.run_config,
+                **self.forward_summary,
+                **self.session_summary,
+            }
+            write_json_file(self.args.done_file, summary)
             print("board audio connection closed", flush=True)
+            if self.args.single_session:
+                self.session_done.set()
 
     async def _run_session(self, reader):
         import websockets
@@ -107,11 +177,16 @@ class StreamingBridge:
             max_size=None,
         ) as websocket:
             stream_info = await self._read_stream_header(reader)
-            await websocket.send(encode_json_message(make_session_start(*stream_info, client_monotonic=time.monotonic())))
+            await websocket.send(
+                encode_json_message(
+                    make_session_start(*stream_info, client_monotonic=time.monotonic())
+                )
+            )
             ready = decode_json_message(await websocket.recv())
             if ready.get("type") != MESSAGE_SESSION_READY:
                 raise RuntimeError(f"unexpected server response: {ready}")
             run_config = ready.get("run_config")
+            self.run_config = run_config if isinstance(run_config, dict) else {}
             print(f"stream server session ready: {ready}", flush=True)
             if isinstance(run_config, dict):
                 print(
@@ -133,9 +208,11 @@ class StreamingBridge:
             finally:
                 await websocket.send(encode_json_message({"type": MESSAGE_SESSION_END}))
                 try:
-                    await asyncio.wait_for(receiver, timeout=5.0)
+                    await asyncio.wait_for(receiver, timeout=35.0)
                 except TimeoutError:
                     receiver.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await receiver
 
     async def _read_stream_header(self, reader):
         magic = await read_exactly(reader, len(STREAM_MAGIC))
@@ -169,10 +246,18 @@ class StreamingBridge:
         audio_start_monotonic = None
         audio_end_sec = 0.0
         timeline = AudioAvailabilityTimeline()
-        self.bridge_sink.set_timeline(timeline)
+        wall_timeline = AudioAvailabilityTimeline()
+        self.bridge_sink.set_timelines(timeline, wall_timeline)
         forwarded = 0
+        first_seq = None
+        last_seq = None
+        max_board_dropped = 0
+        audio_start_wall = None
 
         while True:
+            if self.args.stop_file and Path(self.args.stop_file).exists():
+                print("stream bridge stop marker detected", flush=True)
+                break
             chunk_header = await read_exactly(reader, struct.calcsize(CHUNK_HEADER))
             seq, timestamp_ns, payload_bytes, dropped, chunk_rate, chunk_channels, chunk_fmt = (
                 struct.unpack(CHUNK_HEADER, chunk_header)
@@ -184,14 +269,32 @@ class StreamingBridge:
 
             payload = await read_exactly(reader, payload_bytes)
             payload_received_at = time.monotonic()
+            payload_received_wall = time.time()
             if first_timestamp_ns is None:
                 first_timestamp_ns = timestamp_ns
                 audio_start_monotonic = payload_received_at
+                audio_start_wall = payload_received_wall
+                first_seq = seq
+                write_json_file(
+                    self.args.ready_file,
+                    {
+                        "status": "ready",
+                        "ready_wall_sec": round(payload_received_wall, 6),
+                        "audio_start_wall_sec": round(payload_received_wall, 6),
+                        "sample_rate_hz": rate,
+                        "channels": channels,
+                        "chunk_ms": _chunk_ms,
+                        "run_config": self.run_config,
+                    },
+                )
 
             await websocket.send(encode_audio_frame(seq, timestamp_ns, dropped, payload))
             forwarded += 1
+            last_seq = seq
+            max_board_dropped = max(max_board_dropped, int(dropped))
             audio_end_sec += payload_bytes / float(rate * channels * EXPECTED_SAMPLE_WIDTH)
             timeline.mark_available(audio_end_sec, payload_received_at)
+            wall_timeline.mark_available(audio_end_sec, payload_received_wall)
 
             if self.wav is not None:
                 self.wav.writeframes(payload)
@@ -204,6 +307,16 @@ class StreamingBridge:
                     flush=True,
                 )
 
+        self.forward_summary = {
+            "audio_start_wall_sec": round(audio_start_wall, 6) if audio_start_wall is not None else None,
+            "audio_end_wall_sec": round(time.time(), 6),
+            "audio_duration_sec": round(audio_end_sec, 3),
+            "chunks_forwarded": forwarded,
+            "first_chunk_seq": first_seq,
+            "last_chunk_seq": last_seq,
+            "board_dropped_chunks": max_board_dropped,
+        }
+
     async def _receive_transcripts(self, websocket):
         try:
             while True:
@@ -215,6 +328,10 @@ class StreamingBridge:
                 msg_type = message.get("type")
                 if msg_type == MESSAGE_TRANSCRIPT:
                     self.bridge_sink.handle_event(message)
+                elif msg_type == MESSAGE_SESSION_SUMMARY:
+                    self.session_summary = {
+                        key: value for key, value in message.items() if key != "type"
+                    }
                 elif msg_type == MESSAGE_ERROR:
                     print(f"stream server error: {message.get('message')}", flush=True)
                 else:
@@ -245,6 +362,10 @@ def parse_args():
     parser.add_argument("--subtitle-host", default="192.168.1.10")
     parser.add_argument("--subtitle-port", type=int, default=5001)
     parser.add_argument("--ws-ping-interval", type=float, default=20.0)
+    parser.add_argument("--ready-file", help="write JSON after board, Colab, and first audio are ready")
+    parser.add_argument("--done-file", help="write final session summary JSON")
+    parser.add_argument("--stop-file", help="finish the active session when this file appears")
+    parser.add_argument("--single-session", action="store_true", help="exit after one board session")
     return parser.parse_args()
 
 
