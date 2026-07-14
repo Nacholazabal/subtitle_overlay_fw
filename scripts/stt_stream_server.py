@@ -6,7 +6,6 @@ import asyncio
 import io
 import json
 import sys
-import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,18 +76,6 @@ class SharedWhisperModel:
             **kwargs,
         )
         self.config = config
-        self.inference_lock = threading.Lock()
-
-    def transcribe(self, audio):
-        """Run one inference at a time on the shared CTranslate2 model."""
-        with self.inference_lock:
-            segments, info = self.model.transcribe(
-                audio,
-                language=self.config.language,
-                beam_size=self.config.beam_size,
-                vad_filter=self.config.vad_filter,
-            )
-            return list(segments), info
 
 
 class SessionWhisperEngine:
@@ -99,7 +86,13 @@ class SessionWhisperEngine:
         self.seq = 0
 
     def transcribe_chunk(self, audio, start_sec, end_sec, is_final):
-        segments, _info = self.shared_model.transcribe(audio)
+        config = self.shared_model.config
+        segments, _info = self.shared_model.model.transcribe(
+            audio,
+            language=config.language,
+            beam_size=config.beam_size,
+            vad_filter=config.vad_filter,
+        )
         text = " ".join(segment.text.strip() for segment in segments).strip()
         if not text:
             return None
@@ -230,7 +223,13 @@ def transcribe_offline_bytes(shared_model, audio_bytes, filename="audio"):
 
     started_at = time.monotonic()
     audio = decode_audio(io.BytesIO(audio_bytes), sampling_rate=WHISPER_RATE)
-    segments_iter, info = shared_model.transcribe(audio)
+    config = shared_model.config
+    segments_iter, info = shared_model.model.transcribe(
+        audio,
+        language=config.language,
+        beam_size=config.beam_size,
+        vad_filter=config.vad_filter,
+    )
     segments = [
         {
             "start_sec": round(float(segment.start), 3),
@@ -295,7 +294,7 @@ async def _receive_audio(websocket, transcriber, session, timeline):
             return False
 
 
-def create_app(config, shared_model_factory=SharedWhisperModel):
+def create_app(config):
     from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 
     app = FastAPI(title="Subtitle Overlay Streaming STT", version="1.0")
@@ -304,7 +303,7 @@ def create_app(config, shared_model_factory=SharedWhisperModel):
 
     @app.on_event("startup")
     async def startup():
-        app.state.shared_model = shared_model_factory(config)
+        app.state.shared_model = SharedWhisperModel(config)
         print("streaming STT server ready", flush=True)
 
     @app.get("/health")

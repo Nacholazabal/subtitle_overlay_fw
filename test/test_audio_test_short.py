@@ -124,9 +124,10 @@ class OfflineTranscriptionTests(unittest.TestCase):
         class SharedModel:
             config = ServerConfig()
 
-            @staticmethod
-            def transcribe(_audio):
-                return iter([Segment()]), Info()
+            class model:
+                @staticmethod
+                def transcribe(_audio, **_kwargs):
+                    return iter([Segment()]), Info()
 
         with mock.patch.dict(
             sys.modules,
