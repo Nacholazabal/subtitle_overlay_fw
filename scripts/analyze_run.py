@@ -39,9 +39,11 @@ CONFIG_KEYS = (
     "config_lossless_live",
     "config_realtime",
     "config_gain",
+    "config_partial_backpressure",
     "config_device",
     "config_compute_type",
     "config_cpu_threads",
+    "config_transport",
 )
 
 
@@ -61,6 +63,19 @@ def _rms(samples_flat):
         return 0.0
     total = sum(sample * sample for sample in samples_flat)
     return math.sqrt(total / len(samples_flat))
+
+
+def window_rms_dbfs(samples, framerate, window_ms=200):
+    if not samples or framerate <= 0:
+        return []
+
+    window_samples = max(1, int(framerate * window_ms / 1000.0))
+    values = []
+    for start in range(0, len(samples), window_samples):
+        chunk = samples[start : start + window_samples]
+        if chunk:
+            values.append(_dbfs(_rms(chunk)))
+    return values
 
 
 def percentile(values, q):
@@ -141,11 +156,27 @@ def analyze_wav(path):
     rms_db = _dbfs(_rms(samples))
     clipped = sum(1 for sample in samples if abs(sample) >= 32765)
     clipped_pct = 100.0 * clipped / len(samples) if samples else 0.0
+    window_levels = window_rms_dbfs(samples, framerate)
+    floor_db = percentile(window_levels, 0.10)
+    median_db = percentile(window_levels, 0.50)
+    loud_db = percentile(window_levels, 0.90)
+    dynamic_range_db = (
+        (loud_db - floor_db)
+        if floor_db is not None and loud_db is not None and math.isfinite(floor_db)
+        else None
+    )
 
     if peak_pct < 5.0:
         verdict = "TOO QUIET"
     elif clipped_pct > 0.01:
         verdict = f"CLIPPING ({clipped_pct:.3f}% samples at ceiling)"
+    elif (
+        floor_db is not None
+        and dynamic_range_db is not None
+        and floor_db > -35.0
+        and dynamic_range_db < 15.0
+    ):
+        verdict = "NOISY FLOOR"
     else:
         verdict = "OK"
 
@@ -153,6 +184,15 @@ def analyze_wav(path):
     print(f"  duration : {duration_sec:.1f}s")
     print(f"  peak     : {peak_pct:.1f}% of full scale  ({peak_abs})")
     print(f"  RMS      : {rms_db:.1f} dBFS")
+    if floor_db is not None and median_db is not None and loud_db is not None:
+        print(
+            f"  windows  : floor p10={floor_db:.1f} dBFS  "
+            f"median={median_db:.1f} dBFS  loud p90={loud_db:.1f} dBFS"
+        )
+    if dynamic_range_db is not None:
+        print(f"  range    : p90-p10={dynamic_range_db:.1f} dB")
+        if floor_db is not None and floor_db > -35.0:
+            print("  NOTE: quietest windows are loud; VAD may never see real silence")
     print()
 
 
@@ -182,6 +222,9 @@ def analyze_config(events):
     print(f"  beam         : {config.get('config_beam_size')}")
     print(f"  VAD/filter   : {config.get('config_vad_filter')}")
     print(f"  lossless     : {config.get('config_lossless_live')}")
+    print(f"  partial bp   : {config.get('config_partial_backpressure', False)}")
+    if "config_transport" in config:
+        print(f"  transport    : {config.get('config_transport')}")
     print()
 
 
@@ -287,8 +330,22 @@ def analyze_pipeline(events):
     remote_infer = numeric_values(events, "remote_infer_sec")
     wall = numeric_values(events, "stt_wall_sec")
     emit_lag = numeric_values(events, "emit_lag_sec")
+    server_queue = numeric_values(events, "server_queue_sec")
+    gpu_infer = numeric_values(events, "gpu_infer_sec")
+    server_emit_lag = numeric_values(events, "server_emit_lag_sec")
+    bridge_receive_lag = numeric_values(events, "bridge_receive_lag_sec")
+    audio_buffer = numeric_values(events, "audio_buffer_sec")
 
-    if not (queue_wait or infer or wall or emit_lag):
+    if not (
+        queue_wait
+        or infer
+        or wall
+        or emit_lag
+        or server_queue
+        or gpu_infer
+        or server_emit_lag
+        or bridge_receive_lag
+    ):
         print_header("PIPELINE", "legacy log")
         print("  no queue/inference/lag metrics in JSONL")
         print()
@@ -299,6 +356,10 @@ def analyze_pipeline(events):
         notes.append(f"queue backlog reached {max(queue_wait):.2f}s")
     if emit_lag and percentile(emit_lag, 0.90) > 2.0:
         notes.append(f"p90 emit lag is {percentile(emit_lag, 0.90):.2f}s")
+    if server_emit_lag and min(server_emit_lag) < -0.05:
+        notes.append(f"server emit lag still has negative samples (min={min(server_emit_lag):.2f}s)")
+    if bridge_receive_lag and min(bridge_receive_lag) < -0.05:
+        notes.append(f"bridge receive lag still has negative samples (min={min(bridge_receive_lag):.2f}s)")
 
     verdict = "OK" if not notes else "ATTENTION"
     print_header("PIPELINE", verdict)
@@ -308,8 +369,61 @@ def analyze_pipeline(events):
         print_stat_line("remote infer", remote_infer)
     print_stat_line("queue+infer", wall)
     print_stat_line("emit lag", emit_lag)
+    if server_queue or gpu_infer or server_emit_lag or bridge_receive_lag:
+        print("  -- streaming breakdown --")
+        print_stat_line("audio buffer", audio_buffer)
+        print_stat_line("server queue", server_queue)
+        print_stat_line("GPU infer", gpu_infer)
+        print_stat_line("server emit lag", server_emit_lag)
+        print_stat_line("bridge recv lag", bridge_receive_lag)
     for note in notes:
         print(f"  NOTE: {note}")
+    print()
+
+
+def analyze_display_cadence(events):
+    timed = [
+        event
+        for event in events
+        if isinstance(event.get("bridge_received_monotonic"), (int, float))
+    ]
+    if len(timed) < 2:
+        print_header("DISPLAY", "not enough receive timestamps")
+        print("  no bridge receive timestamps available")
+        print()
+        return
+
+    timed = sorted(timed, key=lambda event: event.get("seq", 0))
+    intervals = [
+        float(b["bridge_received_monotonic"]) - float(a["bridge_received_monotonic"])
+        for a, b in zip(timed, timed[1:])
+    ]
+    partial_intervals = [
+        interval
+        for event, interval in zip(timed, intervals)
+        if not event.get("is_final")
+    ]
+    final_intervals = [
+        interval
+        for event, interval in zip(timed, intervals)
+        if event.get("is_final")
+    ]
+    short_all = sum(1 for interval in intervals if interval < 1.5)
+    short_partials = sum(1 for interval in partial_intervals if interval < 1.5)
+    short_finals = sum(1 for interval in final_intervals if interval < 1.5)
+
+    verdict = "OK" if short_all == 0 else "FAST UPDATES"
+    print_header("DISPLAY", verdict)
+    print_stat_line("event spacing", intervals)
+    print_stat_line("partial spacing", partial_intervals)
+    print_stat_line("final spacing", final_intervals)
+    print(
+        f"  <1.5s visible    : all={short_all}/{len(intervals)} "
+        f"partials={short_partials}/{len(partial_intervals)} "
+        f"finals={short_finals}/{len(final_intervals)}"
+    )
+    if short_all > 0:
+        print("  NOTE: events are replacing text faster than a 1.5s readability target")
     print()
 
 
@@ -416,6 +530,7 @@ def main():
     analyze_events(events)
     analyze_segmentation(events)
     analyze_pipeline(events)
+    analyze_display_cadence(events)
     analyze_timing(events)
     transcript_sample(events)
 

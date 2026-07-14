@@ -466,6 +466,8 @@ class ChunkTranscriber:
         self._audio_start_monotonic = None
         self._job_seq = 0
         self._dropped_jobs = 0
+        self._queue_lock = threading.Lock()
+        self._partial_jobs_outstanding = 0
         # Tight VAD segments so the trailing-silence measurement is accurate; the
         # finalize decision uses our own min_silence threshold below.
         self._vad_options = VadOptions(min_silence_duration_ms=100, speech_pad_ms=30)
@@ -616,30 +618,58 @@ class ChunkTranscriber:
             "audio_end_monotonic": self._audio_end_monotonic(end_sample),
         }
         self._job_seq += 1
-        if not self.drop_oldest:
-            # Offline: block until the worker frees space so nothing is dropped.
-            self.pending_chunks.put(job)
-            return
+        with self._queue_lock:
+            if not is_final:
+                if self._partial_jobs_outstanding > 0:
+                    self._dropped_jobs += 1
+                    print("stt partial backpressure: dropping newer partial", flush=True)
+                    return
+                try:
+                    self.pending_chunks.put_nowait(job)
+                except queue.Full:
+                    self._dropped_jobs += 1
+                    print("stt partial backpressure: dropping partial behind finals", flush=True)
+                    return
+                self._partial_jobs_outstanding += 1
+                return
 
-        try:
-            self.pending_chunks.put_nowait(job)
-            return
-        except queue.Full:
-            pass
+            self._drop_pending_partials_locked()
 
-        try:
-            self.pending_chunks.get_nowait()
+        # Finals are not disposable. If the queue is full of finals, wait for the
+        # worker instead of dropping a transcript segment.
+        self.pending_chunks.put(job)
+
+    def _drop_pending_partials_locked(self):
+        kept = []
+        dropped = 0
+
+        while True:
+            try:
+                job = self.pending_chunks.get_nowait()
+            except queue.Empty:
+                break
+
             self.pending_chunks.task_done()
-            self._dropped_jobs += 1
-            print("stt queue full: dropping oldest audio chunk", flush=True)
-        except queue.Empty:
-            pass
+            if job.get("is_final", False):
+                kept.append(job)
+                continue
 
-        try:
-            self.pending_chunks.put_nowait(job)
-        except queue.Full:
+            dropped += 1
             self._dropped_jobs += 1
-            print("stt queue full: dropping newest audio chunk", flush=True)
+            self._partial_jobs_outstanding = max(0, self._partial_jobs_outstanding - 1)
+
+        for job in kept:
+            self.pending_chunks.put_nowait(job)
+
+        if dropped > 0:
+            print(f"stt final priority: dropped {dropped} queued partial(s)", flush=True)
+
+    def _finish_job(self, job):
+        if job.get("is_final", False):
+            return
+
+        with self._queue_lock:
+            self._partial_jobs_outstanding = max(0, self._partial_jobs_outstanding - 1)
 
     def _audio_end_monotonic(self, end_sample):
         if (self._audio_start_monotonic is None) or (not self.realtime):
@@ -656,6 +686,7 @@ class ChunkTranscriber:
             try:
                 self._transcribe(job)
             finally:
+                self._finish_job(job)
                 self.pending_chunks.task_done()
 
     def _transcribe(self, job):
@@ -701,6 +732,7 @@ class ChunkTranscriber:
         event["stt_wall_sec"] = round(queue_wait + infer_sec, 3)
         event["queue_depth_after_get"] = self.pending_chunks.qsize()
         event["dropped_audio_jobs"] = self._dropped_jobs
+        event["partial_jobs_outstanding"] = self._partial_jobs_outstanding
         event["job_id"] = job["job_id"]
         event["trailing_silence_sec"] = round(
             job["trailing_silence_samples"] / self.target_rate,
@@ -908,6 +940,7 @@ def build_run_config(args, offline):
         "config_lossless_live": bool(args.lossless_live),
         "config_realtime": not offline,
         "config_gain": float(args.gain),
+        "config_partial_backpressure": True,
     }
     if args.colab_url:
         config["config_model"] = "colab"

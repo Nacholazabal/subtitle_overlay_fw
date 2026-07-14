@@ -17,12 +17,12 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #define AGC_FULL_SCALE      (32768.0f)
 #define AGC_SAMPLE_MAX      (32767.0f)
 #define AGC_SAMPLE_MIN      (-32768.0f)
-#define AGC_DEFAULT_TARGET  (0.45f)
+#define AGC_DEFAULT_TARGET  (0.35f)
 #define AGC_DEFAULT_MAX     (64.0f)
 #define AGC_DEFAULT_MIN     (0.25f)
 #define AGC_DEFAULT_ATTACK  (0.5f)
 #define AGC_DEFAULT_RELEASE (0.05f)
-#define AGC_DEFAULT_FLOOR   (0.003f)
+#define AGC_DEFAULT_FLOOR   (0.008f)
 
 // === Private data type declarations ============================================================================== //
 // === Private variable declarations =============================================================================== //

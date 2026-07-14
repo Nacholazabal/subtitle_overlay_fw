@@ -76,6 +76,7 @@ typedef struct
     usb_audio_stream_config_t config;
     usb_audio_capture_t capture;
     usb_audio_agc_t agc;
+    uint8_t agc_enabled;
     usb_audio_stream_queue_t queue;
     pthread_mutex_t state_mutex;
     pthread_t capture_thread;

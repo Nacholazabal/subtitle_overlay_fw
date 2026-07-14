@@ -84,6 +84,15 @@ void test_agc_holds_gain_on_silence(void)
     TEST_ASSERT_EQUAL_INT16(0, buffer[0]);
 }
 
+void test_agc_does_not_boost_noise_floor(void)
+{
+    usb_audio_agc_metrics_t const metrics = run_chunks(160, 600U);
+
+    TEST_ASSERT_EQUAL_FLOAT(1.0f, agc.gain);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, (float)160 / 32768.0f, metrics.raw_peak);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, (float)160 / 32768.0f, metrics.out_peak);
+}
+
 void test_agc_tolerates_null_arguments(void)
 {
     usb_audio_agc_metrics_t metrics;

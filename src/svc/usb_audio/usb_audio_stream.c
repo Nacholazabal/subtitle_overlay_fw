@@ -82,6 +82,7 @@ static int send_chunk(usb_audio_stream_t* stream,
 static void* capture_thread_main(void* arg);
 static void* sender_thread_main(void* arg);
 static void copy_env_string(char* dst, size_t dst_size, char const* value);
+static void meter_raw_audio(int16_t const* samples, size_t count, usb_audio_agc_metrics_t* metrics);
 
 // === Public variable definitions ================================================================================= //
 // === Private variable definitions ================================================================================ //
@@ -636,12 +637,21 @@ static void* capture_thread_main(void* const arg)
             break;
         }
 
-        // Normalize the captured level on the board so the PC always receives a
-        // healthy signal regardless of TV volume, and meter it for tuning.
-        usb_audio_agc_process(&stream->agc,
-                              (int16_t*)chunk.payload,
-                              bytes_read / USB_AUDIO_STREAM_SAMPLE_BYTES,
-                              &metrics);
+        if (stream->agc_enabled != 0U)
+        {
+            // Normalize the captured level on the board and meter it for tuning.
+            usb_audio_agc_process(&stream->agc,
+                                  (int16_t*)chunk.payload,
+                                  bytes_read / USB_AUDIO_STREAM_SAMPLE_BYTES,
+                                  &metrics);
+        }
+        else
+        {
+            // Meter only; leave PCM untouched for server-side gain experiments.
+            meter_raw_audio((int16_t const*)chunk.payload,
+                            bytes_read / USB_AUDIO_STREAM_SAMPLE_BYTES,
+                            &metrics);
+        }
 
         status = now_ns(&chunk.timestamp_ns);
         if (status != 0)
@@ -660,7 +670,8 @@ static void* capture_thread_main(void* const arg)
         {
             // Level as % of full scale: in_peak ~1% means a too-quiet capture,
             // ~45% is healthy, >95% risks clipping. gain is the digital AGC factor.
-            LOG_INFO("usb-audio: level in_peak=%.1f%% gain=%.1fx out_peak=%.1f%%",
+            LOG_INFO("usb-audio: level agc=%s in_peak=%.1f%% gain=%.1fx out_peak=%.1f%%",
+                     (stream->agc_enabled != 0U) ? "on" : "off",
                      (double)(metrics.raw_peak * 100.0f),
                      (double)metrics.applied_gain,
                      (double)(metrics.out_peak * 100.0f));
@@ -674,6 +685,52 @@ static void* capture_thread_main(void* const arg)
 
     LOG_INFO("usb-audio: capture thread stopped");
     return NULL;
+}
+
+/**
+ * @brief Meter PCM without modifying samples.
+ * @param samples S16_LE samples.
+ * @param count Number of samples.
+ * @param metrics Metering output.
+ * @return None.
+ */
+static void meter_raw_audio(int16_t const* const samples,
+                            size_t const count,
+                            usb_audio_agc_metrics_t* const metrics)
+{
+    float peak = 0.0f;
+    size_t i;
+
+    if (metrics == NULL)
+    {
+        return;
+    }
+
+    if ((samples == NULL) || (count == 0U))
+    {
+        metrics->raw_peak = 0.0f;
+        metrics->applied_gain = 1.0f;
+        metrics->out_peak = 0.0f;
+        return;
+    }
+
+    for (i = 0U; i < count; i++)
+    {
+        float sample = (float)samples[i] / 32768.0f;
+
+        if (sample < 0.0f)
+        {
+            sample = -sample;
+        }
+        if (sample > peak)
+        {
+            peak = sample;
+        }
+    }
+
+    metrics->raw_peak = peak;
+    metrics->applied_gain = 1.0f;
+    metrics->out_peak = peak;
 }
 
 /**
@@ -861,6 +918,23 @@ int usb_audio_stream_start(usb_audio_stream_t* const stream,
     }
 
     usb_audio_agc_init(&stream->agc);
+    stream->agc_enabled = 0U;
+    {
+        char const* const enabled = getenv("SUBTITLE_USB_AUDIO_AGC_ENABLE");
+        if ((enabled != NULL) && (enabled[0] != '\0'))
+        {
+            uint32_t value;
+            if (number_parse_u32(enabled, strlen(enabled), 0U, 1U, &value) == 0)
+            {
+                stream->agc_enabled = (uint8_t)value;
+            }
+            else
+            {
+                LOG_WARNING("usb-audio: ignoring invalid SUBTITLE_USB_AUDIO_AGC_ENABLE='%s'",
+                            enabled);
+            }
+        }
+    }
     {
         char const* const target = getenv("SUBTITLE_USB_AUDIO_AGC_TARGET_PCT");
         if ((target != NULL) && (target[0] != '\0'))
@@ -876,6 +950,10 @@ int usb_audio_stream_start(usb_audio_stream_t* const stream,
                             target);
             }
         }
+    }
+    if (stream->agc_enabled == 0U)
+    {
+        LOG_INFO("usb-audio: digital AGC disabled; streaming raw PCM");
     }
 
     memset(&capture_config, 0, sizeof(capture_config));
