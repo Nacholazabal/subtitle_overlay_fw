@@ -867,6 +867,11 @@ def run_benchmark(args) -> int:
     previous_sigint = signal.signal(signal.SIGINT, request_stop)
     previous_sigterm = signal.signal(signal.SIGTERM, request_stop)
     try:
+        print(
+            f"Waiting up to {ready_timeout:.0f}s for board audio on TCP port "
+            f"{environment.get('STT_AUDIO_PORT', '5000')} ...",
+            flush=True,
+        )
         ready = wait_for_file(ready_file, bridge, ready_timeout)
         manifest["status"] = "playing"
         manifest["bridge_ready"] = ready
