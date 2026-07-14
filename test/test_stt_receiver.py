@@ -1,6 +1,9 @@
+import json
 import queue
+import socket
 import sys
 import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -69,9 +72,40 @@ class PartialStabilityFilterTests(unittest.TestCase):
 
 
 class TcpTranscriptSinkTests(unittest.TestCase):
-    def test_preserves_final_by_dropping_queued_partial(self):
+    @staticmethod
+    def queue_only_sink(maxsize=1):
         sink = TcpTranscriptSink.__new__(TcpTranscriptSink)
-        sink.events = queue.Queue(maxsize=1)
+        sink.events = queue.Queue(maxsize=maxsize)
+        sink.stats_lock = threading.Lock()
+        sink.stats = {
+            "generated": 0,
+            "first_generated_wall_sec": None,
+            "sink_dropped_partials": 0,
+            "sink_dropped_finals": 0,
+        }
+        return sink
+
+    @staticmethod
+    def start_board_server(handler):
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+
+        def server_main():
+            try:
+                client, _address = listener.accept()
+                with client:
+                    handler(client)
+            finally:
+                listener.close()
+
+        thread = threading.Thread(target=server_main, daemon=True)
+        thread.start()
+        return port, thread
+
+    def test_preserves_final_by_dropping_queued_partial(self):
+        sink = self.queue_only_sink()
 
         sink.handle_event({"seq": 1, "is_final": False, "text": "parcial"})
         sink.handle_event({"seq": 2, "is_final": True, "text": "final"})
@@ -79,6 +113,122 @@ class TcpTranscriptSinkTests(unittest.TestCase):
         queued = sink.events.get_nowait()
         self.assertEqual(2, queued["seq"])
         self.assertTrue(queued["is_final"])
+
+    def test_handshake_and_ack_are_correlated(self):
+        def handler(client):
+            client.sendall(b'{"type":"session_ready","version":1,"session_id":4}\n')
+            event = json.loads(client.makefile("r", encoding="utf-8").readline())
+            response = {
+                "type": "transcript_ack",
+                "version": 1,
+                "session_id": 4,
+                "seq": event["seq"],
+                "status": "accepted",
+            }
+            client.sendall((json.dumps(response) + "\n").encode())
+
+        port, server = self.start_board_server(handler)
+        sink = TcpTranscriptSink("127.0.0.1", port, socket_timeout=0.5)
+        try:
+            self.assertTrue(sink.wait_ready(1.0))
+            sink.handle_event(
+                {
+                    "seq": 9,
+                    "is_final": True,
+                    "start_sec": 0.0,
+                    "end_sec": 1.0,
+                    "text": "hola",
+                }
+            )
+            self.assertTrue(sink.flush(1.0))
+            snapshot = sink.stats_snapshot()
+            self.assertEqual(4, snapshot["session_id"])
+            self.assertEqual(1, snapshot["accepted"])
+            self.assertEqual(0, snapshot["delivery_unknown"])
+        finally:
+            sink.close()
+            server.join(timeout=1.0)
+
+    def test_invalid_handshake_version_never_becomes_ready(self):
+        def handler(client):
+            client.sendall(b'{"type":"session_ready","version":2,"session_id":1}\n')
+
+        port, server = self.start_board_server(handler)
+        sink = TcpTranscriptSink("127.0.0.1", port, socket_timeout=0.2)
+        try:
+            self.assertFalse(sink.wait_ready(0.4))
+            self.assertGreaterEqual(sink.stats_snapshot()["protocol_errors"], 1)
+        finally:
+            sink.close()
+            server.join(timeout=1.0)
+
+    def test_missing_ack_is_unknown_and_event_is_not_retried(self):
+        received = []
+
+        def handler(client):
+            client.sendall(b'{"type":"session_ready","version":1,"session_id":5}\n')
+            received.append(client.makefile("r", encoding="utf-8").readline())
+
+        port, server = self.start_board_server(handler)
+        sink = TcpTranscriptSink("127.0.0.1", port, socket_timeout=0.2)
+        try:
+            self.assertTrue(sink.wait_ready(1.0))
+            sink.handle_event(
+                {
+                    "seq": 3,
+                    "is_final": False,
+                    "start_sec": 0.0,
+                    "end_sec": 0.5,
+                    "text": "hola",
+                }
+            )
+            self.assertTrue(sink.flush(1.0))
+            self.assertEqual(1, sink.stats_snapshot()["delivery_unknown"])
+            time.sleep(0.1)
+            self.assertEqual(1, len(received))
+        finally:
+            sink.close()
+            server.join(timeout=1.0)
+
+    def test_ack_with_wrong_session_is_delivery_unknown(self):
+        def handler(client):
+            client.sendall(b'{"type":"session_ready","version":1,"session_id":8}\n')
+            event = json.loads(client.makefile("r", encoding="utf-8").readline())
+            client.sendall(
+                (
+                    json.dumps(
+                        {
+                            "type": "transcript_ack",
+                            "version": 1,
+                            "session_id": 9,
+                            "seq": event["seq"],
+                            "status": "accepted",
+                        }
+                    )
+                    + "\n"
+                ).encode()
+            )
+
+        port, server = self.start_board_server(handler)
+        sink = TcpTranscriptSink("127.0.0.1", port, socket_timeout=0.2)
+        try:
+            self.assertTrue(sink.wait_ready(1.0))
+            sink.handle_event(
+                {
+                    "seq": 4,
+                    "is_final": True,
+                    "start_sec": 0.0,
+                    "end_sec": 1.0,
+                    "text": "hola",
+                }
+            )
+            self.assertTrue(sink.flush(1.0))
+            snapshot = sink.stats_snapshot()
+            self.assertEqual(1, snapshot["delivery_unknown"])
+            self.assertEqual(0, snapshot["accepted"])
+        finally:
+            sink.close()
+            server.join(timeout=1.0)
 
     def test_wire_event_strips_analysis_only_fields(self):
         event = {

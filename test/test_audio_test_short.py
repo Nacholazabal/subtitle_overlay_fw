@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts import audio_test_short
 from scripts.audio_test_short import (
+    board_delivery_result,
     accuracy_result,
     assign_events,
     counter_delta_for_interval,
@@ -20,6 +21,7 @@ from scripts.audio_test_short import (
     normalize_text,
     offline_reference,
     overlay_timeline,
+    replicate_summaries,
     reliability_result,
 )
 from scripts.stt_stream_server import ServerConfig, transcribe_offline_bytes
@@ -156,6 +158,22 @@ class OfflineTranscriptionTests(unittest.TestCase):
 
 
 class ReliabilityTests(unittest.TestCase):
+    @staticmethod
+    def accepted_delivery(count=10):
+        return {
+            "handshake_ok": True,
+            "protocol_version": 1,
+            "session_id": 1,
+            "generated": count,
+            "sent": count,
+            "accepted": count,
+            "rejected": 0,
+            "delivery_unknown": 0,
+            "sink_dropped_partials": 0,
+            "sink_dropped_finals": 0,
+            "ack_latency_sec": [0.01] * count,
+        }
+
     def test_protocol_error_invalidates_reliability(self):
         done = {
             "status": "complete",
@@ -165,6 +183,7 @@ class ReliabilityTests(unittest.TestCase):
             "dropped_audio_jobs": 0,
             "events_emitted": 10,
             "events_dropped": 0,
+            "subtitle_delivery": self.accepted_delivery(),
         }
 
         self.assertEqual(100.0, reliability_result(done, True)["score"])
@@ -182,6 +201,7 @@ class ReliabilityTests(unittest.TestCase):
             "final_jobs_dropped": 0,
             "events_emitted": 20,
             "events_dropped": 0,
+            "subtitle_delivery": self.accepted_delivery(20),
         }
 
         result = reliability_result(done, True)
@@ -200,21 +220,41 @@ class ReliabilityTests(unittest.TestCase):
             "final_jobs_dropped": 0,
             "events_emitted": 10,
             "events_dropped": 0,
+            "subtitle_delivery": self.accepted_delivery(),
         }
 
         self.assertEqual(97.0, reliability_result(done, True)["score"])
 
+    def test_missing_or_rejected_ack_invalidates_total_reliability(self):
+        done = {
+            "status": "complete",
+            "chunks_forwarded": 10,
+            "jobs_submitted": 1,
+            "events_emitted": 2,
+            "events_dropped": 0,
+            "subtitle_delivery": {
+                **self.accepted_delivery(2),
+                "accepted": 1,
+                "rejected": 1,
+            },
+        }
+
+        self.assertFalse(board_delivery_result(done)["protocol_ok"])
+        self.assertEqual(0.0, reliability_result(done, True)["score"])
+
 
 class SweepConfigTests(unittest.TestCase):
-    def test_default_sweep_includes_segmentation_and_vad_cases(self):
+    def test_default_sweep_is_interleaved_factorial_with_control_replicas(self):
         cases = load_sweep_cases()
 
         self.assertEqual(6, len(cases))
-        self.assertEqual("baseline", cases[0]["name"])
-        self.assertEqual(0.5, cases[0]["partial_sec"])
+        self.assertEqual("control_replica_1", cases[0]["name"])
+        self.assertEqual(1.0, cases[0]["partial_sec"])
+        self.assertEqual(2, cases[0]["partial_agreement"])
         self.assertEqual(4.0, cases[3]["max_window_sec"])
-        self.assertEqual(0.35, cases[4]["vad_threshold"])
-        self.assertEqual(0.65, cases[5]["vad_threshold"])
+        self.assertEqual(3.0, cases[4]["max_window_sec"])
+        self.assertEqual("control_w4_s05", cases[5]["group"])
+        self.assertEqual(3, cases[5]["replicate"])
 
     def test_custom_sweep_rejects_unknown_parameter(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -223,6 +263,29 @@ class SweepConfigTests(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 load_sweep_cases(path)
+
+    def test_control_replicates_report_mean_and_range_per_metric(self):
+        rows = [
+            {
+                "name": f"control_{index}",
+                "group": "control",
+                "status": "complete",
+                "accuracy": value,
+                "latency": 100.0,
+                "readability": value,
+                "reliability": 100.0,
+                "wer_percent": 100.0 - value,
+                "cer_percent": 10.0,
+                "latency_p90_sec": 0.8,
+            }
+            for index, value in enumerate((70.0, 80.0, 90.0), 1)
+        ]
+
+        summaries = replicate_summaries(rows)
+
+        self.assertEqual(1, len(summaries))
+        self.assertEqual(80.0, summaries[0]["metrics"]["accuracy"]["mean"])
+        self.assertEqual(20.0, summaries[0]["metrics"]["accuracy"]["range"])
 
 
 class ReportTests(unittest.TestCase):

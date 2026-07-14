@@ -64,7 +64,12 @@ El bridge:
 - forwardea frames binarios al WebSocket;
 - recibe transcript events del servidor;
 - escribe `logs/stt_events.jsonl`;
-- manda NDJSON compatible al firmware en `192.168.1.10:5001`.
+- abre una sesión NDJSON bidireccional con el firmware en `192.168.1.10:5001`;
+- espera `session_ready` y correlaciona un `transcript_ack` por cada evento enviado.
+
+Cada conexión TCP es una sesión independiente y puede volver a comenzar en `seq=0`. Un ACK
+`accepted` confirma que `SttAO` recibió y encoló el evento hacia `SubtitleAO`; no confirma los
+píxeles físicos del HDMI.
 
 ## 3. Board
 

@@ -198,6 +198,27 @@ class StreamingBridgeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(bridge.session_done.is_set())
             self.assertTrue(done_file.exists())
 
+    async def test_subtitle_readiness_timeout_blocks_bridge_readiness(self):
+        class NeverReadySink:
+            def wait_ready(self, timeout):
+                self.timeout = timeout
+                return False
+
+        args = SimpleNamespace(
+            jsonl=None,
+            send_subtitles=False,
+            subtitle_host="127.0.0.1",
+            subtitle_port=5001,
+            subtitle_ready_timeout=0.01,
+            stop_file=None,
+            done_file=None,
+        )
+        bridge = StreamingBridge(args)
+        bridge.subtitle_sink = NeverReadySink()
+
+        with self.assertRaisesRegex(RuntimeError, "handshake timed out"):
+            await bridge._wait_for_subtitle_ready()
+
 
 class BridgeTracingTests(unittest.TestCase):
     def test_bridge_only_counts_board_drops_after_session_start(self):

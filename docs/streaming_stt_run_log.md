@@ -640,6 +640,38 @@ Probar calmar parciales:
 
 Objetivo: conservar finals rapidos por silencio, pero bajar updates sub-1.5s y dropped jobs.
 
+## Run S008 - 2026-07-14 16:05 - Short-audio parameter sweep
+
+Fuente: sweep `logs/audio-tests/sweeps/20260714-160545/` con los tres audios `*-short.webm`. Las métricas de exactitud usan la transcripción offline del mismo modelo como pseudorreferencia; todavía no son WER/CER contra una referencia humana.
+
+### Config y resultados
+
+Todos los casos usaron Whisper `small`, beam `5` y gain automático. Las corridas variaron ventana, silencio, parciales y thresholds VAD.
+
+| Caso | Win | Silence | Partial | Agr | VAD / neg | WER proxy | CER proxy | p90 | Legibilidad | Partial skips | Alucinaciones |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| baseline | 3.0 | 0.3 | 0.5 | 1 | 0.50 / 0.35 | 27.22% | 19.36% | 0.68s | 6.00 | 27 | 3 |
+| calmer_updates | 3.0 | 0.3 | 1.0 | 1 | 0.50 / 0.35 | 30.93% | 22.28% | 0.77s | 12.57 | 1 | 2 |
+| stable_partials | 3.0 | 0.3 | 1.0 | 2 | 0.50 / 0.35 | 30.37% | 19.32% | 0.77s | 62.24 | 2 | 2 |
+| wider_context | 4.0 | 0.5 | 1.0 | 2 | 0.50 / 0.35 | **23.52%** | **15.57%** | 0.93s | 51.92 | 2 | **0** |
+| sensitive_vad | 3.0 | 0.3 | 1.0 | 2 | 0.35 / 0.20 | 31.48% | 24.51% | 0.79s | 65.26 | 5 | 2 |
+| strict_vad | 3.0 | 0.3 | 1.0 | 2 | 0.65 / 0.50 | 29.81% | 18.80% | 0.77s | 61.86 | 6 | 3 |
+
+No hubo drops reales de chunks de audio ni de trabajos finales. Los `partial skips` fueron parciales reemplazados por backpressure y no pérdidas de audio/finales.
+
+### Lectura
+
+- `wider_context` fue el ganador de exactitud: WER proxy `23.52%`, CER `15.57%`, p90 `0.93s` y cero candidatos a alucinación.
+- `partial_sec=1.0` con `partial_agreement=2` mejoró fuertemente la legibilidad respecto del baseline de parciales cada `0.5s`.
+- Cambiar los thresholds VAD no produjo una mejora concluyente en este sweep.
+- La confiabilidad PC (audio, Colab y generación de eventos) fue 100% en las seis corridas.
+- Sólo la primera corrida es válida como observación física del display. En las corridas 2–6 el emisor volvió a `seq=0`, pero el firmware conservó la secuencia de la conexión anterior y descartó todos los eventos. Los reportes antiguos no observaban ese descarte, por lo que su confiabilidad no certifica entrega a la placa.
+- Aun en una corrida con ACKs, la reconstrucción lógica no equivale a una captura de los píxeles HDMI.
+
+### Próximo experimento
+
+Corregir las sesiones y agregar ACKs permanentes en el protocolo de producción. Luego ejecutar un factorial `2×2` de `window={3.0,4.0}` y `silence={0.3,0.5}`, manteniendo `partial=1.0`, `agreement=2`, VAD `0.5/0.35`, con tres réplicas intercaladas del control `4.0/0.5`.
+
 ## Template
 
 ```md

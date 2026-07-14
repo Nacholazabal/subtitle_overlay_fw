@@ -36,6 +36,8 @@ CONFIG_KEYS = (
     "config_partial_agreement",
     "config_beam_size",
     "config_vad_filter",
+    "config_vad_threshold",
+    "config_vad_neg_threshold",
     "config_lossless_live",
     "config_realtime",
     "config_gain",
@@ -221,6 +223,10 @@ def analyze_config(events):
     print(f"  agreement    : {config.get('config_partial_agreement')}")
     print(f"  beam         : {config.get('config_beam_size')}")
     print(f"  VAD/filter   : {config.get('config_vad_filter')}")
+    print(
+        f"  VAD threshold: {config.get('config_vad_threshold')} "
+        f"(negative={config.get('config_vad_neg_threshold')})"
+    )
     print(f"  lossless     : {config.get('config_lossless_live')}")
     print(f"  partial bp   : {config.get('config_partial_backpressure', False)}")
     if "config_transport" in config:
@@ -250,12 +256,20 @@ def analyze_events(events):
 
     seq_verdict = "OK" if not seq_issues else f"ISSUES: {'; '.join(seq_issues[:5])}"
     reasons = Counter(event.get("segment_reason", "unknown") for event in events)
-    dropped = max((int(event.get("dropped_audio_jobs", 0)) for event in events), default=0)
+    partial_skips = max(
+        (
+            int(event.get("partial_jobs_skipped", event.get("dropped_audio_jobs", 0)))
+            for event in events
+        ),
+        default=0,
+    )
+    final_drops = max((int(event.get("final_jobs_dropped", 0)) for event in events), default=0)
 
     print_header("EVENTS", f"seq {seq_verdict}")
     print(f"  total     : {total}  (finals={len(finals)}, partials={len(partials)})")
     print(f"  reasons   : {dict(sorted(reasons.items()))}")
-    print(f"  dropped   : {dropped} audio job(s)")
+    print(f"  partial skips: {partial_skips} replaced partial job(s), not final loss")
+    print(f"  final drops  : {final_drops}")
     if hallucinations:
         print(f"  hallucin. : {len(hallucinations)} event(s) flagged")
         for event in hallucinations[:3]:

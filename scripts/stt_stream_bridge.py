@@ -113,7 +113,8 @@ class BridgeTranscriptSink:
 class StreamingBridge:
     def __init__(self, args):
         self.args = args
-        self.bridge_sink = BridgeTranscriptSink(build_sink(args))
+        sink, self.subtitle_sink = build_sink(args)
+        self.bridge_sink = BridgeTranscriptSink(sink)
         self.wav = None
         self.session_done = asyncio.Event()
         self.session_active = False
@@ -122,6 +123,7 @@ class StreamingBridge:
         self.run_config = {}
         self.session_summary = {}
         self.forward_summary = {}
+        self.subtitle_delivery_summary = {}
 
     async def run(self):
         server = await asyncio.start_server(self._handle_board, self.args.host, self.args.port)
@@ -144,6 +146,16 @@ class StreamingBridge:
             self.bridge_sink.close()
         if self.session_error is not None:
             raise RuntimeError(f"stream bridge session failed: {self.session_error}")
+
+    async def _wait_for_subtitle_ready(self):
+        if self.subtitle_sink is None:
+            return
+        subtitle_ready_timeout = getattr(self.args, "subtitle_ready_timeout", 15.0)
+        subtitle_ready = await asyncio.to_thread(
+            self.subtitle_sink.wait_ready, subtitle_ready_timeout
+        )
+        if not subtitle_ready:
+            raise RuntimeError("subtitle TCP handshake timed out; board channel is not ready")
 
     async def _watch_stop_file(self):
         while not self.session_done.is_set():
@@ -183,6 +195,7 @@ class StreamingBridge:
                 "run_config": self.run_config,
                 **self.forward_summary,
                 **self.session_summary,
+                "subtitle_delivery": self.subtitle_delivery_summary,
             }
             write_json_file(self.args.done_file, summary)
             print("board audio connection closed", flush=True)
@@ -227,6 +240,8 @@ class StreamingBridge:
                     flush=True,
                 )
 
+            await self._wait_for_subtitle_ready()
+
             receiver = asyncio.create_task(self._receive_transcripts(websocket))
             try:
                 await self._forward_audio(reader, websocket, stream_info)
@@ -240,6 +255,10 @@ class StreamingBridge:
                     receiver.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await receiver
+                if self.subtitle_sink is not None:
+                    queue_drained = await asyncio.to_thread(self.subtitle_sink.flush, 10.0)
+                    self.subtitle_delivery_summary = self.subtitle_sink.stats_snapshot()
+                    self.subtitle_delivery_summary["queue_drained"] = queue_drained
 
     async def _read_stream_header(self, reader):
         magic = await read_exactly(reader, len(STREAM_MAGIC))
@@ -316,6 +335,11 @@ class StreamingBridge:
                         "first_chunk_seq": int(seq),
                         "board_dropped_chunks_start": board_dropped_start,
                         "run_config": self.run_config,
+                        "subtitle_session": (
+                            self.subtitle_sink.stats_snapshot()
+                            if self.subtitle_sink is not None
+                            else None
+                        ),
                     },
                 )
 
@@ -381,11 +405,17 @@ class StreamingBridge:
 
 def build_sink(args):
     sinks = [ConsoleTranscriptSink()]
+    subtitle_sink = None
     if args.jsonl:
         sinks.append(JsonlTranscriptSink(args.jsonl))
     if args.send_subtitles:
-        sinks.append(TcpTranscriptSink(args.subtitle_host, args.subtitle_port))
-    return CompositeTranscriptSink(sinks)
+        subtitle_sink = TcpTranscriptSink(
+            args.subtitle_host,
+            args.subtitle_port,
+            ack_jsonl=getattr(args, "board_ack_jsonl", None),
+        )
+        sinks.append(subtitle_sink)
+    return CompositeTranscriptSink(sinks), subtitle_sink
 
 
 def parse_args():
@@ -398,6 +428,8 @@ def parse_args():
     parser.add_argument("--send-subtitles", action="store_true")
     parser.add_argument("--subtitle-host", default="192.168.1.10")
     parser.add_argument("--subtitle-port", type=int, default=5001)
+    parser.add_argument("--board-ack-jsonl", help="write board transcript ACKs as JSON Lines")
+    parser.add_argument("--subtitle-ready-timeout", type=float, default=15.0)
     parser.add_argument("--ws-ping-interval", type=float, default=20.0)
     parser.add_argument("--ready-file", help="write JSON after board, Colab, and first audio are ready")
     parser.add_argument("--done-file", help="write final session summary JSON")
@@ -426,6 +458,8 @@ def parse_args():
     effective_threshold = args.vad_threshold if args.vad_threshold is not None else 0.5
     if args.vad_neg_threshold is not None and not 0 <= args.vad_neg_threshold < effective_threshold:
         parser.error("--vad-neg-threshold must be non-negative and lower than --vad-threshold")
+    if args.subtitle_ready_timeout <= 0:
+        parser.error("--subtitle-ready-timeout must be positive")
     return args
 
 

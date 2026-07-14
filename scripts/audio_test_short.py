@@ -61,34 +61,9 @@ SESSION_PARAMETER_MAP = {
 
 DEFAULT_SWEEP_CASES = (
     {
-        "name": "baseline",
-        "max_window_sec": 3.0,
-        "min_silence_sec": 0.3,
-        "partial_sec": 0.5,
-        "partial_agreement": 1,
-        "vad_threshold": 0.5,
-        "vad_neg_threshold": 0.35,
-    },
-    {
-        "name": "calmer_updates",
-        "max_window_sec": 3.0,
-        "min_silence_sec": 0.3,
-        "partial_sec": 1.0,
-        "partial_agreement": 1,
-        "vad_threshold": 0.5,
-        "vad_neg_threshold": 0.35,
-    },
-    {
-        "name": "stable_partials",
-        "max_window_sec": 3.0,
-        "min_silence_sec": 0.3,
-        "partial_sec": 1.0,
-        "partial_agreement": 2,
-        "vad_threshold": 0.5,
-        "vad_neg_threshold": 0.35,
-    },
-    {
-        "name": "wider_context",
+        "name": "control_replica_1",
+        "group": "control_w4_s05",
+        "replicate": 1,
         "max_window_sec": 4.0,
         "min_silence_sec": 0.5,
         "partial_sec": 1.0,
@@ -97,22 +72,53 @@ DEFAULT_SWEEP_CASES = (
         "vad_neg_threshold": 0.35,
     },
     {
-        "name": "sensitive_vad",
+        "name": "window3_silence03",
         "max_window_sec": 3.0,
         "min_silence_sec": 0.3,
         "partial_sec": 1.0,
         "partial_agreement": 2,
-        "vad_threshold": 0.35,
-        "vad_neg_threshold": 0.2,
+        "vad_threshold": 0.5,
+        "vad_neg_threshold": 0.35,
     },
     {
-        "name": "strict_vad",
-        "max_window_sec": 3.0,
+        "name": "window4_silence03",
+        "max_window_sec": 4.0,
         "min_silence_sec": 0.3,
         "partial_sec": 1.0,
         "partial_agreement": 2,
-        "vad_threshold": 0.65,
-        "vad_neg_threshold": 0.5,
+        "vad_threshold": 0.5,
+        "vad_neg_threshold": 0.35,
+    },
+    {
+        "name": "control_replica_2",
+        "group": "control_w4_s05",
+        "replicate": 2,
+        "max_window_sec": 4.0,
+        "min_silence_sec": 0.5,
+        "partial_sec": 1.0,
+        "partial_agreement": 2,
+        "vad_threshold": 0.5,
+        "vad_neg_threshold": 0.35,
+    },
+    {
+        "name": "window3_silence05",
+        "max_window_sec": 3.0,
+        "min_silence_sec": 0.5,
+        "partial_sec": 1.0,
+        "partial_agreement": 2,
+        "vad_threshold": 0.5,
+        "vad_neg_threshold": 0.35,
+    },
+    {
+        "name": "control_replica_3",
+        "group": "control_w4_s05",
+        "replicate": 3,
+        "max_window_sec": 4.0,
+        "min_silence_sec": 0.5,
+        "partial_sec": 1.0,
+        "partial_agreement": 2,
+        "vad_threshold": 0.5,
+        "vad_neg_threshold": 0.35,
     },
 )
 
@@ -360,11 +366,21 @@ def percentile(values: list[float], quantile: float) -> float | None:
 
 def distribution(values: list[float]) -> dict:
     if not values:
-        return {"count": 0, "p50": None, "p90": None, "max": None, "mean": None}
+        return {
+            "count": 0,
+            "p50": None,
+            "p90": None,
+            "p95": None,
+            "p99": None,
+            "max": None,
+            "mean": None,
+        }
     return {
         "count": len(values),
         "p50": round(percentile(values, 0.5), 3),
         "p90": round(percentile(values, 0.9), 3),
+        "p95": round(percentile(values, 0.95), 3),
+        "p99": round(percentile(values, 0.99), 3),
         "max": round(max(values), 3),
         "mean": round(sum(values) / len(values), 3),
     }
@@ -567,7 +583,7 @@ def aggregate_accuracy(pairs: list[tuple[str, str]], reference_kind: str) -> dic
     }
 
 
-def reliability_result(done: dict, valid_sequence: bool) -> dict:
+def pipeline_reliability_result(done: dict, valid_sequence: bool) -> dict:
     chunks = int(done.get("chunks_forwarded", 0) or 0)
     has_scoped_board_counter = "board_dropped_chunks_during_session" in done
     board_drops = int(
@@ -616,8 +632,78 @@ def reliability_result(done: dict, valid_sequence: bool) -> dict:
     }
 
 
+def board_delivery_result(done: dict) -> dict:
+    delivery = done.get("subtitle_delivery")
+    if not isinstance(delivery, dict):
+        delivery = {}
+    generated = int(delivery.get("generated", 0) or 0)
+    sent = int(delivery.get("sent", 0) or 0)
+    accepted = int(delivery.get("accepted", 0) or 0)
+    rejected = int(delivery.get("rejected", 0) or 0)
+    unknown = int(delivery.get("delivery_unknown", 0) or 0)
+    dropped_partials = int(delivery.get("sink_dropped_partials", 0) or 0)
+    dropped_finals = int(delivery.get("sink_dropped_finals", 0) or 0)
+    missing_acks = max(0, sent - accepted - rejected - unknown)
+    handshake_ok = delivery.get("handshake_ok") is True
+    protocol_ok = (
+        handshake_ok
+        and delivery.get("queue_drained", True) is True
+        and int(delivery.get("protocol_errors", 0) or 0) == 0
+        and generated > 0
+        and sent == generated
+        and accepted == generated
+        and rejected == 0
+        and unknown == 0
+        and missing_acks == 0
+        and dropped_partials == 0
+        and dropped_finals == 0
+    )
+    score = 100.0 * accepted / generated if generated else 0.0
+    return {
+        "score": round(score, 2),
+        "protocol_ok": protocol_ok,
+        "handshake_ok": handshake_ok,
+        "protocol_version": delivery.get("protocol_version"),
+        "session_id": delivery.get("session_id"),
+        "connections": int(delivery.get("connections", 0) or 0),
+        "reconnections": int(delivery.get("reconnections", 0) or 0),
+        "generated": generated,
+        "sent": sent,
+        "accepted": accepted,
+        "rejected": rejected,
+        "delivery_unknown": unknown,
+        "missing_acks": missing_acks,
+        "sink_dropped_partials": dropped_partials,
+        "sink_dropped_finals": dropped_finals,
+        "ack_latency": distribution(
+            [
+                float(value)
+                for value in delivery.get("ack_latency_sec", [])
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+            ]
+        ),
+        "time_to_first_subtitle_sec": delivery.get("time_to_first_subtitle_sec"),
+    }
+
+
+def reliability_result(done: dict, valid_sequence: bool) -> dict:
+    pipeline = pipeline_reliability_result(done, valid_sequence)
+    board = board_delivery_result(done)
+    protocol_ok = pipeline["protocol_ok"] and board["protocol_ok"]
+    score = min(pipeline["score"], board["score"]) if protocol_ok else 0.0
+    return {
+        **pipeline,
+        "score": round(score, 2),
+        "protocol_ok": protocol_ok,
+        "pipeline_score": pipeline["score"],
+        "pipeline_protocol_ok": pipeline["protocol_ok"],
+        "board_delivery": board,
+    }
+
+
 def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
     events = load_jsonl(run_dir / "live" / "events.jsonl")
+    board_acks = load_jsonl(run_dir / "live" / "board_acks.jsonl")
     audio_start_wall = float(ready["audio_start_wall_sec"])
     clips = manifest["clips"]
     assigned = assign_events(events, clips, audio_start_wall)
@@ -667,6 +753,14 @@ def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
             if clip_index + 1 < len(clips)
             else float(done.get("finished_wall_sec", clip["play_end_wall_sec"]))
         )
+        clip_acks = [
+            ack
+            for ack in board_acks
+            if isinstance(ack.get("generated_wall_sec"), (int, float))
+            and float(clip["play_start_wall_sec"])
+            <= float(ack["generated_wall_sec"])
+            <= trace_end_wall
+        ]
         partial_skips = counter_delta_for_interval(
             events,
             "partial_jobs_skipped",
@@ -754,6 +848,21 @@ def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
                 ),
                 "bridge_receive_lag_sec": distribution(latencies),
             },
+            "board_delivery": {
+                "generated": len(clip_acks),
+                "accepted": sum(ack.get("status") == "accepted" for ack in clip_acks),
+                "rejected": sum(
+                    ack.get("status", "").startswith(("rejected_", "dropped_"))
+                    for ack in clip_acks
+                ),
+                "sink_dropped": sum(
+                    ack.get("status", "").startswith("sink_dropped_") for ack in clip_acks
+                ),
+                "delivery_unknown": sum(
+                    ack.get("status") == "delivery_unknown" for ack in clip_acks
+                ),
+                "ack_latency": distribution(event_values(clip_acks, "ack_latency_sec")),
+            },
             "audio": audio_metrics(run_dir / "live" / "board_audio.wav", clip_start, clip_end),
         }
         clip_reports.append(clip_report)
@@ -773,10 +882,24 @@ def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
         reference_kinds[0] if len(set(reference_kinds)) == 1 else "mixed_human_and_offline_proxy"
     )
     valid_sequence = sequence_is_valid(events)
+    reliability = reliability_result(done, valid_sequence)
+    first_subtitle_sec = None
+    received_wall = event_values(events, "bridge_received_wall_sec")
+    if clips:
+        first_play_wall = float(clips[0]["play_start_wall_sec"])
+        received_wall = [value for value in received_wall if value >= first_play_wall]
+    if received_wall and clips:
+        first_subtitle_sec = round(
+            min(received_wall) - first_play_wall, 3
+        )
     report = {
         "schema_version": 1,
         "run_id": manifest["run_id"],
-        "status": "complete" if done.get("status") == "complete" else "invalid",
+        "status": (
+            "complete"
+            if done.get("status") == "complete" and reliability["protocol_ok"]
+            else "invalid"
+        ),
         "config": ready.get("run_config", {}),
         "scores": {
             "accuracy": aggregate_accuracy(
@@ -796,7 +919,7 @@ def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
             )
             if all_visible
             else 0.0,
-            "reliability": reliability_result(done, valid_sequence),
+            "reliability": reliability,
         },
         "global_metrics": {
             "latency": distribution(all_latencies),
@@ -810,6 +933,8 @@ def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
                 }
             ),
             "sequence_valid": valid_sequence,
+            "time_to_first_subtitle_sec": first_subtitle_sec,
+            "board_delivery": reliability["board_delivery"],
             "audio": audio_metrics(run_dir / "live" / "board_audio.wav"),
             "offline_vs_selected_reference": aggregate_accuracy(
                 list(zip(selected_references, offline_hypotheses)), reference_kind
@@ -829,6 +954,7 @@ def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
             "manifest": "manifest.json",
             "events": "live/events.jsonl",
             "board_audio": "live/board_audio.wav",
+            "board_acks": "live/board_acks.jsonl",
             "overlay_timeline": "overlay_timeline.json",
         },
         "display_evidence": "reconstructed_from_events_not_physical_hdmi_capture",
@@ -857,7 +983,9 @@ def render_markdown(report: dict) -> str:
         f"| Exactitud ({accuracy['reference_kind']}) | {fmt(accuracy['score'])} |",
         f"| Latencia ≤ {LATENCY_TARGET_SEC:.1f} s | {fmt(scores['latency'])} |",
         f"| Legibilidad ≥ {READABILITY_TARGET_SEC:.1f} s | {fmt(scores['readability'])} |",
-        f"| Confiabilidad | {fmt(reliability['score'])} |",
+        f"| Confiabilidad total | {fmt(reliability['score'])} |",
+        f"| Pipeline audio/Colab | {fmt(reliability['pipeline_score'])} |",
+        f"| Entrega aceptada por placa | {fmt(reliability['board_delivery']['score'])} |",
         "",
         "| Audio | Referencia | WER live | CER live | p90 latencia | Partial skips |",
         "|---|---|---:|---:|---:|---:|",
@@ -877,6 +1005,8 @@ def render_markdown(report: dict) -> str:
             f"- WER: {fmt(100.0 * accuracy['wer']['rate'])}%",
             f"- CER: {fmt(100.0 * accuracy['cer']['rate'])}%",
             f"- Latencia p90: {fmt(report['global_metrics']['latency']['p90'])} s",
+            f"- Latencia p95/p99/máxima: {fmt(report['global_metrics']['latency']['p95'])} / {fmt(report['global_metrics']['latency']['p99'])} / {fmt(report['global_metrics']['latency']['max'])} s",
+            f"- Tiempo hasta el primer subtítulo: {fmt(report['global_metrics']['time_to_first_subtitle_sec'])} s",
             f"- Eventos: {report['global_metrics']['events']}",
             f"- Secuencia válida: {report['global_metrics']['sequence_valid']}",
             f"- Parciales omitidos por backpressure: {reliability['partial_jobs_skipped']}",
@@ -884,6 +1014,17 @@ def render_markdown(report: dict) -> str:
             f"- Chunks perdidos durante el test: {reliability['board_dropped_chunks_during_session']}",
             f"- Contador de drops previo al test: {reliability['board_dropped_chunks_start']}",
             f"- Candidatos a alucinación: {len(report['global_metrics']['hallucination_candidates'])}",
+            "",
+            "## Entrega a la placa",
+            "",
+            f"- Handshake válido: {reliability['board_delivery']['handshake_ok']}",
+            f"- Session ID: {reliability['board_delivery']['session_id']}",
+            f"- Conexiones / reconexiones: {reliability['board_delivery']['connections']} / {reliability['board_delivery']['reconnections']}",
+            f"- Generados / enviados / aceptados: {reliability['board_delivery']['generated']} / {reliability['board_delivery']['sent']} / {reliability['board_delivery']['accepted']}",
+            f"- Rechazados / ACK ausentes / entrega desconocida: {reliability['board_delivery']['rejected']} / {reliability['board_delivery']['missing_acks']} / {reliability['board_delivery']['delivery_unknown']}",
+            f"- Drops del sink (partials / finals): {reliability['board_delivery']['sink_dropped_partials']} / {reliability['board_delivery']['sink_dropped_finals']}",
+            f"- Latencia ACK p50/p95/p99/máxima: {fmt(reliability['board_delivery']['ack_latency']['p50'])} / {fmt(reliability['board_delivery']['ack_latency']['p95'])} / {fmt(reliability['board_delivery']['ack_latency']['p99'])} / {fmt(reliability['board_delivery']['ack_latency']['max'])} s",
+            "- Un ACK `accepted` prueba recepción y encolado en firmware; no prueba los píxeles HDMI.",
             "",
         ]
     )
@@ -900,8 +1041,10 @@ def print_summary(report: dict) -> None:
     print(f"  latency      : {scores['latency']:.2f}/100 <= {LATENCY_TARGET_SEC:.1f}s")
     print(f"  readability  : {scores['readability']:.2f}/100 >= {READABILITY_TARGET_SEC:.1f}s")
     print(f"  reliability  : {reliability['score']:.2f}/100")
+    print(f"  board ACKs   : {reliability['board_delivery']['accepted']}/{reliability['board_delivery']['generated']} accepted")
     print(f"  WER / CER    : {100.0 * accuracy['wer']['rate']:.2f}% / {100.0 * accuracy['cer']['rate']:.2f}%")
     print(f"  latency p90  : {fmt(report['global_metrics']['latency']['p90'])}s")
+    print(f"  p95/p99/max  : {fmt(report['global_metrics']['latency']['p95'])}/{fmt(report['global_metrics']['latency']['p99'])}/{fmt(report['global_metrics']['latency']['max'])}s")
     print(f"  partial skips: {reliability['partial_jobs_skipped']} (not final losses)")
     print(f"  real drops   : {reliability['board_dropped_chunks_during_session']} audio / {reliability['final_jobs_dropped']} finals")
     print(f"  report       : logs/audio-tests/{report['run_id']}/report.md")
@@ -1048,6 +1191,7 @@ def run_benchmark(args) -> int:
             "STT_FOREGROUND": "1",
             "STT_SINGLE_SESSION": "1",
             "STT_JSONL": relative(live_dir / "events.jsonl"),
+            "STT_BOARD_ACK_JSONL": relative(live_dir / "board_acks.jsonl"),
             "STT_SAVE_WAV": relative(live_dir / "board_audio.wav"),
             "STT_READY_FILE": relative(ready_file),
             "STT_DONE_FILE": relative(done_file),
@@ -1181,19 +1325,21 @@ def load_sweep_cases(path: Path | None = None) -> list[dict]:
     for index, raw_case in enumerate(raw_cases, 1):
         if not isinstance(raw_case, dict):
             raise ValueError(f"sweep case {index} must be a JSON object")
-        unknown = sorted(set(raw_case) - ({"name"} | set(SESSION_PARAMETER_MAP)))
+        metadata_fields = {"name", "group", "replicate"}
+        unknown = sorted(set(raw_case) - (metadata_fields | set(SESSION_PARAMETER_MAP)))
         if unknown:
             raise ValueError(f"unsupported field(s) in sweep case {index}: {', '.join(unknown)}")
         name = str(raw_case.get("name", f"case_{index}")).strip()
         if not name or name in names:
             raise ValueError(f"sweep case name must be non-empty and unique: {name!r}")
         config = validate_config_overrides(
-            {key: value for key, value in raw_case.items() if key != "name"}
+            {key: value for key, value in raw_case.items() if key in SESSION_PARAMETER_MAP}
         )
         if not config:
             raise ValueError(f"sweep case {name!r} has no session parameters")
         names.add(name)
-        cases.append({"name": name, **config})
+        metadata = {key: raw_case[key] for key in ("group", "replicate") if key in raw_case}
+        cases.append({"name": name, **metadata, **config})
     return cases
 
 
@@ -1214,7 +1360,11 @@ def sweep_row(case: dict, report: dict) -> dict:
     reliability = scores["reliability"]
     return {
         "name": case["name"],
-        "requested_config": {key: value for key, value in case.items() if key != "name"},
+        "group": case.get("group"),
+        "replicate": case.get("replicate"),
+        "requested_config": {
+            key: value for key, value in case.items() if key in SESSION_PARAMETER_MAP
+        },
         "run_id": report["run_id"],
         "status": report["status"],
         "accuracy": scores["accuracy"]["score"],
@@ -1228,7 +1378,47 @@ def sweep_row(case: dict, report: dict) -> dict:
         "real_audio_drops": reliability["board_dropped_chunks_during_session"],
         "final_jobs_dropped": reliability["final_jobs_dropped"],
         "hallucination_candidates": len(report["global_metrics"]["hallucination_candidates"]),
+        "board_acks_accepted": reliability["board_delivery"]["accepted"],
+        "board_events_generated": reliability["board_delivery"]["generated"],
     }
+
+
+def replicate_summaries(rows: list[dict]) -> list[dict]:
+    groups: dict[str, list[dict]] = {}
+    for row in rows:
+        group = row.get("group")
+        if group and row.get("status") != "error":
+            groups.setdefault(str(group), []).append(row)
+
+    summaries = []
+    metrics = (
+        "accuracy",
+        "latency",
+        "readability",
+        "reliability",
+        "wer_percent",
+        "cer_percent",
+        "latency_p90_sec",
+    )
+    for group, members in groups.items():
+        if len(members) < 2:
+            continue
+        summary = {
+            "group": group,
+            "count": len(members),
+            "runs": [row["name"] for row in members],
+            "metrics": {},
+        }
+        for metric in metrics:
+            values = [float(row[metric]) for row in members if row.get(metric) is not None]
+            summary["metrics"][metric] = {
+                "mean": round(sum(values) / len(values), 3) if values else None,
+                "min": round(min(values), 3) if values else None,
+                "max": round(max(values), 3) if values else None,
+                "range": round(max(values) - min(values), 3) if values else None,
+            }
+        summaries.append(summary)
+    return summaries
 
 
 def render_sweep_markdown(sweep: dict) -> str:
@@ -1264,6 +1454,22 @@ def render_sweep_markdown(sweep: dict) -> str:
         lines.extend(["", "## Mejores casos por métrica", ""])
         for metric, names in sweep["best_by_metric"].items():
             lines.append(f"- {metric}: {', '.join(names)}")
+    if sweep.get("replicate_summaries"):
+        lines.extend(["", "## Réplicas de control", ""])
+        for summary in sweep["replicate_summaries"]:
+            lines.extend(
+                [
+                    f"### {summary['group']} ({summary['count']} corridas)",
+                    "",
+                    "| Métrica | Media | Mín | Máx | Rango |",
+                    "|---|---:|---:|---:|---:|",
+                ]
+            )
+            for metric, values in summary["metrics"].items():
+                lines.append(
+                    f"| {metric} | {fmt(values['mean'], 3)} | {fmt(values['min'], 3)} | "
+                    f"{fmt(values['max'], 3)} | {fmt(values['range'], 3)} |"
+                )
     return "\n".join(lines) + "\n"
 
 
@@ -1284,7 +1490,7 @@ def run_sweep(args) -> int:
 
     exit_code = 0
     for index, case in enumerate(cases, 1):
-        config = {key: value for key, value in case.items() if key != "name"}
+        config = {key: value for key, value in case.items() if key in SESSION_PARAMETER_MAP}
         print(f"\n=== SWEEP {index}/{len(cases)}: {case['name']} ===")
         print("  " + "  ".join(f"{key}={value}" for key, value in config.items()))
         run_args = copy.copy(args)
@@ -1295,6 +1501,8 @@ def run_sweep(args) -> int:
             "sweep_id": sweep["sweep_id"],
             "case_index": index,
             "case_name": case["name"],
+            "group": case.get("group"),
+            "replicate": case.get("replicate"),
         }
         for parameter in SESSION_PARAMETER_MAP:
             setattr(run_args, parameter, config.get(parameter))
@@ -1325,6 +1533,7 @@ def run_sweep(args) -> int:
             best = max(row[metric] for row in successful)
             best_by_metric[metric] = [row["name"] for row in successful if row[metric] == best]
     sweep["best_by_metric"] = best_by_metric
+    sweep["replicate_summaries"] = replicate_summaries(successful)
     sweep["status"] = sweep["status"] if sweep["status"] == "interrupted" else (
         "complete" if exit_code == 0 else "complete_with_errors"
     )
