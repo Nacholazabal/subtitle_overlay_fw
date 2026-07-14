@@ -21,6 +21,16 @@ FORMAT_S16_LE = 1
 CHUNK_HEADER = "!QQI"
 CHUNK_HEADER_SIZE = struct.calcsize(CHUNK_HEADER)
 
+SESSION_CONFIG_FIELDS = {
+    "max_window_sec": (float, lambda value: value > 0),
+    "min_silence_sec": (float, lambda value: value >= 0),
+    "partial_sec": (float, lambda value: value >= 0),
+    "partial_agreement": (int, lambda value: value >= 1),
+    "gain": (float, lambda value: value >= 0),
+    "vad_threshold": (float, lambda value: 0 < value < 1),
+    "vad_neg_threshold": (float, lambda value: 0 <= value < 1),
+}
+
 
 @dataclass(frozen=True)
 class AudioFrame:
@@ -76,6 +86,7 @@ def make_session_start(
     samples_per_chunk,
     bytes_per_chunk,
     client_monotonic=None,
+    config_overrides=None,
 ):
     message = {
         "type": MESSAGE_SESSION_START,
@@ -89,7 +100,38 @@ def make_session_start(
     }
     if client_monotonic is not None:
         message["client_monotonic"] = float(client_monotonic)
+    if config_overrides:
+        message["config_overrides"] = validate_config_overrides(config_overrides)
     return message
+
+
+def validate_config_overrides(overrides):
+    if overrides is None:
+        return {}
+    if not isinstance(overrides, dict):
+        raise ValueError("config_overrides must be a JSON object")
+
+    unknown = sorted(set(overrides) - set(SESSION_CONFIG_FIELDS))
+    if unknown:
+        raise ValueError(f"unsupported session config override(s): {', '.join(unknown)}")
+
+    normalized = {}
+    for name, value in overrides.items():
+        converter, predicate = SESSION_CONFIG_FIELDS[name]
+        if isinstance(value, bool):
+            raise ValueError(f"invalid {name}")
+        try:
+            converted = converter(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid {name}") from exc
+        if not predicate(converted):
+            raise ValueError(f"invalid {name}")
+        normalized[name] = converted
+    threshold = normalized.get("vad_threshold")
+    negative_threshold = normalized.get("vad_neg_threshold")
+    if threshold is not None and negative_threshold is not None and negative_threshold >= threshold:
+        raise ValueError("vad_neg_threshold must be lower than vad_threshold")
+    return normalized
 
 
 def validate_session_start(message):
@@ -105,6 +147,7 @@ def validate_session_start(message):
         raise ValueError("only S16_LE audio is supported")
     if int(message.get("bytes_per_chunk", 0)) <= 0:
         raise ValueError("invalid bytes_per_chunk")
+    return validate_config_overrides(message.get("config_overrides"))
 
 
 def encode_audio_frame(seq, timestamp_ns, dropped, payload):

@@ -13,7 +13,9 @@ from scripts import audio_test_short
 from scripts.audio_test_short import (
     accuracy_result,
     assign_events,
+    counter_delta_for_interval,
     error_rate,
+    load_sweep_cases,
     make_report,
     normalize_text,
     offline_reference,
@@ -75,6 +77,15 @@ class AssignmentAndDisplayTests(unittest.TestCase):
         self.assertEqual(audio_test_short.CLEAR_TIMEOUT_SEC, records[0]["visible_duration_sec"])
         self.assertEqual(["hola"], records[0]["lines"])
 
+    def test_partial_skip_counter_is_attributed_to_its_clip_interval(self):
+        events = [
+            {"bridge_received_wall_sec": 99.0, "partial_jobs_skipped": 20},
+            {"bridge_received_wall_sec": 101.0, "partial_jobs_skipped": 22},
+            {"bridge_received_wall_sec": 111.0, "partial_jobs_skipped": 25},
+        ]
+
+        self.assertEqual(2, counter_delta_for_interval(events, "partial_jobs_skipped", 100, 110))
+
 
 class OfflineCacheTests(unittest.TestCase):
     def test_cache_is_reused_for_same_audio_and_model_config(self):
@@ -123,10 +134,12 @@ class OfflineTranscriptionTests(unittest.TestCase):
 
         class SharedModel:
             config = ServerConfig()
+            transcribe_kwargs = None
 
             class model:
                 @staticmethod
-                def transcribe(_audio, **_kwargs):
+                def transcribe(_audio, **kwargs):
+                    SharedModel.transcribe_kwargs = kwargs
                     return iter([Segment()]), Info()
 
         with mock.patch.dict(
@@ -139,6 +152,7 @@ class OfflineTranscriptionTests(unittest.TestCase):
         self.assertEqual("clip.webm", result["filename"])
         self.assertEqual(False, result["config"]["config_realtime"])
         self.assertEqual("http_offline", result["config"]["config_transport"])
+        self.assertEqual(0.5, SharedModel.transcribe_kwargs["vad_parameters"]["threshold"])
 
 
 class ReliabilityTests(unittest.TestCase):
@@ -155,6 +169,60 @@ class ReliabilityTests(unittest.TestCase):
 
         self.assertEqual(100.0, reliability_result(done, True)["score"])
         self.assertEqual(0.0, reliability_result(done, False)["score"])
+
+    def test_startup_drop_counter_and_partial_skips_do_not_reduce_reliability(self):
+        done = {
+            "status": "complete",
+            "chunks_forwarded": 100,
+            "board_dropped_chunks_start": 769,
+            "board_dropped_chunks_end": 769,
+            "board_dropped_chunks_during_session": 0,
+            "jobs_submitted": 30,
+            "partial_jobs_skipped": 22,
+            "final_jobs_dropped": 0,
+            "events_emitted": 20,
+            "events_dropped": 0,
+        }
+
+        result = reliability_result(done, True)
+
+        self.assertEqual(100.0, result["score"])
+        self.assertEqual(22, result["partial_jobs_skipped"])
+        self.assertEqual(769, result["board_dropped_chunks_start"])
+
+    def test_real_session_audio_loss_reduces_reliability(self):
+        done = {
+            "status": "complete",
+            "chunks_forwarded": 97,
+            "board_dropped_chunks_during_session": 3,
+            "jobs_submitted": 10,
+            "partial_jobs_skipped": 5,
+            "final_jobs_dropped": 0,
+            "events_emitted": 10,
+            "events_dropped": 0,
+        }
+
+        self.assertEqual(97.0, reliability_result(done, True)["score"])
+
+
+class SweepConfigTests(unittest.TestCase):
+    def test_default_sweep_includes_segmentation_and_vad_cases(self):
+        cases = load_sweep_cases()
+
+        self.assertEqual(6, len(cases))
+        self.assertEqual("baseline", cases[0]["name"])
+        self.assertEqual(0.5, cases[0]["partial_sec"])
+        self.assertEqual(4.0, cases[3]["max_window_sec"])
+        self.assertEqual(0.35, cases[4]["vad_threshold"])
+        self.assertEqual(0.65, cases[5]["vad_threshold"])
+
+    def test_custom_sweep_rejects_unknown_parameter(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "sweep.json"
+            path.write_text(json.dumps([{"name": "bad", "model": "large"}]), encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                load_sweep_cases(path)
 
 
 class ReportTests(unittest.TestCase):

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import math
@@ -25,6 +26,9 @@ from urllib.parse import urlsplit, urlunsplit
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
+from scripts.stt_stream_protocol import validate_config_overrides
+
+
 DEFAULT_AUDIO_DIR = Path("/mnt/c/Users/nacho/Desktop/Postgrado/TESIS/audios")
 DEFAULT_STREAM_URL = "wss://passage-capacity-wistful.ngrok-free.dev/stt/stream"
 EXPECTED_CLIPS = ("desay-short", "noticiero-short", "rel-short")
@@ -40,6 +44,76 @@ HALLUCINATION_MARKERS = (
     "suscríbete al canal",
     "gracias por ver el video",
     "gracias por ver este video",
+    "suscríbete",
+    "suscribete",
+    "got it",
+)
+
+SESSION_PARAMETER_MAP = {
+    "max_window_sec": ("config_max_window_sec", "STT_MAX_WINDOW_SEC"),
+    "min_silence_sec": ("config_min_silence_sec", "STT_MIN_SILENCE_SEC"),
+    "partial_sec": ("config_partial_sec", "STT_PARTIAL_SEC"),
+    "partial_agreement": ("config_partial_agreement", "STT_PARTIAL_AGREEMENT"),
+    "gain": ("config_gain", "STT_GAIN"),
+    "vad_threshold": ("config_vad_threshold", "STT_VAD_THRESHOLD"),
+    "vad_neg_threshold": ("config_vad_neg_threshold", "STT_VAD_NEG_THRESHOLD"),
+}
+
+DEFAULT_SWEEP_CASES = (
+    {
+        "name": "baseline",
+        "max_window_sec": 3.0,
+        "min_silence_sec": 0.3,
+        "partial_sec": 0.5,
+        "partial_agreement": 1,
+        "vad_threshold": 0.5,
+        "vad_neg_threshold": 0.35,
+    },
+    {
+        "name": "calmer_updates",
+        "max_window_sec": 3.0,
+        "min_silence_sec": 0.3,
+        "partial_sec": 1.0,
+        "partial_agreement": 1,
+        "vad_threshold": 0.5,
+        "vad_neg_threshold": 0.35,
+    },
+    {
+        "name": "stable_partials",
+        "max_window_sec": 3.0,
+        "min_silence_sec": 0.3,
+        "partial_sec": 1.0,
+        "partial_agreement": 2,
+        "vad_threshold": 0.5,
+        "vad_neg_threshold": 0.35,
+    },
+    {
+        "name": "wider_context",
+        "max_window_sec": 4.0,
+        "min_silence_sec": 0.5,
+        "partial_sec": 1.0,
+        "partial_agreement": 2,
+        "vad_threshold": 0.5,
+        "vad_neg_threshold": 0.35,
+    },
+    {
+        "name": "sensitive_vad",
+        "max_window_sec": 3.0,
+        "min_silence_sec": 0.3,
+        "partial_sec": 1.0,
+        "partial_agreement": 2,
+        "vad_threshold": 0.35,
+        "vad_neg_threshold": 0.2,
+    },
+    {
+        "name": "strict_vad",
+        "max_window_sec": 3.0,
+        "min_silence_sec": 0.3,
+        "partial_sec": 1.0,
+        "partial_agreement": 2,
+        "vad_threshold": 0.65,
+        "vad_neg_threshold": 0.5,
+    },
 )
 
 
@@ -73,6 +147,45 @@ def load_jsonl(path: Path) -> list[dict]:
             if isinstance(event, dict):
                 events.append(event)
     return events
+
+
+def requested_session_config(args) -> dict:
+    requested = {
+        name: value
+        for name in SESSION_PARAMETER_MAP
+        if (value := getattr(args, name, None)) is not None
+    }
+    return validate_config_overrides(requested)
+
+
+def verify_effective_config(requested: dict, effective: dict) -> None:
+    for name, expected in requested.items():
+        config_key, _environment_key = SESSION_PARAMETER_MAP[name]
+        actual = effective.get(config_key)
+        if isinstance(expected, float):
+            matches = isinstance(actual, (int, float)) and not isinstance(actual, bool)
+            matches = matches and math.isclose(float(actual), expected, rel_tol=0.0, abs_tol=1e-6)
+        else:
+            matches = actual == expected
+        if not matches:
+            raise RuntimeError(
+                f"Colab did not apply {name}={expected!r}; session reported {actual!r}"
+            )
+
+
+def counter_delta_for_interval(events: list[dict], field: str, start_wall: float, end_wall: float) -> int:
+    baseline = 0
+    maximum = None
+    for event in sorted(events, key=lambda item: item.get("bridge_received_wall_sec", 0)):
+        received = event.get("bridge_received_wall_sec")
+        value = event.get(field)
+        if not isinstance(received, (int, float)) or not isinstance(value, int):
+            continue
+        if received < start_wall:
+            baseline = max(baseline, value)
+        elif received <= end_wall:
+            maximum = max(maximum if maximum is not None else baseline, value)
+    return max(0, (maximum if maximum is not None else baseline) - baseline)
 
 
 def http_base_from_stream_url(stream_url: str) -> str:
@@ -131,7 +244,15 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def offline_signature(health: dict) -> dict:
+def offline_vad_overrides(session_config: dict | None) -> dict:
+    return {
+        key: value
+        for key, value in (session_config or {}).items()
+        if key in ("vad_threshold", "vad_neg_threshold")
+    }
+
+
+def offline_signature(health: dict, session_config: dict | None = None) -> dict:
     config = health.get("run_config", {})
     keys = (
         "config_model",
@@ -140,8 +261,13 @@ def offline_signature(health: dict) -> dict:
         "config_compute_type",
         "config_beam_size",
         "config_vad_filter",
+        "config_vad_threshold",
+        "config_vad_neg_threshold",
     )
-    return {key: config.get(key) for key in keys}
+    signature = {key: config.get(key) for key in keys}
+    for name, value in offline_vad_overrides(session_config).items():
+        signature[SESSION_PARAMETER_MAP[name][0]] = value
+    return signature
 
 
 def offline_reference(
@@ -149,9 +275,10 @@ def offline_reference(
     stream_url: str,
     health: dict,
     refresh: bool = False,
+    session_config: dict | None = None,
 ) -> tuple[dict, Path, bool]:
     audio_hash = sha256_file(clip)
-    signature = offline_signature(health)
+    signature = offline_signature(health, session_config)
     cache_material = json.dumps(
         {"audio_sha256": audio_hash, "config": signature}, sort_keys=True
     ).encode("utf-8")
@@ -166,6 +293,9 @@ def offline_reference(
         headers={
             "Content-Type": "application/octet-stream",
             "X-Audio-Filename": clip.name,
+            "X-STT-Config-Overrides": json.dumps(
+                offline_vad_overrides(session_config), separators=(",", ":")
+            ),
         },
     )
     result["audio_sha256"] = audio_hash
@@ -439,13 +569,29 @@ def aggregate_accuracy(pairs: list[tuple[str, str]], reference_kind: str) -> dic
 
 def reliability_result(done: dict, valid_sequence: bool) -> dict:
     chunks = int(done.get("chunks_forwarded", 0) or 0)
-    board_drops = int(done.get("board_dropped_chunks", 0) or 0)
+    has_scoped_board_counter = "board_dropped_chunks_during_session" in done
+    board_drops = int(
+        done.get("board_dropped_chunks_during_session", done.get("board_dropped_chunks", 0)) or 0
+    )
+    board_drops_start = int(done.get("board_dropped_chunks_start", 0) or 0)
+    board_drops_end = int(
+        done.get("board_dropped_chunks_end", done.get("board_dropped_chunks", 0)) or 0
+    )
     jobs = int(done.get("jobs_submitted", 0) or 0)
-    job_drops = int(done.get("dropped_audio_jobs", 0) or 0)
+    partial_skips = int(done.get("partial_jobs_skipped", done.get("dropped_audio_jobs", 0)) or 0)
+    # Old sessions did not distinguish disposable partials from final loss, so
+    # retain their conservative score. New sessions explicitly report finals.
+    final_drops = int(
+        done.get(
+            "final_jobs_dropped",
+            done.get("dropped_audio_jobs", 0) if not has_scoped_board_counter else 0,
+        )
+        or 0
+    )
     emitted = int(done.get("events_emitted", 0) or 0)
     event_drops = int(done.get("events_dropped", 0) or 0)
     transport = 100.0 * chunks / (chunks + board_drops) if chunks + board_drops else 0.0
-    inference = 100.0 * (jobs - job_drops) / jobs if jobs else 0.0
+    inference = 100.0 * max(0, jobs - final_drops) / jobs if jobs else 0.0
     delivery = 100.0 * (emitted - event_drops) / emitted if emitted else 0.0
     protocol_ok = (
         valid_sequence
@@ -457,9 +603,14 @@ def reliability_result(done: dict, valid_sequence: bool) -> dict:
         "score": round(max(0.0, score), 2),
         "protocol_ok": protocol_ok,
         "chunks_forwarded": chunks,
+        "board_dropped_chunks_start": board_drops_start,
+        "board_dropped_chunks_end": board_drops_end,
+        "board_dropped_chunks_during_session": board_drops,
         "board_dropped_chunks": board_drops,
         "jobs_submitted": jobs,
-        "dropped_audio_jobs": job_drops,
+        "partial_jobs_skipped": partial_skips,
+        "final_jobs_dropped": final_drops,
+        "dropped_audio_jobs": partial_skips,
         "events_emitted": emitted,
         "events_dropped": event_drops,
     }
@@ -477,7 +628,7 @@ def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
     offline_hypotheses: list[str] = []
     reference_kinds: list[str] = []
 
-    for clip in clips:
+    for clip_index, clip in enumerate(clips):
         name = clip["name"]
         clip_events = assigned[name]
         finals = [event for event in clip_events if event.get("is_final")]
@@ -511,6 +662,24 @@ def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
         )
         clip_start = float(clip["play_start_wall_sec"]) - audio_start_wall
         clip_end = float(clip["play_end_wall_sec"]) - audio_start_wall
+        trace_end_wall = (
+            float(clips[clip_index + 1]["play_start_wall_sec"])
+            if clip_index + 1 < len(clips)
+            else float(done.get("finished_wall_sec", clip["play_end_wall_sec"]))
+        )
+        partial_skips = counter_delta_for_interval(
+            events,
+            "partial_jobs_skipped",
+            float(clip["play_start_wall_sec"]),
+            trace_end_wall,
+        )
+        hallucination_candidates = sorted(
+            {
+                event.get("text", "").strip()
+                for event in clip_events
+                if is_hallucination(event.get("text", ""))
+            }
+        )
         receive_times = event_values(clip_events, "bridge_received_wall_sec")
         final_windows = [
             float(event["end_sec"]) - float(event["start_sec"])
@@ -553,7 +722,10 @@ def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
             "events": len(clip_events),
             "finals": len(finals),
             "partials": len(clip_events) - len(finals),
-            "hallucinations": sum(is_hallucination(event.get("text", "")) for event in clip_events),
+            "partial_jobs_skipped": partial_skips,
+            "final_jobs_dropped": 0,
+            "hallucination_candidates": hallucination_candidates,
+            "hallucinations": len(hallucination_candidates),
             "final_reasons": {
                 reason: sum(event.get("segment_reason") == reason for event in finals)
                 for reason in ("silence", "max_window", "flush")
@@ -630,6 +802,13 @@ def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
             "latency": distribution(all_latencies),
             "visible_duration": distribution(all_visible),
             "events": len(events),
+            "hallucination_candidates": sorted(
+                {
+                    event.get("text", "").strip()
+                    for event in events
+                    if is_hallucination(event.get("text", ""))
+                }
+            ),
             "sequence_valid": valid_sequence,
             "audio": audio_metrics(run_dir / "live" / "board_audio.wav"),
             "offline_vs_selected_reference": aggregate_accuracy(
@@ -680,7 +859,7 @@ def render_markdown(report: dict) -> str:
         f"| Legibilidad ≥ {READABILITY_TARGET_SEC:.1f} s | {fmt(scores['readability'])} |",
         f"| Confiabilidad | {fmt(reliability['score'])} |",
         "",
-        "| Audio | Referencia | WER live | CER live | p90 latencia | Drops |",
+        "| Audio | Referencia | WER live | CER live | p90 latencia | Partial skips |",
         "|---|---|---:|---:|---:|---:|",
     ]
     for clip in report["clips"]:
@@ -688,7 +867,7 @@ def render_markdown(report: dict) -> str:
             f"| {clip['name']} | {clip['reference_kind']} | "
             f"{fmt(100.0 * clip['accuracy']['wer']['rate'])}% | "
             f"{fmt(100.0 * clip['accuracy']['cer']['rate'])}% | "
-            f"{fmt(clip['latency']['p90'])} s | {reliability['dropped_audio_jobs']} |"
+            f"{fmt(clip['latency']['p90'])} s | {clip['partial_jobs_skipped']} |"
         )
     lines.extend(
         [
@@ -700,6 +879,11 @@ def render_markdown(report: dict) -> str:
             f"- Latencia p90: {fmt(report['global_metrics']['latency']['p90'])} s",
             f"- Eventos: {report['global_metrics']['events']}",
             f"- Secuencia válida: {report['global_metrics']['sequence_valid']}",
+            f"- Parciales omitidos por backpressure: {reliability['partial_jobs_skipped']}",
+            f"- Finales perdidos: {reliability['final_jobs_dropped']}",
+            f"- Chunks perdidos durante el test: {reliability['board_dropped_chunks_during_session']}",
+            f"- Contador de drops previo al test: {reliability['board_dropped_chunks_start']}",
+            f"- Candidatos a alucinación: {len(report['global_metrics']['hallucination_candidates'])}",
             "",
         ]
     )
@@ -718,6 +902,8 @@ def print_summary(report: dict) -> None:
     print(f"  reliability  : {reliability['score']:.2f}/100")
     print(f"  WER / CER    : {100.0 * accuracy['wer']['rate']:.2f}% / {100.0 * accuracy['cer']['rate']:.2f}%")
     print(f"  latency p90  : {fmt(report['global_metrics']['latency']['p90'])}s")
+    print(f"  partial skips: {reliability['partial_jobs_skipped']} (not final losses)")
+    print(f"  real drops   : {reliability['board_dropped_chunks_during_session']} audio / {reliability['final_jobs_dropped']} finals")
     print(f"  report       : logs/audio-tests/{report['run_id']}/report.md")
 
 
@@ -732,8 +918,9 @@ def compare_runs() -> int:
         print("No completed audio-test reports found.")
         return 0
     header = (
-        f"{'RUN':<24} {'MODEL':<10} {'WIN':>5} {'SIL':>5} {'PART':>5} "
-        f"{'ACC':>7} {'LAT':>7} {'READ':>7} {'REL':>7} {'WER%':>7} {'P90':>7} {'DROP':>6}"
+        f"{'RUN':<24} {'MODEL':<20} {'WIN':>5} {'SIL':>5} {'PART':>5} {'AGR':>4} {'VTH':>5} {'VNEG':>5} "
+        f"{'ACC':>7} {'LAT':>7} {'READ':>7} {'REL':>7} {'WER%':>7} {'P90':>7} "
+        f"{'PSKIP':>6} {'LOSS':>5}"
     )
     print(header)
     print("-" * len(header))
@@ -743,15 +930,21 @@ def compare_runs() -> int:
         accuracy = scores.get("accuracy", {})
         reliability = scores.get("reliability", {})
         latency = report.get("global_metrics", {}).get("latency", {})
+        model = Path(str(config.get("config_model", "?"))).name
         print(
-            f"{report.get('run_id', '?'):<24} {str(config.get('config_model', '?')):<10} "
+            f"{report.get('run_id', '?'):<24} {model:<20} "
             f"{fmt(config.get('config_max_window_sec'), 1):>5} "
             f"{fmt(config.get('config_min_silence_sec'), 1):>5} "
             f"{fmt(config.get('config_partial_sec'), 1):>5} "
+            f"{str(config.get('config_partial_agreement', '?')):>4} "
+            f"{fmt(config.get('config_vad_threshold'), 2):>5} "
+            f"{fmt(config.get('config_vad_neg_threshold'), 2):>5} "
             f"{fmt(accuracy.get('score')):>7} {fmt(scores.get('latency')):>7} "
             f"{fmt(scores.get('readability')):>7} {fmt(reliability.get('score')):>7} "
             f"{fmt(100.0 * accuracy.get('wer', {}).get('rate', 0.0)):>7} "
-            f"{fmt(latency.get('p90')):>7} {str(reliability.get('dropped_audio_jobs', '?')):>6}"
+            f"{fmt(latency.get('p90')):>7} "
+            f"{str(reliability.get('partial_jobs_skipped', reliability.get('dropped_audio_jobs', '?'))):>6} "
+            f"{str(reliability.get('final_jobs_dropped', '?')):>5}"
         )
     return 0
 
@@ -778,11 +971,20 @@ def new_run_dir() -> Path:
     return candidate
 
 
-def run_offline(clips: list[Path], stream_url: str, health: dict, refresh: bool, output_dir: Path | None) -> list[dict]:
+def run_offline(
+    clips: list[Path],
+    stream_url: str,
+    health: dict,
+    refresh: bool,
+    output_dir: Path | None,
+    session_config: dict | None = None,
+) -> list[dict]:
     references = []
     for clip in clips:
         print(f"Offline reference: {clip.name} ...", flush=True)
-        reference, cache_path, cache_hit = offline_reference(clip, stream_url, health, refresh)
+        reference, cache_path, cache_hit = offline_reference(
+            clip, stream_url, health, refresh, session_config
+        )
         print(f"  {'cache hit' if cache_hit else 'generated'}: {cache_path.relative_to(REPO_ROOT)}")
         references.append(reference)
         if output_dir is not None:
@@ -795,8 +997,9 @@ def run_benchmark(args) -> int:
     stream_url = os.environ.get("STT_STREAM_URL", DEFAULT_STREAM_URL)
     clips = discover_clips(audio_dir)
     health = health_check(stream_url)
+    requested_config = requested_session_config(args)
     if args.offline_only:
-        run_offline(clips, stream_url, health, args.refresh_offline, None)
+        run_offline(clips, stream_url, health, args.refresh_offline, None, requested_config)
         return 0
     if shutil.which("ffplay") is None:
         raise RuntimeError("ffplay is required but was not found in WSL PATH")
@@ -822,11 +1025,15 @@ def run_benchmark(args) -> int:
         "stream_url": stream_url,
         "gap_sec": gap_sec,
         "health": health,
+        "requested_session_config": requested_config,
+        "sweep": getattr(args, "sweep_metadata", None),
         "clips": [],
     }
     write_json(run_dir / "manifest.json", manifest)
     try:
-        run_offline(clips, stream_url, health, args.refresh_offline, offline_dir)
+        run_offline(
+            clips, stream_url, health, args.refresh_offline, offline_dir, requested_config
+        )
     except Exception:
         manifest["status"] = "failed_offline"
         manifest["finished_wall_sec"] = time.time()
@@ -847,6 +1054,9 @@ def run_benchmark(args) -> int:
             "STT_STOP_FILE": relative(stop_file),
         }
     )
+    for name, value in requested_config.items():
+        _config_key, environment_key = SESSION_PARAMETER_MAP[name]
+        environment[environment_key] = str(value)
     bridge_log = (live_dir / "bridge.log").open("w", encoding="utf-8")
     bridge = subprocess.Popen(
         [str(REPO_ROOT / "scripts" / "run_stt_colab_stream.sh")],
@@ -873,6 +1083,7 @@ def run_benchmark(args) -> int:
             flush=True,
         )
         ready = wait_for_file(ready_file, bridge, ready_timeout)
+        verify_effective_config(requested_config, ready.get("run_config", {}))
         manifest["status"] = "playing"
         manifest["bridge_ready"] = ready
         write_json(run_dir / "manifest.json", manifest)
@@ -924,6 +1135,7 @@ def run_benchmark(args) -> int:
         manifest["bridge_done"] = done
         write_json(run_dir / "manifest.json", manifest)
         report = make_report(run_dir, manifest, ready, done)
+        args.completed_report = report
         print_summary(report)
         return 0
     except KeyboardInterrupt:
@@ -953,15 +1165,201 @@ def run_benchmark(args) -> int:
         signal.signal(signal.SIGTERM, previous_sigterm)
 
 
+def load_sweep_cases(path: Path | None = None) -> list[dict]:
+    if path is None:
+        raw_cases = [dict(case) for case in DEFAULT_SWEEP_CASES]
+    else:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+        raw_cases = parsed.get("cases") if isinstance(parsed, dict) else parsed
+        if not isinstance(raw_cases, list):
+            raise ValueError("sweep file must be a JSON list or an object with a 'cases' list")
+    if not raw_cases:
+        raise ValueError("sweep must contain at least one case")
+
+    cases = []
+    names = set()
+    for index, raw_case in enumerate(raw_cases, 1):
+        if not isinstance(raw_case, dict):
+            raise ValueError(f"sweep case {index} must be a JSON object")
+        unknown = sorted(set(raw_case) - ({"name"} | set(SESSION_PARAMETER_MAP)))
+        if unknown:
+            raise ValueError(f"unsupported field(s) in sweep case {index}: {', '.join(unknown)}")
+        name = str(raw_case.get("name", f"case_{index}")).strip()
+        if not name or name in names:
+            raise ValueError(f"sweep case name must be non-empty and unique: {name!r}")
+        config = validate_config_overrides(
+            {key: value for key, value in raw_case.items() if key != "name"}
+        )
+        if not config:
+            raise ValueError(f"sweep case {name!r} has no session parameters")
+        names.add(name)
+        cases.append({"name": name, **config})
+    return cases
+
+
+def new_sweep_dir() -> Path:
+    root = LOG_ROOT / "sweeps"
+    base = datetime.now().strftime("%Y%m%d-%H%M%S")
+    candidate = root / base
+    suffix = 1
+    while candidate.exists():
+        candidate = root / f"{base}-{suffix}"
+        suffix += 1
+    candidate.mkdir(parents=True)
+    return candidate
+
+
+def sweep_row(case: dict, report: dict) -> dict:
+    scores = report["scores"]
+    reliability = scores["reliability"]
+    return {
+        "name": case["name"],
+        "requested_config": {key: value for key, value in case.items() if key != "name"},
+        "run_id": report["run_id"],
+        "status": report["status"],
+        "accuracy": scores["accuracy"]["score"],
+        "latency": scores["latency"],
+        "readability": scores["readability"],
+        "reliability": reliability["score"],
+        "wer_percent": round(100.0 * scores["accuracy"]["wer"]["rate"], 2),
+        "cer_percent": round(100.0 * scores["accuracy"]["cer"]["rate"], 2),
+        "latency_p90_sec": report["global_metrics"]["latency"]["p90"],
+        "partial_jobs_skipped": reliability["partial_jobs_skipped"],
+        "real_audio_drops": reliability["board_dropped_chunks_during_session"],
+        "final_jobs_dropped": reliability["final_jobs_dropped"],
+        "hallucination_candidates": len(report["global_metrics"]["hallucination_candidates"]),
+    }
+
+
+def render_sweep_markdown(sweep: dict) -> str:
+    lines = [
+        f"# STT parameter sweep — {sweep['sweep_id']}",
+        "",
+        "No se calcula un promedio global: exactitud, latencia, legibilidad y confiabilidad se comparan por separado.",
+        "",
+        "| Caso | Win | Silence | Partial | Agr | VAD th | VAD neg | Accuracy | Latency | Readability | Reliability | WER | p90 | P skips | Real loss | Halluc. |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for row in sweep["runs"]:
+        if row.get("status") == "error":
+            lines.append(f"| {row['name']} | colspan=13: ERROR — {row['error']} |")
+            continue
+        config = row["requested_config"]
+        lines.append(
+            f"| [{row['name']}](../../{row['run_id']}/report.md) | "
+            f"{fmt(config.get('max_window_sec'), 1)} | "
+            f"{fmt(config.get('min_silence_sec'), 1)} | "
+            f"{fmt(config.get('partial_sec'), 1)} | "
+            f"{config.get('partial_agreement', 'n/a')} | "
+            f"{fmt(config.get('vad_threshold'), 2)} | "
+            f"{fmt(config.get('vad_neg_threshold'), 2)} | "
+            f"{fmt(row['accuracy'])} | {fmt(row['latency'])} | "
+            f"{fmt(row['readability'])} | {fmt(row['reliability'])} | "
+            f"{fmt(row['wer_percent'])}% | {fmt(row['latency_p90_sec'])} s | "
+            f"{row['partial_jobs_skipped']} | "
+            f"{row['real_audio_drops'] + row['final_jobs_dropped']} | "
+            f"{row['hallucination_candidates']} |"
+        )
+    if sweep.get("best_by_metric"):
+        lines.extend(["", "## Mejores casos por métrica", ""])
+        for metric, names in sweep["best_by_metric"].items():
+            lines.append(f"- {metric}: {', '.join(names)}")
+    return "\n".join(lines) + "\n"
+
+
+def run_sweep(args) -> int:
+    cases = load_sweep_cases(Path(args.sweep_file) if args.sweep_file else None)
+    sweep_dir = new_sweep_dir()
+    sweep = {
+        "schema_version": 1,
+        "sweep_id": sweep_dir.name,
+        "created_wall_sec": time.time(),
+        "status": "running",
+        "cases": cases,
+        "runs": [],
+    }
+    write_json(sweep_dir / "manifest.json", sweep)
+    print(f"\nSTT PARAMETER SWEEP: {len(cases)} sequential runs")
+    print(f"Aggregate report: {sweep_dir.relative_to(REPO_ROOT) / 'report.md'}")
+
+    exit_code = 0
+    for index, case in enumerate(cases, 1):
+        config = {key: value for key, value in case.items() if key != "name"}
+        print(f"\n=== SWEEP {index}/{len(cases)}: {case['name']} ===")
+        print("  " + "  ".join(f"{key}={value}" for key, value in config.items()))
+        run_args = copy.copy(args)
+        run_args.offline_only = False
+        run_args.compare = False
+        run_args.completed_report = None
+        run_args.sweep_metadata = {
+            "sweep_id": sweep["sweep_id"],
+            "case_index": index,
+            "case_name": case["name"],
+        }
+        for parameter in SESSION_PARAMETER_MAP:
+            setattr(run_args, parameter, config.get(parameter))
+        try:
+            result = run_benchmark(run_args)
+            if result == 130:
+                raise KeyboardInterrupt
+            if result != 0 or run_args.completed_report is None:
+                raise RuntimeError(f"benchmark returned {result} without a report")
+            sweep["runs"].append(sweep_row(case, run_args.completed_report))
+        except KeyboardInterrupt:
+            sweep["status"] = "interrupted"
+            exit_code = 130
+            break
+        except Exception as exc:
+            exit_code = 1
+            sweep["runs"].append({"name": case["name"], "status": "error", "error": str(exc)})
+            print(f"Sweep case {case['name']} failed: {exc}", file=sys.stderr)
+        finally:
+            write_json(sweep_dir / "manifest.json", sweep)
+        if index < len(cases):
+            time.sleep(float(os.environ.get("AUDIO_TEST_SWEEP_GAP_SEC", "3")))
+
+    successful = [row for row in sweep["runs"] if row.get("status") != "error"]
+    best_by_metric = {}
+    for metric in ("accuracy", "latency", "readability", "reliability"):
+        if successful:
+            best = max(row[metric] for row in successful)
+            best_by_metric[metric] = [row["name"] for row in successful if row[metric] == best]
+    sweep["best_by_metric"] = best_by_metric
+    sweep["status"] = sweep["status"] if sweep["status"] == "interrupted" else (
+        "complete" if exit_code == 0 else "complete_with_errors"
+    )
+    sweep["finished_wall_sec"] = time.time()
+    write_json(sweep_dir / "manifest.json", sweep)
+    write_json(sweep_dir / "report.json", sweep)
+    (sweep_dir / "report.md").write_text(render_sweep_markdown(sweep), encoding="utf-8")
+    print(f"\nSweep finished: {sweep['status']}")
+    print(f"Report: {sweep_dir.relative_to(REPO_ROOT) / 'report.md'}")
+    return exit_code
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--offline-only", action="store_true", help="only populate offline cache")
     mode.add_argument("--compare", action="store_true", help="compare completed historical runs")
+    mode.add_argument("--sweep", action="store_true", help="run the built-in parameter matrix")
+    mode.add_argument("--sweep-file", help="run cases from a JSON parameter matrix")
+    parser.add_argument("--max-window-sec", type=float)
+    parser.add_argument("--min-silence-sec", type=float)
+    parser.add_argument("--partial-sec", type=float)
+    parser.add_argument("--partial-agreement", type=int)
+    parser.add_argument("--gain", type=float)
+    parser.add_argument("--vad-threshold", type=float)
+    parser.add_argument("--vad-neg-threshold", type=float)
     parser.add_argument(
         "--refresh-offline", action="store_true", help="ignore and replace matching offline cache entries"
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    try:
+        requested_session_config(args)
+    except ValueError as exc:
+        parser.error(str(exc))
+    return args
 
 
 def main() -> int:
@@ -969,6 +1367,8 @@ def main() -> int:
     if args.compare:
         return compare_runs()
     try:
+        if args.sweep or args.sweep_file:
+            return run_sweep(args)
         return run_benchmark(args)
     except (OSError, RuntimeError, ValueError, TimeoutError) as exc:
         print(f"audio test failed: {exc}", file=sys.stderr)

@@ -39,6 +39,27 @@ from scripts.stt_stream_protocol import (
 )
 
 
+def session_config_overrides(args):
+    mappings = (
+        ("max_window_sec", "max_window_sec"),
+        ("min_silence_sec", "min_silence_sec"),
+        ("partial_sec", "partial_sec"),
+        ("partial_agreement", "partial_agreement"),
+        ("gain", "gain"),
+        ("vad_threshold", "vad_threshold"),
+        ("vad_neg_threshold", "vad_neg_threshold"),
+    )
+    return {
+        wire_name: value
+        for argument_name, wire_name in mappings
+        if (value := getattr(args, argument_name, None)) is not None
+    }
+
+
+def board_drop_delta(start, end):
+    return max(0, int(end or 0) - int(start or 0))
+
+
 def write_json_file(path, payload):
     if not path:
         return
@@ -179,7 +200,11 @@ class StreamingBridge:
             stream_info = await self._read_stream_header(reader)
             await websocket.send(
                 encode_json_message(
-                    make_session_start(*stream_info, client_monotonic=time.monotonic())
+                    make_session_start(
+                        *stream_info,
+                        client_monotonic=time.monotonic(),
+                        config_overrides=session_config_overrides(self.args),
+                    )
                 )
             )
             ready = decode_json_message(await websocket.recv())
@@ -195,6 +220,8 @@ class StreamingBridge:
                     f"min_silence={run_config.get('config_min_silence_sec')} "
                     f"partial={run_config.get('config_partial_sec')} "
                     f"agreement={run_config.get('config_partial_agreement')} "
+                    f"vad_threshold={run_config.get('config_vad_threshold')} "
+                    f"vad_neg_threshold={run_config.get('config_vad_neg_threshold')} "
                     f"model={run_config.get('config_model')} "
                     f"beam={run_config.get('config_beam_size')}",
                     flush=True,
@@ -251,7 +278,8 @@ class StreamingBridge:
         forwarded = 0
         first_seq = None
         last_seq = None
-        max_board_dropped = 0
+        board_dropped_start = None
+        board_dropped_end = None
         audio_start_wall = None
 
         while True:
@@ -275,6 +303,7 @@ class StreamingBridge:
                 audio_start_monotonic = payload_received_at
                 audio_start_wall = payload_received_wall
                 first_seq = seq
+                board_dropped_start = int(dropped)
                 write_json_file(
                     self.args.ready_file,
                     {
@@ -284,6 +313,8 @@ class StreamingBridge:
                         "sample_rate_hz": rate,
                         "channels": channels,
                         "chunk_ms": _chunk_ms,
+                        "first_chunk_seq": int(seq),
+                        "board_dropped_chunks_start": board_dropped_start,
                         "run_config": self.run_config,
                     },
                 )
@@ -291,7 +322,7 @@ class StreamingBridge:
             await websocket.send(encode_audio_frame(seq, timestamp_ns, dropped, payload))
             forwarded += 1
             last_seq = seq
-            max_board_dropped = max(max_board_dropped, int(dropped))
+            board_dropped_end = max(board_dropped_end or 0, int(dropped))
             audio_end_sec += payload_bytes / float(rate * channels * EXPECTED_SAMPLE_WIDTH)
             timeline.mark_available(audio_end_sec, payload_received_at)
             wall_timeline.mark_available(audio_end_sec, payload_received_wall)
@@ -314,7 +345,13 @@ class StreamingBridge:
             "chunks_forwarded": forwarded,
             "first_chunk_seq": first_seq,
             "last_chunk_seq": last_seq,
-            "board_dropped_chunks": max_board_dropped,
+            "board_dropped_chunks_start": board_dropped_start or 0,
+            "board_dropped_chunks_end": board_dropped_end or 0,
+            "board_dropped_chunks_during_session": board_drop_delta(
+                board_dropped_start, board_dropped_end
+            ),
+            # Legacy absolute counter from the board, retained for old tooling.
+            "board_dropped_chunks": board_dropped_end or 0,
         }
 
     async def _receive_transcripts(self, websocket):
@@ -366,7 +403,30 @@ def parse_args():
     parser.add_argument("--done-file", help="write final session summary JSON")
     parser.add_argument("--stop-file", help="finish the active session when this file appears")
     parser.add_argument("--single-session", action="store_true", help="exit after one board session")
-    return parser.parse_args()
+    parser.add_argument("--max-window-sec", type=float)
+    parser.add_argument("--min-silence-sec", type=float)
+    parser.add_argument("--partial-sec", type=float)
+    parser.add_argument("--partial-agreement", type=int)
+    parser.add_argument("--gain", type=float)
+    parser.add_argument("--vad-threshold", type=float)
+    parser.add_argument("--vad-neg-threshold", type=float)
+    args = parser.parse_args()
+    if args.max_window_sec is not None and args.max_window_sec <= 0:
+        parser.error("--max-window-sec must be positive")
+    if args.min_silence_sec is not None and args.min_silence_sec < 0:
+        parser.error("--min-silence-sec must be zero or positive")
+    if args.partial_sec is not None and args.partial_sec < 0:
+        parser.error("--partial-sec must be zero or positive")
+    if args.partial_agreement is not None and args.partial_agreement < 1:
+        parser.error("--partial-agreement must be positive")
+    if args.gain is not None and args.gain < 0:
+        parser.error("--gain must be zero or positive")
+    if args.vad_threshold is not None and not 0 < args.vad_threshold < 1:
+        parser.error("--vad-threshold must be between zero and one")
+    effective_threshold = args.vad_threshold if args.vad_threshold is not None else 0.5
+    if args.vad_neg_threshold is not None and not 0 <= args.vad_neg_threshold < effective_threshold:
+        parser.error("--vad-neg-threshold must be non-negative and lower than --vad-threshold")
+    return args
 
 
 def main():

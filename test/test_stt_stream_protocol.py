@@ -7,7 +7,13 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.stt_stream_bridge import BridgeTranscriptSink, StreamingBridge
+from scripts.stt_stream_bridge import (
+    BridgeTranscriptSink,
+    StreamingBridge,
+    board_drop_delta,
+    session_config_overrides,
+)
+from scripts.stt_stream_server import ServerConfig, effective_session_config
 from scripts.stt_stream_protocol import (
     AudioAvailabilityTimeline,
     FORMAT_S16_LE,
@@ -59,6 +65,70 @@ class SttStreamProtocolTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             validate_session_start(message)
+
+    def test_session_start_round_trips_tuning_overrides(self):
+        message = make_session_start(
+            sample_rate_hz=48000,
+            channels=1,
+            fmt=FORMAT_S16_LE,
+            chunk_ms=20,
+            samples_per_chunk=960,
+            bytes_per_chunk=1920,
+            config_overrides={
+                "max_window_sec": 4,
+                "partial_sec": 1.0,
+                "partial_agreement": 2,
+                "vad_threshold": 0.35,
+                "vad_neg_threshold": 0.2,
+            },
+        )
+
+        overrides = validate_session_start(message)
+
+        self.assertEqual(4.0, overrides["max_window_sec"])
+        self.assertEqual(1.0, overrides["partial_sec"])
+        self.assertEqual(2, overrides["partial_agreement"])
+        self.assertEqual(0.35, overrides["vad_threshold"])
+        self.assertEqual(0.2, overrides["vad_neg_threshold"])
+
+    def test_session_start_rejects_unknown_or_invalid_overrides(self):
+        base = dict(
+            sample_rate_hz=48000,
+            channels=1,
+            fmt=FORMAT_S16_LE,
+            chunk_ms=20,
+            samples_per_chunk=960,
+            bytes_per_chunk=1920,
+        )
+
+        with self.assertRaises(ValueError):
+            make_session_start(**base, config_overrides={"model": "large"})
+        with self.assertRaises(ValueError):
+            make_session_start(**base, config_overrides={"partial_sec": -0.1})
+        with self.assertRaises(ValueError):
+            make_session_start(
+                **base,
+                config_overrides={"vad_threshold": 0.4, "vad_neg_threshold": 0.5},
+            )
+
+    def test_effective_session_config_does_not_mutate_server_defaults(self):
+        base_config = ServerConfig(max_window_sec=3.0, partial_sec=0.5)
+        message = make_session_start(
+            sample_rate_hz=48000,
+            channels=1,
+            fmt=FORMAT_S16_LE,
+            chunk_ms=20,
+            samples_per_chunk=960,
+            bytes_per_chunk=1920,
+            config_overrides={"max_window_sec": 4.0, "partial_sec": 1.0},
+        )
+
+        effective = effective_session_config(base_config, message)
+
+        self.assertEqual(4.0, effective.max_window_sec)
+        self.assertEqual(1.0, effective.partial_sec)
+        self.assertEqual(3.0, base_config.max_window_sec)
+        self.assertEqual(0.5, base_config.partial_sec)
 
     def test_audio_timeline_maps_to_first_available_chunk(self):
         timeline = AudioAvailabilityTimeline()
@@ -127,6 +197,20 @@ class StreamingBridgeLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertTrue(bridge.session_done.is_set())
             self.assertTrue(done_file.exists())
+
+
+class BridgeTracingTests(unittest.TestCase):
+    def test_bridge_only_counts_board_drops_after_session_start(self):
+        self.assertEqual(0, board_drop_delta(769, 769))
+        self.assertEqual(3, board_drop_delta(769, 772))
+
+    def test_bridge_collects_only_explicit_session_overrides(self):
+        args = SimpleNamespace(max_window_sec=4.0, partial_sec=1.0)
+
+        self.assertEqual(
+            {"max_window_sec": 4.0, "partial_sec": 1.0},
+            session_config_overrides(args),
+        )
 
 
 if __name__ == "__main__":

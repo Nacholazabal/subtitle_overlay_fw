@@ -7,7 +7,7 @@ import io
 import json
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 
@@ -31,6 +31,7 @@ from scripts.stt_stream_protocol import (
     decode_json_message,
     encode_json_message,
     make_error,
+    validate_config_overrides,
     validate_session_start,
 )
 
@@ -50,6 +51,8 @@ class ServerConfig:
     partial_sec: float = 0.5
     partial_agreement: int = 1
     gain: float = 0.0
+    vad_threshold: float = 0.5
+    vad_neg_threshold: float | None = None
     cpu_threads: int = 0
     event_queue_size: int = 64
     jsonl: str | None = None
@@ -81,17 +84,22 @@ class SharedWhisperModel:
 class SessionWhisperEngine:
     """Per-WebSocket-session sequence counter around the shared model."""
 
-    def __init__(self, shared_model):
+    def __init__(self, shared_model, config=None):
         self.shared_model = shared_model
+        self.config = config or shared_model.config
         self.seq = 0
 
     def transcribe_chunk(self, audio, start_sec, end_sec, is_final):
-        config = self.shared_model.config
+        config = self.config
         segments, _info = self.shared_model.model.transcribe(
             audio,
             language=config.language,
             beam_size=config.beam_size,
             vad_filter=config.vad_filter,
+            vad_parameters={
+                "threshold": config.vad_threshold,
+                "neg_threshold": config.vad_neg_threshold,
+            },
         )
         text = " ".join(segment.text.strip() for segment in segments).strip()
         if not text:
@@ -209,12 +217,29 @@ def build_run_config(config):
         "config_lossless_live": True,
         "config_realtime": True,
         "config_gain": config.gain,
+        "config_vad_threshold": config.vad_threshold,
+        "config_vad_neg_threshold": config.vad_neg_threshold,
         "config_partial_backpressure": True,
         "config_transport": "websocket",
     }
 
 
-def transcribe_offline_bytes(shared_model, audio_bytes, filename="audio"):
+def config_with_overrides(base_config, overrides):
+    effective = replace(base_config, **overrides)
+    if (
+        effective.vad_neg_threshold is not None
+        and effective.vad_neg_threshold >= effective.vad_threshold
+    ):
+        raise ValueError("vad_neg_threshold must be lower than vad_threshold")
+    return effective
+
+
+def effective_session_config(base_config, session_start):
+    """Apply validated tuning for one socket without mutating server defaults."""
+    return config_with_overrides(base_config, validate_session_start(session_start))
+
+
+def transcribe_offline_bytes(shared_model, audio_bytes, filename="audio", config=None):
     """Decode and transcribe a complete file with the live server's model."""
     from faster_whisper.audio import decode_audio
 
@@ -223,12 +248,16 @@ def transcribe_offline_bytes(shared_model, audio_bytes, filename="audio"):
 
     started_at = time.monotonic()
     audio = decode_audio(io.BytesIO(audio_bytes), sampling_rate=WHISPER_RATE)
-    config = shared_model.config
+    config = config or shared_model.config
     segments_iter, info = shared_model.model.transcribe(
         audio,
         language=config.language,
         beam_size=config.beam_size,
         vad_filter=config.vad_filter,
+        vad_parameters={
+            "threshold": config.vad_threshold,
+            "neg_threshold": config.vad_neg_threshold,
+        },
     )
     segments = [
         {
@@ -239,9 +268,9 @@ def transcribe_offline_bytes(shared_model, audio_bytes, filename="audio"):
         for segment in segments_iter
         if segment.text.strip()
     ]
-    config = build_run_config(shared_model.config)
-    config["config_realtime"] = False
-    config["config_transport"] = "http_offline"
+    result_config = build_run_config(config)
+    result_config["config_realtime"] = False
+    result_config["config_transport"] = "http_offline"
     return {
         "filename": filename,
         "text": " ".join(segment["text"] for segment in segments).strip(),
@@ -249,7 +278,7 @@ def transcribe_offline_bytes(shared_model, audio_bytes, filename="audio"):
         "inference_sec": round(time.monotonic() - started_at, 3),
         "audio_duration_sec": round(len(audio) / float(WHISPER_RATE), 3),
         "detected_language": getattr(info, "language", None),
-        "config": config,
+        "config": result_config,
     }
 
 
@@ -326,13 +355,17 @@ def create_app(config):
             raise HTTPException(status_code=413, detail="audio upload exceeds 64 MiB")
         filename = request.headers.get("x-audio-filename", "audio")
         try:
+            raw_overrides = request.headers.get("x-stt-config-overrides")
+            overrides = validate_config_overrides(json.loads(raw_overrides)) if raw_overrides else {}
+            offline_config = config_with_overrides(config, overrides)
             return await asyncio.to_thread(
                 transcribe_offline_bytes,
                 app.state.shared_model,
                 audio_bytes,
                 filename,
+                offline_config,
             )
-        except ValueError as exc:
+        except (json.JSONDecodeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.websocket("/stt/stream")
@@ -345,24 +378,28 @@ def create_app(config):
         try:
             first = await websocket.receive_text()
             session = decode_json_message(first)
-            validate_session_start(session)
+            session_config = effective_session_config(config, session)
 
-            event_queue = asyncio.Queue(maxsize=config.event_queue_size)
+            event_queue = asyncio.Queue(maxsize=session_config.event_queue_size)
             timeline = AudioAvailabilityTimeline()
-            sink = AsyncTranscriptSink(asyncio.get_running_loop(), event_queue, timeline, config.jsonl)
-            engine = SessionWhisperEngine(app.state.shared_model)
+            sink = AsyncTranscriptSink(
+                asyncio.get_running_loop(), event_queue, timeline, session_config.jsonl
+            )
+            engine = SessionWhisperEngine(app.state.shared_model, session_config)
             transcriber = ChunkTranscriber(
                 engine,
                 sink,
                 WHISPER_RATE,
-                config.max_window_sec,
-                partial_sec=config.partial_sec,
-                min_silence_sec=config.min_silence_sec,
-                gain=config.gain,
-                partial_agreement=config.partial_agreement,
+                session_config.max_window_sec,
+                partial_sec=session_config.partial_sec,
+                min_silence_sec=session_config.min_silence_sec,
+                gain=session_config.gain,
+                partial_agreement=session_config.partial_agreement,
+                vad_threshold=session_config.vad_threshold,
+                vad_neg_threshold=session_config.vad_neg_threshold,
                 drop_oldest=True,
                 realtime=True,
-                run_config=build_run_config(config),
+                run_config=build_run_config(session_config),
             )
             transcriber.set_source_rate(int(session["sample_rate_hz"]))
             await websocket.send_text(
@@ -371,7 +408,7 @@ def create_app(config):
                         "type": MESSAGE_SESSION_READY,
                         "version": session["version"],
                         "sample_rate_hz": session["sample_rate_hz"],
-                        "run_config": build_run_config(config),
+                        "run_config": build_run_config(session_config),
                     }
                 )
             )
@@ -395,6 +432,10 @@ def create_app(config):
                         {
                             "type": MESSAGE_SESSION_SUMMARY,
                             "jobs_submitted": transcriber._job_seq,
+                            "partial_jobs_skipped": transcriber._dropped_jobs,
+                            "final_jobs_dropped": 0,
+                            # Backward-compatible alias. These have always been
+                            # disposable partial jobs, never final transcript loss.
                             "dropped_audio_jobs": transcriber._dropped_jobs,
                             "events_emitted": sink.emitted_event_count,
                             "events_dropped": sink.dropped_event_count,
@@ -438,6 +479,8 @@ def parse_args():
     parser.add_argument("--partial-sec", type=float, default=0.5)
     parser.add_argument("--partial-agreement", type=int, default=1)
     parser.add_argument("--gain", type=float, default=0.0)
+    parser.add_argument("--vad-threshold", type=float, default=0.5)
+    parser.add_argument("--vad-neg-threshold", type=float)
     parser.add_argument("--event-queue-size", type=int, default=64)
     parser.add_argument("--jsonl", help="optional server-side event JSONL path")
     args = parser.parse_args()
@@ -449,6 +492,10 @@ def parse_args():
         parser.error("--partial-sec must be zero or positive")
     if args.partial_agreement < 1:
         parser.error("--partial-agreement must be positive")
+    if not 0 < args.vad_threshold < 1:
+        parser.error("--vad-threshold must be between zero and one")
+    if args.vad_neg_threshold is not None and not 0 <= args.vad_neg_threshold < args.vad_threshold:
+        parser.error("--vad-neg-threshold must be non-negative and lower than --vad-threshold")
     return ServerConfig(**vars(args))
 
 

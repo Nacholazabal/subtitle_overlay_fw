@@ -437,6 +437,8 @@ class ChunkTranscriber:
         drop_oldest=True,
         realtime=True,
         run_config=None,
+        vad_threshold=0.5,
+        vad_neg_threshold=None,
     ):
         import numpy as np
         from faster_whisper.vad import VadOptions
@@ -471,7 +473,16 @@ class ChunkTranscriber:
         self._partial_jobs_outstanding = 0
         # Tight VAD segments so the trailing-silence measurement is accurate; the
         # finalize decision uses our own min_silence threshold below.
-        self._vad_options = VadOptions(min_silence_duration_ms=100, speech_pad_ms=30)
+        self.vad_threshold = float(vad_threshold)
+        self.vad_neg_threshold = (
+            float(vad_neg_threshold) if vad_neg_threshold is not None else None
+        )
+        self._vad_options = VadOptions(
+            threshold=self.vad_threshold,
+            neg_threshold=self.vad_neg_threshold,
+            min_silence_duration_ms=100,
+            speech_pad_ms=30,
+        )
         # window holds the current (growing) utterance until it is finalized.
         self.window = np.empty(0, dtype=np.float32)
         self.window_start_sample = 0
@@ -785,6 +796,10 @@ class ChunkTranscriber:
         event["infer_sec"] = round(infer_sec, 3)
         event["stt_wall_sec"] = round(queue_wait + infer_sec, 3)
         event["queue_depth_after_get"] = self.pending_chunks.qsize()
+        event["partial_jobs_skipped"] = self._dropped_jobs
+        event["final_jobs_dropped"] = 0
+        # Kept for compatibility with older analysis tools. This counter tracks
+        # superseded partial jobs; final transcript jobs are never dropped.
         event["dropped_audio_jobs"] = self._dropped_jobs
         event["partial_jobs_outstanding"] = self._partial_jobs_outstanding
         event["job_id"] = job["job_id"]
