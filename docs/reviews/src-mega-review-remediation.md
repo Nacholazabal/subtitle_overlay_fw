@@ -32,7 +32,7 @@
 |---|---|---|---|
 | SRC-H01 | Operaciones bloqueantes dentro del scheduler QV | pendiente | — |
 | SRC-H02 | Triple buffering declarado pero no implementado | pendiente | — |
-| SRC-H03 | Adquisición de timing / modo no soportado sin timeout | pendiente | — |
+| SRC-H03 | Adquisición de timing / modo no soportado sin timeout | corregido (parcial) | `video_pipeline_poll` (`src/svc/video_pipeline/video_pipeline.c`) ahora acota `ACQUIRING_TIMING`: si `XST_NO_DATA` persiste `>= VIDEO_PIPELINE_TIMING_TIMEOUT_MS` (2s), reinicia el detector y vuelve a `WAITING_FOR_SIGNAL` (nuevo resultado `VIDEO_PIPELINE_POLL_TIMING_TIMEOUT`, backoff acotado). Se agregó uso real de `detector_started_ms` vía `video_input_detector_elapsed_ms` + `video_input_reset_detector` (`video_io`). Tests: `test_video_pipeline` (timeout reinicia detector) + `test_video_io` (elapsed/reset, incl. rollover uint32). Build ARM OK. **Restante:** revalidación periódica de timing en `UNSUPPORTED_INPUT`/`STREAMING` con lock alto → se trata en SRC-M12. |
 | SRC-H04 | Eventos ready/error pueden perderse | pendiente | — |
 | SRC-H05 | Conflicto de tamaño de la BRAM de subtítulos | pendiente | — |
 | SRC-H06 | Geometría del overlay puede exceder pantalla y máscara | pendiente | — |

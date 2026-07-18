@@ -51,6 +51,7 @@ typedef enum
     VIDEO_PIPELINE_POLL_STREAMING_STARTED,
     VIDEO_PIPELINE_POLL_SIGNAL_LOST,
     VIDEO_PIPELINE_POLL_UNSUPPORTED_INPUT,
+    VIDEO_PIPELINE_POLL_TIMING_TIMEOUT, ///< SRC-H03: timing did not arrive; detector restarted.
     VIDEO_PIPELINE_POLL_ERROR,
 } video_pipeline_poll_result_e;
 

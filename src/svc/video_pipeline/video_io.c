@@ -107,6 +107,40 @@ int video_input_start_detector(video_input_t* const input, uint32_t now_ms)
 }
 
 /**
+ * @brief Milliseconds elapsed since the timing detector was started.
+ * @param input Initialized input helper.
+ * @param now_ms Current monotonic time in milliseconds.
+ * @return Elapsed milliseconds, or 0 when the detector is not running.
+ */
+uint32_t video_input_detector_elapsed_ms(video_input_t const* const input, uint32_t const now_ms)
+{
+    if ((input == NULL) || (input->detector_started == 0U))
+    {
+        return 0U;
+    }
+
+    // Unsigned subtraction wraps consistently, so this stays correct across the
+    // uint32 millisecond rollover.
+    return now_ms - input->detector_started_ms;
+}
+
+/**
+ * @brief Clear the timing detector so it can be restarted (SRC-H03).
+ * @param input Initialized input helper.
+ * @return None.
+ */
+void video_input_reset_detector(video_input_t* const input)
+{
+    if (input == NULL)
+    {
+        return;
+    }
+
+    input->detector_started = 0U;
+    input->detector_started_ms = 0U;
+}
+
+/**
  * @brief Read detected HDMI input timing.
  * @param input Initialized input helper.
  * @param timing Output active width and height.
