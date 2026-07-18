@@ -26,7 +26,15 @@ extern "C" {
 
 // === Public macros definitions =================================================================================== //
 
-#define VIDEO_PIPELINE_FRAME_COUNT     3U
+// SRC-H02: explicit single-buffer passthrough. Capture (S2MM) and display (MM2S)
+// are both pinned to one framebuffer, so no producer/consumer swap exists and no
+// extra buffers are mapped. This is a deliberate choice over triple buffering:
+// there is no frame-boundary swap, so simultaneous capture/display of the same
+// buffer can tear; the alternative (real triple buffering with an SOF-synchronized
+// swap) was not implemented. The prior 3-frame mapping was dead scaffolding
+// (active_frame was fixed at 0 and never advanced).
+#define VIDEO_PIPELINE_FRAME_COUNT       1U
+#define VIDEO_PIPELINE_PASSTHROUGH_FRAME 0U
 #define VIDEO_PIPELINE_MAX_WIDTH       1920U
 #define VIDEO_PIPELINE_MAX_HEIGHT      1080U
 #define VIDEO_PIPELINE_BYTES_PER_PIXEL 3U
@@ -64,7 +72,6 @@ typedef struct
     video_pipeline_mode_t const* active_mode;
     video_vtc_timing_t input_timing;
     video_pipeline_state_e state;
-    uint32_t active_frame;
     uint8_t platform_ready;
 } video_pipeline_t;
 

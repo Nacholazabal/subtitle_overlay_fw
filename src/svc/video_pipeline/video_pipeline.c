@@ -60,14 +60,15 @@ static video_pipeline_poll_result_e start_passthrough(video_pipeline_t* const pi
 {
     int status;
 
-    status = video_output_start(&pipeline->output, mode, pipeline->active_frame);
+    // SRC-H02: single-buffer passthrough — capture and display share one frame.
+    status = video_output_start(&pipeline->output, mode, VIDEO_PIPELINE_PASSTHROUGH_FRAME);
     if (status != XST_SUCCESS)
     {
         pipeline->state = VIDEO_PIPELINE_ERROR;
         return VIDEO_PIPELINE_POLL_ERROR;
     }
 
-    status = video_input_start_capture(&pipeline->input, mode, pipeline->active_frame);
+    status = video_input_start_capture(&pipeline->input, mode, VIDEO_PIPELINE_PASSTHROUGH_FRAME);
     if (status != XST_SUCCESS)
     {
         (void)video_output_stop(&pipeline->output);
@@ -98,7 +99,6 @@ int video_pipeline_init(video_pipeline_t* const pipeline)
 
     memset(pipeline, 0, sizeof(*pipeline));
     pipeline->state = VIDEO_PIPELINE_UNINITIALIZED;
-    pipeline->active_frame = 0U;
 
     if (hw_platform_init() != 0)
     {
