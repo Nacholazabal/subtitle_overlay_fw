@@ -190,13 +190,16 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
     subtitle_text_evt_t* subtitle_evt;
     stt_event_rx_delivery_status_t delivery_status;
     int status;
-    uint16_t const margin = (e->is_final != 0U) ? STT_AO_FINAL_EVENT_MARGIN
-                                                : STT_AO_PARTIAL_EVENT_MARGIN;
+    uint16_t margin;
 
-    if ((e == NULL) || (e->text[0] == '\0'))
+    // SRC-M01: validate me/e before reading any field (e->is_final was read to
+    // compute the margin before this NULL check existed).
+    if ((me == NULL) || (e == NULL) || (e->text[0] == '\0'))
     {
         return -EINVAL;
     }
+
+    margin = (e->is_final != 0U) ? STT_AO_FINAL_EVENT_MARGIN : STT_AO_PARTIAL_EVENT_MARGIN;
 
     subtitle_evt = Q_NEW_X(subtitle_text_evt_t, margin, SUBTITLE_TEXT_SIG);
     if (subtitle_evt == NULL)

@@ -228,6 +228,10 @@ static int on_component_init(subtitle_ao_t* const me, component_init_evt_t const
     if (status == 0)
     {
         me->running = 1U;
+        // SRC-M02: the startup DONE marker is a temporary diagnostic. Arm the
+        // inactivity clear timer now so it is removed after the normal timeout
+        // even if no STT transcript ever arrives.
+        QTimeEvt_rearm(&me->clear_time_evt, me->clear_timeout_ticks);
         post_ready(me);
         LOG_INFO("subtitle: pipeline ready");
     }

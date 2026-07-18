@@ -17,7 +17,7 @@
 | Rama | `dev/review` @ `62aaa04` (worktree limpio) | 2026-07-18 |
 | `make test` | 172 tests, 0 failures, 0 ignored | 2026-07-18 |
 | `make clang-tidy` | exit 0 (solo warnings suprimidos en non-user code) | 2026-07-18 |
-| `./scripts/build.sh` (VM) | **bloqueado**: VM PetaLinux inalcanzable (`ssh: No route to host 192.168.56.101`). No es fallo de código. Reintentar con VM encendida. | 2026-07-18 |
+| `./scripts/build.sh` (VM) | ✅ exit 0 — binario ARM linkea limpio con los cambios de C02+M04, sin warnings `-Wall -Wextra` (VM encendida). Reejecutar tras cada grupo con cambios en `src/`. | 2026-07-18 |
 
 ## Tracker de hallazgos
 
@@ -41,15 +41,15 @@
 ### Medios
 | ID | Título | Estado | Evidencia / Notas |
 |---|---|---|---|
-| SRC-M01 | NULL dereference en SttAO | pendiente | — |
-| SRC-M02 | Marcador DONE permanente | pendiente | — |
+| SRC-M01 | NULL dereference en SttAO | corregido | `on_transcript` (`src/svc/stt/SttAO.c`) ahora valida `me`/`e`/`e->text[0]` **antes** de leer `e->is_final` (que se usaba para el margin antes del check). Reordenado; sin cambio de comportamiento para entradas válidas. Build ARM OK. |
+| SRC-M02 | Marcador DONE permanente | corregido | `on_component_init` (`src/svc/subtitle_pipeline/SubtitleAO.c`) ahora arma `clear_time_evt` al terminar init exitoso, así el marcador DONE se limpia tras el timeout de inactividad aunque nunca llegue STT. Test nuevo `test_subtitle_startup_marker_clears_after_inactivity_timeout` (avanza 100 ticks → dispara `SUBTITLE_CLEAR_SIG` → overlay disabled). Build ARM OK. |
 | SRC-M03 | Rollback incompleto en init de subtitle | pendiente | — |
 | SRC-M04 | Invariantes débiles / duplicados en startup | corregido (parcial) | La rama `COMPONENT_VIDEO` de `on_component_ready` (`src/svc/system/SystemAO.c`) ahora guarda el posteo de subtitle init con `subtitle_init_requested == 0U` (simétrico con la rama USB), volviendo idempotente un *video ready* duplicado. Test nuevo `test_system_ignores_duplicate_video_ready_after_subtitle_requested` en `test/integration/qpc/test_system_ao_startup.c`. **Restante menor:** `last_ready_component` solo se asigna y nunca se consume → se resuelve en SRC-L01 (Fase 5); COMPONENT_STT no valida explícitamente readiness previo (bajo riesgo, el flujo lo garantiza por orden). |
-| SRC-M05 | video_dma_init anuncia frames que el kernel no tiene | pendiente | — |
+| SRC-M05 | video_dma_init anuncia frames que el kernel no tiene | corregido | `video_dma_init` (`src/hal/video_dma/video_dma.c`) ahora exige `info.frame_count >= frame_count` (falla si el kernel expone menos) y mapea con índice directo `i` en vez de `i % info.frame_count` (que aliaseaba buffers). Test nuevo `test/hal/video_dma/test_video_dma.c` (3 casos, syscalls falsas incl. `ioctl` variádico). Build ARM OK. |
 | SRC-M06 | ALSA recovery y parada de workers pueden bloquear | pendiente | — |
 | SRC-M07 | Riesgos JSON/UTF-8 en STT | pendiente | — |
-| SRC-M08 | Dynclk acepta no-finitos y hace busy-wait | pendiente | — |
-| SRC-M09 | Asserts Xilinx que no hacen assert | pendiente | — |
+| SRC-M08 | Dynclk acepta no-finitos y hace busy-wait | corregido (parcial) | `video_dynclk_configure` (`src/hal/video_dynclk/video_dynclk.c`) ahora rechaza `!isfinite` (NaN/Inf pasaban el `<=0`), fuera de rango (`> 300 MHz`), y aplica tolerancia máxima de error de síntesis (10 MHz, holgada para no rechazar modos reales). Test nuevo `test/hal/video_dynclk/test_video_dynclk.c` (validación pre-MMIO). Build ARM OK. **Restante:** el busy-wait de lock (≤10ms, ya con timeout acotado `CLK_TIMEOUT_NS`) sigue en el handler; convertirlo a polling por timer/worker es parte del refactor de blocking-en-QV (ligado a H01, diferido). |
+| SRC-M09 | Asserts Xilinx que no hacen assert | corregido | `src/bsp/bsp_compat/xil_assert.h`: `Xil_AssertVoid`/`Xil_AssertNonvoid`/`*Always` ahora retornan temprano ante precondición falsa (como el Xilinx real no-fatal), en vez del no-op que dejaba al driver seguir y dereferenciar punteros inválidos. Los wrappers `video_vtc` ya validan antes, así que una llamada bien formada nunca los dispara. Test nuevo `test/bsp/bsp_compat/test_xil_assert.c`. Build ARM OK (driver VTC compila con los macros nuevos). |
 | SRC-M10 | Convenciones de error incompatibles | pendiente | — |
 | SRC-M11 | Gaps de tests en threads/MMIO/hardware boundary | pendiente | — |
 | SRC-M12 | Cambios de modo con lock alto + validación VTC | pendiente | — |
