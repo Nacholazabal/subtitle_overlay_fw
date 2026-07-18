@@ -27,7 +27,6 @@ typedef struct
 {
     QActive super;
 
-    component_id_e last_ready_component;
     component_id_e error_source;
     int32_t error_code;
     uint32_t active_video_width;
@@ -129,7 +128,6 @@ static int on_init(system_ao_t* const me)
 {
     int status = 0;
 
-    me->last_ready_component = COMPONENT_NONE;
     me->active_video_width = 0U;
     me->active_video_height = 0U;
     me->usb_audio_ready = 0U;
@@ -157,7 +155,6 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
 {
     int status = -EAGAIN;
 
-    me->last_ready_component = e->source;
     LOG_INFO("system: component ready: %s", component_id_to_str(e->source));
 
     switch (e->source)
@@ -417,7 +414,6 @@ void system_ao_ctor(void)
     system_ao_t* const me = &system_ao_inst;
 
     QActive_ctor(&me->super, Q_STATE_CAST(&system_ao_initial));
-    me->last_ready_component = COMPONENT_NONE;
     me->error_source = COMPONENT_NONE;
     me->error_code = 0;
     me->active_video_width = 0U;

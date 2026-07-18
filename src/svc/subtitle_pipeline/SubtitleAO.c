@@ -57,7 +57,6 @@ typedef struct
     uint8_t previous_visible;
     uint8_t current_valid;
     uint8_t current_is_final;
-    uint8_t running;
 } subtitle_ao_t;
 
 // === Private variable declarations =============================================================================== //
@@ -227,7 +226,6 @@ static int on_component_init(subtitle_ao_t* const me, component_init_evt_t const
 
     if (status == 0)
     {
-        me->running = 1U;
         // SRC-M02: the startup DONE marker is a temporary diagnostic. Arm the
         // inactivity clear timer now so it is removed after the normal timeout
         // even if no STT transcript ever arrives.
@@ -449,7 +447,6 @@ static void enter_error(subtitle_ao_t* const me, int32_t code)
     (void)QTimeEvt_disarm(&me->clear_time_evt);
     (void)QTimeEvt_disarm(&me->previous_expire_evt);
     subtitle_pipeline_cleanup(&me->pipeline);
-    me->running = 0U;
 
     post_error(me, code);
 }
@@ -580,7 +577,6 @@ void subtitle_ao_ctor(void)
     reset_text_state(me);
     me->clear_timeout_ticks = resolve_clear_timeout_ticks();
     me->previous_hold_ticks = resolve_previous_hold_ticks();
-    me->running = 0U;
 }
 
 // === End of documentation ======================================================================================== //
