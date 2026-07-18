@@ -191,6 +191,53 @@ static int json_parse_string(char const** const cursor,
 
     if (dst != NULL)
     {
+        // SRC-M07: a byte-boundary truncation can split a multi-byte UTF-8 code
+        // point. Trim any incomplete trailing sequence so the field always ends
+        // on a whole code point instead of leaving a mangled byte the sanitizer
+        // would later replace.
+        if ((was_truncated != 0U) && (out > 0U))
+        {
+            size_t i = out;
+
+            while ((i > 0U) && (((unsigned char)dst[i - 1U] & 0xC0U) == 0x80U))
+            {
+                i--; // skip UTF-8 continuation bytes (10xxxxxx)
+            }
+
+            if (i > 0U)
+            {
+                size_t const lead_idx = i - 1U;
+                unsigned char const lead = (unsigned char)dst[lead_idx];
+                size_t expected;
+
+                if ((lead & 0x80U) == 0x00U)
+                {
+                    expected = 1U;
+                }
+                else if ((lead & 0xE0U) == 0xC0U)
+                {
+                    expected = 2U;
+                }
+                else if ((lead & 0xF0U) == 0xE0U)
+                {
+                    expected = 3U;
+                }
+                else if ((lead & 0xF8U) == 0xF0U)
+                {
+                    expected = 4U;
+                }
+                else
+                {
+                    expected = 0U; // invalid lead byte
+                }
+
+                if ((expected == 0U) || ((out - lead_idx) < expected))
+                {
+                    out = lead_idx; // drop the incomplete/invalid trailing code point
+                }
+            }
+        }
+
         dst[out] = '\0';
     }
     if (truncated != NULL)

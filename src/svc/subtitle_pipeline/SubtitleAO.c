@@ -270,10 +270,25 @@ static void promote_current_to_previous(subtitle_ao_t* const me)
  */
 static void clear_subtitle(subtitle_ao_t* const me)
 {
+    int status;
+
     reset_text_state(me);
     (void)QTimeEvt_disarm(&me->previous_expire_evt);
-    (void)subtitle_pipeline_clear(&me->pipeline);
-    (void)subtitle_pipeline_enable(&me->pipeline, 0U);
+
+    // SRC-M03: surface (do not silently discard) failures to blank the overlay,
+    // since the logical text state is being reset regardless and a failure here
+    // means the physical overlay may still be showing stale content.
+    status = subtitle_pipeline_clear(&me->pipeline);
+    if (status != 0)
+    {
+        LOG_WARNING("subtitle: clear failed while blanking, code=%ld", (long)status);
+    }
+
+    status = subtitle_pipeline_enable(&me->pipeline, 0U);
+    if (status != 0)
+    {
+        LOG_WARNING("subtitle: disable failed while blanking, code=%ld", (long)status);
+    }
 }
 
 static uint32_t ms_to_ticks(uint32_t const timeout_ms)

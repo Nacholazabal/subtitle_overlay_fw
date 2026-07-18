@@ -102,7 +102,25 @@ void test_subtitle_pipeline_init_returns_hal_errors(void)
     hw_platform_init_ExpectAndReturn(0);
     subtitle_overlay_init_ExpectAnyArgsAndReturn(0);
     subtitle_bram_init_ExpectAnyArgsAndReturn(-EIO);
+    subtitle_overlay_enable_ExpectAnyArgsAndReturn(0); // SRC-M03 rollback disable
     hw_platform_cleanup_Expect();
+    TEST_ASSERT_EQUAL_INT(-EIO, subtitle_pipeline_init(&pipeline, 1280U, 720U));
+    TEST_ASSERT_EQUAL_UINT8(0U, pipeline.initialized);
+    TEST_ASSERT_EQUAL_UINT8(0U, pipeline.platform_ready);
+}
+
+void test_subtitle_pipeline_init_disables_overlay_when_a_late_stage_fails(void)
+{
+    // SRC-M03: a failure after the overlay is up (here at bram_clear) must leave
+    // the overlay disabled and release the platform, not partially configured.
+    hw_platform_init_ExpectAndReturn(0);
+    subtitle_overlay_init_ExpectAnyArgsAndReturn(0);
+    subtitle_bram_init_ExpectAnyArgsAndReturn(0);
+    subtitle_overlay_configure_ExpectAnyArgsAndReturn(0);
+    subtitle_bram_clear_ExpectAnyArgsAndReturn(-EIO);
+    subtitle_overlay_enable_ExpectAnyArgsAndReturn(0); // rollback disable
+    hw_platform_cleanup_Expect();
+
     TEST_ASSERT_EQUAL_INT(-EIO, subtitle_pipeline_init(&pipeline, 1280U, 720U));
     TEST_ASSERT_EQUAL_UINT8(0U, pipeline.initialized);
     TEST_ASSERT_EQUAL_UINT8(0U, pipeline.platform_ready);

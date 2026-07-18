@@ -98,33 +98,34 @@ static uint8_t pipeline_is_initialized(subtitle_pipeline_t const* const pipeline
  */
 static int configure_hardware(subtitle_pipeline_t* const pipeline)
 {
-    int status;
-
-    status = subtitle_overlay_init(&pipeline->overlay);
+    int status = subtitle_overlay_init(&pipeline->overlay);
     if (status != 0)
     {
-        return status;
+        return status; // overlay never came up; nothing to roll back
     }
 
     status = subtitle_bram_init(&pipeline->bram);
-    if (status != 0)
+    if (status == 0)
     {
-        return status;
+        status = subtitle_overlay_configure(&pipeline->overlay, &pipeline->config);
+    }
+    if (status == 0)
+    {
+        status = subtitle_bram_clear(&pipeline->bram);
+    }
+    if (status == 0)
+    {
+        status = subtitle_overlay_enable(&pipeline->overlay, 0);
     }
 
-    status = subtitle_overlay_configure(&pipeline->overlay, &pipeline->config);
+    // SRC-M03: if any stage after overlay init failed, leave the overlay
+    // explicitly disabled instead of partially configured and possibly enabled.
     if (status != 0)
     {
-        return status;
+        (void)subtitle_overlay_enable(&pipeline->overlay, 0);
     }
 
-    status = subtitle_bram_clear(&pipeline->bram);
-    if (status != 0)
-    {
-        return status;
-    }
-
-    return subtitle_overlay_enable(&pipeline->overlay, 0);
+    return status;
 }
 
 // === Public function implementation ============================================================================== //
