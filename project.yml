@@ -19,7 +19,7 @@
     - src/hal/subtitle_bram/**
     - src/hal/subtitle_overlay/**
     - src/hal/usb_audio/**
-    - src/qpc/ports/posix-qv/**
+    - src/bsp/qpc_port/**
     - src/qpc/src/qf/**
     - src/svc/system/**
     - src/svc/stt/**
@@ -35,7 +35,7 @@
     - src/bsp/platform/linux
     - src/bsp/vtc_v7_2/src
     - src/qpc/include
-    - src/qpc/ports/posix-qv
+    - src/bsp/qpc_port
     - src/qpc/ports/config
     - src/app
     - src/hal/subtitle_bram

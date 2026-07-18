@@ -214,23 +214,33 @@ int video_dma_init(video_dma_t* const dma,
         return XST_FAILURE;
     }
 
+    // SRC-M05: never advertise more frames than the kernel actually exposes.
+    // Mapping i % info.frame_count would silently alias framebuffers and leave
+    // dma->frame_count claiming buffers a later *_SELECT/config would reject.
+    if (info.frame_count < frame_count)
+    {
+        fprintf(stderr,
+                "[video_dma] /dev/%s exposes %u frames, %u requested\n",
+                HDMI_VDMA_DEVICE_NAME,
+                (unsigned)info.frame_count,
+                (unsigned)frame_count);
+        video_dma_cleanup(dma);
+        return XST_FAILURE;
+    }
+
     dma->frame_count = frame_count;
     dma->frame_size = info.frame_size;
     dma->mmap_size = info.frame_size;
 
     for (i = 0U; i < frame_count; i++)
     {
-        uint32_t const kernel_frame = i % info.frame_count;
-        off_t const offset = (off_t)((uintptr_t)kernel_frame * dma->frame_size);
+        off_t const offset = (off_t)((uintptr_t)i * dma->frame_size);
         void* const mapped =
             mmap(NULL, dma->frame_size, PROT_READ | PROT_WRITE, MAP_SHARED, dma->fd, offset);
 
         if (mapped == MAP_FAILED)
         {
-            fprintf(stderr,
-                    "[video_dma] mmap frame %u failed: %s\n",
-                    kernel_frame,
-                    strerror(errno));
+            fprintf(stderr, "[video_dma] mmap frame %u failed: %s\n", (unsigned)i, strerror(errno));
             video_dma_cleanup(dma);
             return XST_FAILURE;
         }

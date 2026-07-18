@@ -40,6 +40,14 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 #define CLK_TIMEOUT_NS 10000000ULL
 
+// SRC-M08: sanity bounds for the requested pixel clock. The ceiling sits well
+// above every supported mode (148.5 MHz @ 1080p60) so it never rejects a real
+// request; the error tolerance sits far below clk_find_params' "no match"
+// sentinel (~2000 MHz) yet far above the sub-MHz error of a real synthesis, so
+// it flags an unsynthesizable frequency without rejecting a valid mode.
+#define DYNCLK_MAX_FREQ_MHZ     300.0
+#define DYNCLK_MAX_FREQ_ERR_MHZ 10.0
+
 // === Private data type declarations ============================================================================== //
 
 typedef struct
@@ -389,12 +397,23 @@ int video_dynclk_configure(video_dynclk_t* const dynclk, double frequency_mhz)
     clk_mode_t mode;
     clk_config_t regs;
 
-    if ((dynclk == NULL) || (dynclk->base == (uintptr_t)0) || (frequency_mhz <= 0.0))
+    // SRC-M08: reject non-finite (NaN/Inf pass a bare `<= 0.0`) and out-of-range
+    // requests before any floating-point-to-integer conversion.
+    if ((dynclk == NULL) || (dynclk->base == (uintptr_t)0) || !isfinite(frequency_mhz)
+        || (frequency_mhz <= 0.0) || (frequency_mhz > DYNCLK_MAX_FREQ_MHZ))
     {
         return XST_INVALID_PARAM;
     }
 
-    (void)clk_find_params(frequency_mhz, &mode);
+    // SRC-M08: enforce a maximum synthesis error so an unsupported frequency
+    // (no valid divider combination) fails instead of programming a wildly
+    // wrong clock.
+    double const freq_error = clk_find_params(frequency_mhz, &mode);
+    if (!isfinite(mode.freq) || (freq_error > DYNCLK_MAX_FREQ_ERR_MHZ))
+    {
+        return XST_FAILURE;
+    }
+
     if (!clk_find_reg(&regs, &mode))
     {
         return XST_FAILURE;

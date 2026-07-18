@@ -106,6 +106,36 @@ void test_video_input_start_detector_returns_hal_error_without_marking_started(v
     TEST_ASSERT_EQUAL_UINT8(0U, input.detector_started);
 }
 
+void test_video_input_detector_elapsed_is_zero_when_not_started(void)
+{
+    input.detector_started = 0U;
+    TEST_ASSERT_EQUAL_UINT32(0U, video_input_detector_elapsed_ms(&input, 500U));
+    TEST_ASSERT_EQUAL_UINT32(0U, video_input_detector_elapsed_ms(NULL, 500U));
+}
+
+void test_video_input_detector_elapsed_measures_since_start(void)
+{
+    input.detector_started = 1U;
+    input.detector_started_ms = 200U;
+    TEST_ASSERT_EQUAL_UINT32(300U, video_input_detector_elapsed_ms(&input, 500U));
+
+    // Consistent across the uint32 millisecond rollover.
+    input.detector_started_ms = 0xFFFFFF00U;
+    TEST_ASSERT_EQUAL_UINT32(0x100U, video_input_detector_elapsed_ms(&input, 0x00000000U));
+}
+
+void test_video_input_reset_detector_clears_state(void)
+{
+    input.detector_started = 1U;
+    input.detector_started_ms = 200U;
+
+    video_input_reset_detector(&input);
+    TEST_ASSERT_EQUAL_UINT8(0U, input.detector_started);
+    TEST_ASSERT_EQUAL_UINT32(0U, input.detector_started_ms);
+
+    video_input_reset_detector(NULL); // must not crash
+}
+
 void test_video_input_read_timing_rejects_invalid_arguments(void)
 {
     video_vtc_timing_t timing;

@@ -19,7 +19,7 @@ COMMON_CFLAGS := \
 	-Isrc/bsp/platform/linux \
 	-Isrc/bsp/vtc_v7_2/src \
 	-Isrc/qpc/include \
-	-Isrc/qpc/ports/posix-qv \
+	-Isrc/bsp/qpc_port \
 	-Isrc/qpc/ports/config \
 	-Isrc/app \
 	-Isrc/utils/log \
@@ -97,7 +97,7 @@ APP_CFLAGS := \
 APP_LDFLAGS := -pthread -lm $(APP_LDLIBS)
 
 APP_QPC_SRCS := \
-	src/qpc/ports/posix-qv/qf_port.c \
+	src/bsp/qpc_port/qf_port.c \
 	src/qpc/src/qf/qep_hsm.c \
 	src/qpc/src/qf/qf_act.c \
 	src/qpc/src/qf/qf_actq.c \

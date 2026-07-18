@@ -133,6 +133,17 @@ void qpc_test_post_component_error(QActive* const target, component_id_e source,
     (void)QACTIVE_POST_X(target, &event->super, APP_ERROR_EVENT_MARGIN, (void*)0);
 }
 
+void qpc_test_post_component_stopped_ack(QActive* const target, component_id_e const source)
+{
+    component_ready_evt_t* const event =
+        Q_NEW_X(component_ready_evt_t, APP_CONTROL_EVENT_MARGIN, SYSTEM_STOPPED_SIG);
+
+    event->source = source;
+    event->width = 0U;
+    event->height = 0U;
+    (void)QACTIVE_POST_X(target, &event->super, APP_CONTROL_EVENT_MARGIN, (void*)0);
+}
+
 void qpc_test_post_subtitle_text(QActive* const target,
                                  uint32_t seq,
                                  uint8_t is_final,

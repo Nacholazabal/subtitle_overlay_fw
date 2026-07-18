@@ -59,6 +59,8 @@ typedef struct
 int video_input_init(video_input_t* input, video_dma_t* dma, uint32_t stride);
 uint8_t video_input_locked(video_input_t const* input);
 int video_input_start_detector(video_input_t* input, uint32_t now_ms);
+uint32_t video_input_detector_elapsed_ms(video_input_t const* input, uint32_t now_ms);
+void video_input_reset_detector(video_input_t* input);
 int video_input_read_timing(video_input_t* input, video_vtc_timing_t* timing);
 int video_input_start_capture(video_input_t* input,
                               video_pipeline_mode_t const* mode,

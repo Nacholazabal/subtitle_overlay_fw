@@ -57,19 +57,22 @@ typedef struct
     uint8_t previous_visible;
     uint8_t current_valid;
     uint8_t current_is_final;
-    uint8_t running;
 } subtitle_ao_t;
 
 // === Private variable declarations =============================================================================== //
 // === Private function declarations =============================================================================== //
 
 static QState subtitle_ao_initial(subtitle_ao_t* const me, void const* const par);
+static QState subtitle_ao_top(subtitle_ao_t* const me, QEvt const* const e);
 static QState subtitle_ao_idle(subtitle_ao_t* const me, QEvt const* const e);
 static QState subtitle_ao_ready(subtitle_ao_t* const me, QEvt const* const e);
 static QState subtitle_ao_error(subtitle_ao_t* const me, QEvt const* const e);
+static QState subtitle_ao_stopped(subtitle_ao_t* const me, QEvt const* const e);
 
 static void post_ready(subtitle_ao_t* const me);
 static void post_error(subtitle_ao_t* const me, int32_t code);
+static void post_stopped(subtitle_ao_t* const me);
+static void quiesce(subtitle_ao_t* const me);
 static int on_component_init(subtitle_ao_t* const me, component_init_evt_t const* const e);
 static int on_subtitle_text(subtitle_ao_t* const me, subtitle_text_evt_t const* const e);
 static int on_previous_expired(subtitle_ao_t* const me);
@@ -227,7 +230,10 @@ static int on_component_init(subtitle_ao_t* const me, component_init_evt_t const
 
     if (status == 0)
     {
-        me->running = 1U;
+        // SRC-M02: the startup DONE marker is a temporary diagnostic. Arm the
+        // inactivity clear timer now so it is removed after the normal timeout
+        // even if no STT transcript ever arrives.
+        QTimeEvt_rearm(&me->clear_time_evt, me->clear_timeout_ticks);
         post_ready(me);
         LOG_INFO("subtitle: pipeline ready");
     }
@@ -266,10 +272,25 @@ static void promote_current_to_previous(subtitle_ao_t* const me)
  */
 static void clear_subtitle(subtitle_ao_t* const me)
 {
+    int status;
+
     reset_text_state(me);
     (void)QTimeEvt_disarm(&me->previous_expire_evt);
-    (void)subtitle_pipeline_clear(&me->pipeline);
-    (void)subtitle_pipeline_enable(&me->pipeline, 0U);
+
+    // SRC-M03: surface (do not silently discard) failures to blank the overlay,
+    // since the logical text state is being reset regardless and a failure here
+    // means the physical overlay may still be showing stale content.
+    status = subtitle_pipeline_clear(&me->pipeline);
+    if (status != 0)
+    {
+        LOG_WARNING("subtitle: clear failed while blanking, code=%ld", (long)status);
+    }
+
+    status = subtitle_pipeline_enable(&me->pipeline, 0U);
+    if (status != 0)
+    {
+        LOG_WARNING("subtitle: disable failed while blanking, code=%ld", (long)status);
+    }
 }
 
 static uint32_t ms_to_ticks(uint32_t const timeout_ms)
@@ -424,14 +445,36 @@ static int on_previous_expired(subtitle_ao_t* const me)
  * @param code Negative errno-style value to post to system_ao_t.
  * @return None.
  */
-static void enter_error(subtitle_ao_t* const me, int32_t code)
+// SRC-H07: idempotent teardown of this AO's resources (timers + overlay/BRAM).
+// Shared by the error path and the coordinated-shutdown STOP handler.
+static void quiesce(subtitle_ao_t* const me)
 {
-    LOG_WARNING("subtitle: cleaning up after error code %ld", (long)code);
     (void)QTimeEvt_disarm(&me->clear_time_evt);
     (void)QTimeEvt_disarm(&me->previous_expire_evt);
     subtitle_pipeline_cleanup(&me->pipeline);
-    me->running = 0U;
+}
 
+// SRC-H07: acknowledge SYSTEM_STOP to system_ao_t once this AO has quiesced.
+static void post_stopped(subtitle_ao_t* const me)
+{
+    Q_UNUSED_PAR(me); // used only as the QS trace sender (dropped without Q_SPY)
+
+    component_ready_evt_t* const evt =
+        Q_NEW_X(component_ready_evt_t, APP_CONTROL_EVENT_MARGIN, SYSTEM_STOPPED_SIG);
+
+    if (evt != NULL)
+    {
+        evt->source = COMPONENT_SUBTITLE_PIPELINE;
+        evt->width = 0U;
+        evt->height = 0U;
+        (void)QACTIVE_POST_X(AO_System, &evt->super, APP_CONTROL_EVENT_MARGIN, &me->super);
+    }
+}
+
+static void enter_error(subtitle_ao_t* const me, int32_t code)
+{
+    LOG_WARNING("subtitle: cleaning up after error code %ld", (long)code);
+    quiesce(me);
     post_error(me, code);
 }
 
@@ -447,6 +490,32 @@ static QState subtitle_ao_initial(subtitle_ao_t* const me, void const* const par
     Q_UNUSED_PAR(par);
 
     return Q_TRAN(&subtitle_ao_idle);
+}
+
+/**
+ * @brief Superstate handling the coordinated SYSTEM_STOP command in any substate.
+ * @param me Subtitle active object instance.
+ * @param e Event dispatched by QP/C.
+ * @return QP/C state handler result.
+ */
+static QState subtitle_ao_top(subtitle_ao_t* const me, QEvt const* const e)
+{
+    QState status;
+
+    switch (e->sig)
+    {
+    case SYSTEM_STOP_SIG:
+        quiesce(me);
+        post_stopped(me);
+        status = Q_TRAN(&subtitle_ao_stopped);
+        break;
+
+    default:
+        status = Q_SUPER(&QHsm_top);
+        break;
+    }
+
+    return status;
 }
 
 /**
@@ -473,7 +542,7 @@ static QState subtitle_ao_idle(subtitle_ao_t* const me, QEvt const* const e)
         break;
 
     default:
-        status = Q_SUPER(&QHsm_top);
+        status = Q_SUPER(&subtitle_ao_top);
         break;
     }
 
@@ -523,7 +592,7 @@ static QState subtitle_ao_ready(subtitle_ao_t* const me, QEvt const* const e)
         break;
 
     default:
-        status = Q_SUPER(&QHsm_top);
+        status = Q_SUPER(&subtitle_ao_top);
         break;
     }
 
@@ -541,7 +610,34 @@ static QState subtitle_ao_error(subtitle_ao_t* const me, QEvt const* const e)
     Q_UNUSED_PAR(me);
     Q_UNUSED_PAR(e);
 
-    return Q_SUPER(&QHsm_top);
+    return Q_SUPER(&subtitle_ao_top);
+}
+
+/**
+ * @brief Terminal state after a coordinated SYSTEM_STOP: the overlay is released.
+ * @param me Subtitle active object instance.
+ * @param e Event dispatched by QP/C.
+ * @return QP/C state handler result.
+ */
+static QState subtitle_ao_stopped(subtitle_ao_t* const me, QEvt const* const e)
+{
+    Q_UNUSED_PAR(me);
+
+    QState status;
+
+    switch (e->sig)
+    {
+    case Q_ENTRY_SIG:
+        LOG_INFO("subtitle: stopped");
+        status = Q_HANDLED();
+        break;
+
+    default:
+        status = Q_SUPER(&QHsm_top);
+        break;
+    }
+
+    return status;
 }
 
 // === Public function implementation ============================================================================== //
@@ -561,7 +657,6 @@ void subtitle_ao_ctor(void)
     reset_text_state(me);
     me->clear_timeout_ticks = resolve_clear_timeout_ticks();
     me->previous_hold_ticks = resolve_previous_hold_ticks();
-    me->running = 0U;
 }
 
 // === End of documentation ======================================================================================== //

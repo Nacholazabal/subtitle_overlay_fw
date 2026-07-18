@@ -409,6 +409,37 @@ void test_stt_event_rx_parse_line_truncates_long_text_but_keeps_event(void)
     TEST_ASSERT_EQUAL_CHAR('\0', event.text[SUBTITLE_TEXT_MAX_LEN - 1U]);
 }
 
+void test_stt_event_rx_parse_line_truncates_utf8_on_code_point_boundary(void)
+{
+    char line[512];
+    char text[160];
+    size_t n = 0U;
+    int i;
+
+    // 70 'ñ' (U+00F1 = 0xC3 0xB1) = 140 bytes, well past the 127-byte field.
+    for (i = 0; i < 70; ++i)
+    {
+        text[n++] = (char)0xC3;
+        text[n++] = (char)0xB1;
+    }
+    text[n] = '\0';
+
+    snprintf(line,
+             sizeof(line),
+             "{\"seq\":11,\"is_final\":true,\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"%s\"}",
+             text);
+
+    TEST_ASSERT_EQUAL_INT(0, stt_event_rx_parse_line(line, &event));
+
+    // SRC-M07: truncation must land on a code-point boundary. 63 whole 'ñ' fit
+    // in 126 bytes; the split trailing lead byte is trimmed rather than left as
+    // a mangled byte.
+    TEST_ASSERT_EQUAL_UINT(126U, strlen(event.text));
+    TEST_ASSERT_EQUAL_HEX8(0xC3, (unsigned char)event.text[124]);
+    TEST_ASSERT_EQUAL_HEX8(0xB1, (unsigned char)event.text[125]);
+    TEST_ASSERT_EQUAL_CHAR('\0', event.text[126]);
+}
+
 void test_stt_event_rx_parse_line_rejects_empty_text(void)
 {
     char const* const line =

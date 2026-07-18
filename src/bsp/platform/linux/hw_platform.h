@@ -25,14 +25,23 @@ typedef enum
 } hw_platform_region_e;
 
 /**
- * Open /dev/mem and map each userspace-owned AXI-Lite region.
+ * Acquire the shared AXI-Lite platform (reference-counted).
+ *
+ * The regions are one global resource shared by several services. The first
+ * successful call opens /dev/mem and maps every region; subsequent calls only
+ * take an additional reference. Each caller must pair its acquire with exactly
+ * one hw_platform_cleanup().
  *
  * @return 0 on success, or -1 after cleaning up any partial initialization.
  */
 int hw_platform_init(void);
 
 /**
- * Unmap every AXI-Lite region and close /dev/mem.
+ * Release one reference to the shared AXI-Lite platform.
+ *
+ * Only the last release unmaps every region and closes /dev/mem, so a single
+ * service's cleanup never invalidates MMIO another service still uses. Calling
+ * it with no outstanding reference is a safe no-op.
  */
 void hw_platform_cleanup(void);
 

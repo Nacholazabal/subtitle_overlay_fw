@@ -28,6 +28,7 @@ void qpc_test_post_component_ready(QActive* target,
                                    uint32_t width,
                                    uint32_t height);
 void qpc_test_post_component_error(QActive* target, component_id_e source, int32_t code);
+void qpc_test_post_component_stopped_ack(QActive* target, component_id_e source);
 void qpc_test_post_subtitle_text(QActive* target,
                                  uint32_t seq,
                                  uint8_t is_final,

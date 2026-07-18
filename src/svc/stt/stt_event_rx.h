@@ -8,6 +8,20 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 /// @file stt_event_rx.h
 /// @brief Nonblocking TCP NDJSON receiver for STT transcript events
 ///
+/// SRC-M07 — Wire protocol contract (must match the PC-side sender):
+///  * Transport: one JSON object per line, newline-delimited (NDJSON), over TCP.
+///  * Encoding: UTF-8 **literal** bytes. The sender MUST emit non-ASCII text as
+///    raw UTF-8 (Python: `json.dumps(..., ensure_ascii=False)`). `\uXXXX`
+///    escapes are NOT decoded and are rejected; only `\" \\ \/ \b \f \n \r \t`
+///    are accepted (whitespace escapes collapse to a space).
+///  * Field length: `text` is truncated to fit `SUBTITLE_TEXT_MAX_LEN`; the
+///    truncation always lands on a UTF-8 code-point boundary (never a split
+///    multi-byte sequence).
+///  * Delivery/ACK: a transcript whose `seq` is parsed is considered consumed.
+///    If it is later dropped (pool/queue full) the receiver reports a definitive
+///    drop for that `seq`; the same `seq` is NOT retransmitted within a session
+///    (a later resend of an old `seq` is rejected as stale). Drops are final by
+///    design.
 
 // === Headers files inclusions ==================================================================================== //
 

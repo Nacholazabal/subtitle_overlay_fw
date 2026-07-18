@@ -6,7 +6,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 ///
 /// @file log.h
-/// @brief Log Facility API. This module allows to print formatted messages over an output stream (currently an UART
+/// @brief Log Facility API. This module allows to print formatted messages over an output stream (currently stdout
 /// peripheral) adding a timestamp and a log level.
 ///
 
@@ -39,18 +39,15 @@ extern "C" {
     #define LOG_WARNING(...) log_message(LOG_LEVEL_WARNING, __VA_ARGS__)
     #define LOG_ERROR(...)   log_message(LOG_LEVEL_ERROR, __VA_ARGS__)
 #else
-    #define LOG(...) \
-        {}
-    #define LOG_TRACE(...) \
-        {}
-    #define LOG_DEBUG(...) \
-        {}
-    #define LOG_INFO(...) \
-        {}
-    #define LOG_WARNING(...) \
-        {}
-    #define LOG_ERROR(...) \
-        {}
+    // SRC-L06: expand to a `do { } while (0)` statement so a disabled log call
+    // stays a single statement (safe after `if (...)` without braces, before an
+    // `else`, and when followed by a semicolon).
+    #define LOG(...)         do { } while (0)
+    #define LOG_TRACE(...)   do { } while (0)
+    #define LOG_DEBUG(...)   do { } while (0)
+    #define LOG_INFO(...)    do { } while (0)
+    #define LOG_WARNING(...) do { } while (0)
+    #define LOG_ERROR(...)   do { } while (0)
 #endif
 
 // === Public data type declarations =============================================================================== //

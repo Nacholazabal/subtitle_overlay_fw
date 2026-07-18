@@ -189,9 +189,26 @@ void test_video_pipeline_poll_waits_when_timing_is_not_ready(void)
 
     video_input_locked_ExpectAnyArgsAndReturn(1U);
     video_input_read_timing_ExpectAnyArgsAndReturn(XST_NO_DATA);
+    // SRC-H03: still within the acquisition timeout -> keep waiting.
+    video_input_detector_elapsed_ms_ExpectAnyArgsAndReturn(100U);
 
     TEST_ASSERT_EQUAL(VIDEO_PIPELINE_POLL_UNCHANGED, video_pipeline_poll(&pipeline, 300U));
     TEST_ASSERT_EQUAL(VIDEO_PIPELINE_ACQUIRING_TIMING, video_pipeline_get_state(&pipeline));
+}
+
+void test_video_pipeline_poll_restarts_detector_when_timing_times_out(void)
+{
+    // SRC-H03: no timing before the timeout -> restart the detector and fall
+    // back to waiting for signal instead of stalling in ACQUIRING_TIMING.
+    pipeline.state = VIDEO_PIPELINE_ACQUIRING_TIMING;
+
+    video_input_locked_ExpectAnyArgsAndReturn(1U);
+    video_input_read_timing_ExpectAnyArgsAndReturn(XST_NO_DATA);
+    video_input_detector_elapsed_ms_ExpectAnyArgsAndReturn(5000U); // past the timeout
+    video_input_reset_detector_ExpectAnyArgs();
+
+    TEST_ASSERT_EQUAL(VIDEO_PIPELINE_POLL_TIMING_TIMEOUT, video_pipeline_poll(&pipeline, 5000U));
+    TEST_ASSERT_EQUAL(VIDEO_PIPELINE_WAITING_FOR_SIGNAL, video_pipeline_get_state(&pipeline));
 }
 
 void test_video_pipeline_poll_enters_error_when_read_timing_fails(void)
