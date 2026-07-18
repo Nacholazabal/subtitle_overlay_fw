@@ -23,10 +23,12 @@
 
 | Estado | Cantidad | IDs |
 |---|---:|---|
-| corregido (con tests + build ARM) | 7 | SRC-C02, M01, M02, M03, M04, M05, M09 |
-| corregido parcial (fix real + resto acotado) | 6 | SRC-H03, M07, M08, M11, L01, L06 |
+| corregido (con tests + build ARM) | 8 | SRC-C01, C02, M01, M02, M03, M04, M05, M09 |
+| corregido parcial (fix real + resto acotado) | 7 | SRC-H03, H05, M07, M08, M11, L01, L06 |
 | no aplica / documentado con evidencia | 2 | SRC-M10, L02 |
-| bloqueado por dependencia externa específica | 12 | SRC-C01, H01, H02, H04, H05, H06, H07, M06, M12, L03, L04, L05 |
+| bloqueado por dependencia externa específica | 10 | SRC-H01, H02, H04, H06, H07, M06, M12, L03, L04, L05 |
+
+**Actualización:** C01 pasó a **corregido** (owned port `src/bsp/qpc_port/`, submódulo QP/C intacto). H05 pasó a **corregido parcial** (build-assert; geometría intacta). **Cero críticos pendientes.** De los 10 bloqueados, la mayoría depende de la **política de recovery/shutdown** (H04, H07) — en curso: fail-fast + STT reconnect (ya funciona).
 
 **Cero críticos/altos "pendientes sin evidencia":** C02 corregido; C01 diferido por regla explícita del usuario (no tocar QP/C). Cada alto restante está bloqueado por una dependencia externa concreta (decisión de producto/diseño de recovery, o verificación en placa/Vivado) — no por falta de análisis.
 
