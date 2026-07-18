@@ -137,6 +137,29 @@ void test_system_waits_for_usb_audio_when_video_ready_first(void)
     qpc_test_gc(&init->super);
 }
 
+void test_system_ignores_duplicate_video_ready_after_subtitle_requested(void)
+{
+    // SRC-M04: a second COMPONENT_VIDEO ready must not post a second subtitle
+    // init once the first has already been requested.
+    start_system_with_fake_components();
+
+    qpc_test_gc(qpc_test_pop(AO_Video));
+    qpc_test_gc(qpc_test_pop(AO_USBAudio));
+
+    qpc_test_post_component_ready(AO_System, COMPONENT_USB_AUDIO, 0U, 0U);
+    qpc_test_dispatch_one(AO_System);
+    qpc_test_post_component_ready(AO_System, COMPONENT_VIDEO, 1280U, 720U);
+    qpc_test_dispatch_one(AO_System);
+
+    // First subtitle init consumed.
+    qpc_test_gc(qpc_test_pop(AO_Subtitle));
+
+    // Duplicate video ready must be idempotent: no new subtitle init.
+    qpc_test_post_component_ready(AO_System, COMPONENT_VIDEO, 1280U, 720U);
+    qpc_test_dispatch_one(AO_System);
+    assert_no_event(AO_Subtitle);
+}
+
 void test_system_requests_stt_after_subtitle_ready_and_runs_after_stt_ready(void)
 {
     component_init_evt_t const* init;

@@ -44,7 +44,7 @@
 | SRC-M01 | NULL dereference en SttAO | pendiente | — |
 | SRC-M02 | Marcador DONE permanente | pendiente | — |
 | SRC-M03 | Rollback incompleto en init de subtitle | pendiente | — |
-| SRC-M04 | Invariantes débiles / duplicados en startup | pendiente | — |
+| SRC-M04 | Invariantes débiles / duplicados en startup | corregido (parcial) | La rama `COMPONENT_VIDEO` de `on_component_ready` (`src/svc/system/SystemAO.c`) ahora guarda el posteo de subtitle init con `subtitle_init_requested == 0U` (simétrico con la rama USB), volviendo idempotente un *video ready* duplicado. Test nuevo `test_system_ignores_duplicate_video_ready_after_subtitle_requested` en `test/integration/qpc/test_system_ao_startup.c`. **Restante menor:** `last_ready_component` solo se asigna y nunca se consume → se resuelve en SRC-L01 (Fase 5); COMPONENT_STT no valida explícitamente readiness previo (bajo riesgo, el flujo lo garantiza por orden). |
 | SRC-M05 | video_dma_init anuncia frames que el kernel no tiene | pendiente | — |
 | SRC-M06 | ALSA recovery y parada de workers pueden bloquear | pendiente | — |
 | SRC-M07 | Riesgos JSON/UTF-8 en STT | pendiente | — |

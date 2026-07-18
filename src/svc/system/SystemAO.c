@@ -176,7 +176,11 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
 
         me->active_video_width = e->width;
         me->active_video_height = e->height;
-        if (me->usb_audio_ready != 0U)
+        // SRC-M04: only request subtitle init once, and only when usb-audio is
+        // also ready. Guarding on subtitle_init_requested (like the usb-audio
+        // branch) makes a duplicate video-ready event idempotent instead of
+        // posting a second COMPONENT_INIT to the subtitle AO.
+        if ((me->usb_audio_ready != 0U) && (me->subtitle_init_requested == 0U))
         {
             LOG_INFO("system: requesting subtitle init for %lux%lu",
                      (unsigned long)e->width,
@@ -196,6 +200,10 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
                 me->error_code = -EIO;
                 status = -EIO;
             }
+        }
+        else if (me->subtitle_init_requested != 0U)
+        {
+            LOG_WARNING("system: duplicate video ready ignored; subtitle init already requested");
         }
         else
         {
