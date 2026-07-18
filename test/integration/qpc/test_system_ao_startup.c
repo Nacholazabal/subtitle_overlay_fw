@@ -193,7 +193,24 @@ void test_system_requests_stt_after_subtitle_ready_and_runs_after_stt_ready(void
     assert_no_event(AO_Stt);
 }
 
-void test_system_reaches_terminal_error_for_invalid_video_ready(void)
+static void assert_stop_signal(QActive* const ao)
+{
+    QEvt const* const event = qpc_test_pop(ao);
+
+    TEST_ASSERT_EQUAL_UINT(SYSTEM_STOP_SIG, event->sig);
+    qpc_test_gc(event); // static event: QF_gc is a safe no-op on it
+}
+
+static void assert_stop_broadcast_to_all_workers(void)
+{
+    assert_stop_signal(AO_Video);
+    assert_stop_signal(AO_USBAudio);
+    assert_stop_signal(AO_Subtitle);
+    assert_stop_signal(AO_Stt);
+}
+
+// SRC-H07: an invalid video-ready is a terminal failure -> fail-fast shutdown.
+void test_system_fail_fast_broadcasts_stop_on_invalid_video_ready(void)
 {
     start_system_with_fake_components();
 
@@ -202,14 +219,12 @@ void test_system_reaches_terminal_error_for_invalid_video_ready(void)
 
     qpc_test_post_component_ready(AO_System, COMPONENT_VIDEO, 0U, 0U);
     qpc_test_dispatch_one(AO_System);
-    qpc_test_post_component_ready(AO_System, COMPONENT_USB_AUDIO, 0U, 0U);
-    qpc_test_dispatch_one(AO_System);
 
-    assert_no_event(AO_Subtitle);
-    assert_no_event(AO_Stt);
+    assert_stop_broadcast_to_all_workers();
 }
 
-void test_system_reaches_terminal_error_for_component_error(void)
+// SRC-H07: a component error triggers the coordinated fail-fast shutdown.
+void test_system_fail_fast_broadcasts_stop_on_component_error(void)
 {
     start_system_with_fake_components();
 
@@ -219,9 +234,41 @@ void test_system_reaches_terminal_error_for_component_error(void)
     qpc_test_post_component_error(AO_System, COMPONENT_USB_AUDIO, -EIO);
     qpc_test_dispatch_one(AO_System);
 
+    assert_stop_broadcast_to_all_workers();
+
+    // Already shutting down: further component traffic is ignored (no re-broadcast).
     qpc_test_post_component_ready(AO_System, COMPONENT_USB_AUDIO, 0U, 0U);
     qpc_test_dispatch_one(AO_System);
+    assert_no_event(AO_Video);
+    assert_no_event(AO_USBAudio);
+}
 
+// SRC-H07: once every worker acknowledges SYSTEM_STOPPED, the shutdown completes
+// (system_ao_t requests QF termination) without hanging.
+void test_system_shutdown_completes_after_all_workers_stop(void)
+{
+    start_system_with_fake_components();
+
+    qpc_test_gc(qpc_test_pop(AO_Video));
+    qpc_test_gc(qpc_test_pop(AO_USBAudio));
+
+    qpc_test_post_component_error(AO_System, COMPONENT_VIDEO, -EIO);
+    qpc_test_dispatch_one(AO_System);
+    assert_stop_broadcast_to_all_workers();
+
+    // Each worker acks; System must accept all four without error.
+    qpc_test_post_component_stopped_ack(AO_System, COMPONENT_VIDEO);
+    qpc_test_dispatch_one(AO_System);
+    qpc_test_post_component_stopped_ack(AO_System, COMPONENT_USB_AUDIO);
+    qpc_test_dispatch_one(AO_System);
+    qpc_test_post_component_stopped_ack(AO_System, COMPONENT_SUBTITLE_PIPELINE);
+    qpc_test_dispatch_one(AO_System);
+    qpc_test_post_component_stopped_ack(AO_System, COMPONENT_STT);
+    qpc_test_dispatch_one(AO_System);
+
+    // Shutdown handshake consumed cleanly; no further worker traffic queued.
+    assert_no_event(AO_Video);
+    assert_no_event(AO_USBAudio);
     assert_no_event(AO_Subtitle);
     assert_no_event(AO_Stt);
 }

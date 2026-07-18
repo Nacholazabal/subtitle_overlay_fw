@@ -43,15 +43,19 @@ typedef struct
 // === Private function declarations =============================================================================== //
 
 static QState stt_ao_initial(stt_ao_t* const me, void const* const par);
+static QState stt_ao_top(stt_ao_t* const me, QEvt const* const e);
 static QState stt_ao_idle(stt_ao_t* const me, QEvt const* const e);
 static QState stt_ao_ready(stt_ao_t* const me, QEvt const* const e);
 static QState stt_ao_error(stt_ao_t* const me, QEvt const* const e);
+static QState stt_ao_stopped(stt_ao_t* const me, QEvt const* const e);
 
 static void post_ready(stt_ao_t* const me);
 static void post_error(stt_ao_t* const me, int32_t code);
+static void post_stopped(stt_ao_t* const me);
 static int on_component_init(stt_ao_t* const me);
 static int on_poll(stt_ao_t* const me);
 static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e);
+static void quiesce(stt_ao_t* const me);
 static void enter_error(stt_ao_t* const me, int32_t code);
 
 // === Private variable definitions ================================================================================ //
@@ -257,7 +261,9 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
  * @param code Negative errno-style value.
  * @return None.
  */
-static void enter_error(stt_ao_t* const me, int32_t code)
+// SRC-H07: idempotent teardown of this AO's resources (timer + TCP receiver).
+// Shared by the error path and the coordinated-shutdown STOP handler.
+static void quiesce(stt_ao_t* const me)
 {
     if (me->running != 0U)
     {
@@ -265,7 +271,28 @@ static void enter_error(stt_ao_t* const me, int32_t code)
         stt_event_rx_cleanup(&me->rx);
         me->running = 0U;
     }
+}
 
+// SRC-H07: acknowledge SYSTEM_STOP to system_ao_t once this AO has quiesced.
+static void post_stopped(stt_ao_t* const me)
+{
+    Q_UNUSED_PAR(me); // used only as the QS trace sender (dropped without Q_SPY)
+
+    component_ready_evt_t* const evt =
+        Q_NEW_X(component_ready_evt_t, APP_CONTROL_EVENT_MARGIN, SYSTEM_STOPPED_SIG);
+
+    if (evt != NULL)
+    {
+        evt->source = COMPONENT_STT;
+        evt->width = 0U;
+        evt->height = 0U;
+        (void)QACTIVE_POST_X(AO_System, &evt->super, APP_CONTROL_EVENT_MARGIN, &me->super);
+    }
+}
+
+static void enter_error(stt_ao_t* const me, int32_t code)
+{
+    quiesce(me);
     post_error(me, code);
 }
 
@@ -281,6 +308,32 @@ static QState stt_ao_initial(stt_ao_t* const me, void const* const par)
     Q_UNUSED_PAR(par);
 
     return Q_TRAN(&stt_ao_idle);
+}
+
+/**
+ * @brief Superstate handling the coordinated SYSTEM_STOP command in any substate.
+ * @param me STT active object instance.
+ * @param e Event dispatched by QP/C.
+ * @return QP/C state handler result.
+ */
+static QState stt_ao_top(stt_ao_t* const me, QEvt const* const e)
+{
+    QState status;
+
+    switch (e->sig)
+    {
+    case SYSTEM_STOP_SIG:
+        quiesce(me);
+        post_stopped(me);
+        status = Q_TRAN(&stt_ao_stopped);
+        break;
+
+    default:
+        status = Q_SUPER(&QHsm_top);
+        break;
+    }
+
+    return status;
 }
 
 /**
@@ -307,7 +360,7 @@ static QState stt_ao_idle(stt_ao_t* const me, QEvt const* const e)
         break;
 
     default:
-        status = Q_SUPER(&QHsm_top);
+        status = Q_SUPER(&stt_ao_top);
         break;
     }
 
@@ -341,7 +394,7 @@ static QState stt_ao_ready(stt_ao_t* const me, QEvt const* const e)
         break;
 
     default:
-        status = Q_SUPER(&QHsm_top);
+        status = Q_SUPER(&stt_ao_top);
         break;
     }
 
@@ -359,7 +412,34 @@ static QState stt_ao_error(stt_ao_t* const me, QEvt const* const e)
     Q_UNUSED_PAR(me);
     Q_UNUSED_PAR(e);
 
-    return Q_SUPER(&QHsm_top);
+    return Q_SUPER(&stt_ao_top);
+}
+
+/**
+ * @brief Terminal state after a coordinated SYSTEM_STOP: the receiver is closed.
+ * @param me STT active object instance.
+ * @param e Event dispatched by QP/C.
+ * @return QP/C state handler result.
+ */
+static QState stt_ao_stopped(stt_ao_t* const me, QEvt const* const e)
+{
+    Q_UNUSED_PAR(me);
+
+    QState status;
+
+    switch (e->sig)
+    {
+    case Q_ENTRY_SIG:
+        LOG_INFO("stt: stopped");
+        status = Q_HANDLED();
+        break;
+
+    default:
+        status = Q_SUPER(&QHsm_top);
+        break;
+    }
+
+    return status;
 }
 
 // === Public function implementation ============================================================================== //

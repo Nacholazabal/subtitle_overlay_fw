@@ -385,6 +385,42 @@ void test_stt_forwards_every_event_returned_by_session_aware_receiver(void)
     qpc_test_gc(qpc_test_pop(AO_Subtitle));
 }
 
+void test_subtitle_quiesces_and_acks_on_system_stop(void)
+{
+    // SRC-H07: on SYSTEM_STOP the subtitle AO tears down its overlay/timers and
+    // acknowledges SYSTEM_STOPPED to system_ao_t.
+    init_subtitle_ready();
+
+    subtitle_pipeline_cleanup_Ignore();
+    qpc_test_post_signal(AO_Subtitle, SYSTEM_STOP_SIG);
+    qpc_test_dispatch_one(AO_Subtitle);
+
+    QEvt const* const ack = qpc_test_pop(AO_System);
+    TEST_ASSERT_EQUAL_UINT(SYSTEM_STOPPED_SIG, ack->sig);
+    TEST_ASSERT_EQUAL_INT(COMPONENT_SUBTITLE_PIPELINE, ((component_ready_evt_t const*)ack)->source);
+    qpc_test_gc(ack);
+}
+
+void test_stt_quiesces_and_acks_on_system_stop(void)
+{
+    // SRC-H07: on SYSTEM_STOP the STT AO closes its receiver and acknowledges.
+    expect_stt_init_success();
+    start_stt_ao();
+
+    post_component_init(AO_Stt, 0U, 0U);
+    qpc_test_dispatch_one(AO_Stt);
+    qpc_test_gc(qpc_test_pop(AO_System)); // ready
+
+    stt_event_rx_cleanup_Ignore();
+    qpc_test_post_signal(AO_Stt, SYSTEM_STOP_SIG);
+    qpc_test_dispatch_one(AO_Stt);
+
+    QEvt const* const ack = qpc_test_pop(AO_System);
+    TEST_ASSERT_EQUAL_UINT(SYSTEM_STOPPED_SIG, ack->sig);
+    TEST_ASSERT_EQUAL_INT(COMPONENT_STT, ((component_ready_evt_t const*)ack)->source);
+    qpc_test_gc(ack);
+}
+
 void test_stt_poll_error_posts_component_error(void)
 {
     app_error_evt_t const* error;

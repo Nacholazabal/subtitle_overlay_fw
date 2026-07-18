@@ -39,14 +39,18 @@ typedef struct
 // === Private function declarations =============================================================================== //
 
 static QState video_ao_initial(video_ao_t* const me, void const* const par);
+static QState video_ao_top(video_ao_t* const me, QEvt const* const e);
 static QState video_ao_idle(video_ao_t* const me, QEvt const* const e);
 static QState video_ao_running(video_ao_t* const me, QEvt const* const e);
 static QState video_ao_error(video_ao_t* const me, QEvt const* const e);
+static QState video_ao_stopped(video_ao_t* const me, QEvt const* const e);
 
 static void post_ready(video_ao_t* const me);
 static void post_error(video_ao_t* const me, int32_t code);
+static void post_stopped(video_ao_t* const me);
 static int on_component_init(video_ao_t* const me);
 static int on_video_poll(video_ao_t* const me);
+static void quiesce(video_ao_t* const me);
 static void enter_error(video_ao_t* const me, int32_t code);
 
 // === Private variable definitions ================================================================================ //
@@ -196,15 +200,42 @@ static int on_video_poll(video_ao_t* const me)
  * @param code Negative errno-style value to post to system_ao_t.
  * @return None.
  */
+// SRC-H07: idempotent teardown of this AO's resources (timer + pipeline/MMIO).
+// Shared by the error path and the coordinated-shutdown STOP handler.
+static void quiesce(video_ao_t* const me)
+{
+    if (me->running)
+    {
+        (void)QTimeEvt_disarm(&me->poll_time_evt);
+        video_pipeline_cleanup(&me->pipeline);
+        me->running = 0U;
+        me->ready_posted = 0U;
+    }
+}
+
+// SRC-H07: acknowledge SYSTEM_STOP to system_ao_t once this AO has quiesced.
+static void post_stopped(video_ao_t* const me)
+{
+    Q_UNUSED_PAR(me); // used only as the QS trace sender (dropped without Q_SPY)
+
+    component_ready_evt_t* const evt =
+        Q_NEW_X(component_ready_evt_t, APP_CONTROL_EVENT_MARGIN, SYSTEM_STOPPED_SIG);
+
+    if (evt != NULL)
+    {
+        evt->source = COMPONENT_VIDEO;
+        evt->width = 0U;
+        evt->height = 0U;
+        (void)QACTIVE_POST_X(AO_System, &evt->super, APP_CONTROL_EVENT_MARGIN, &me->super);
+    }
+}
+
 static void enter_error(video_ao_t* const me, int32_t code)
 {
     if (me->running)
     {
         LOG_WARNING("video: stopping pipeline after error code %ld", (long)code);
-        (void)QTimeEvt_disarm(&me->poll_time_evt);
-        video_pipeline_cleanup(&me->pipeline);
-        me->running = 0U;
-        me->ready_posted = 0U;
+        quiesce(me);
     }
     else
     {
@@ -226,6 +257,32 @@ static QState video_ao_initial(video_ao_t* const me, void const* const par)
     Q_UNUSED_PAR(par);
 
     return Q_TRAN(&video_ao_idle);
+}
+
+/**
+ * @brief Superstate handling the coordinated SYSTEM_STOP command in any substate.
+ * @param me Video active object instance.
+ * @param e Event dispatched by QP/C.
+ * @return QP/C state handler result.
+ */
+static QState video_ao_top(video_ao_t* const me, QEvt const* const e)
+{
+    QState status;
+
+    switch (e->sig)
+    {
+    case SYSTEM_STOP_SIG:
+        quiesce(me);
+        post_stopped(me);
+        status = Q_TRAN(&video_ao_stopped);
+        break;
+
+    default:
+        status = Q_SUPER(&QHsm_top);
+        break;
+    }
+
+    return status;
 }
 
 /**
@@ -252,7 +309,7 @@ static QState video_ao_idle(video_ao_t* const me, QEvt const* const e)
         break;
 
     default:
-        status = Q_SUPER(&QHsm_top);
+        status = Q_SUPER(&video_ao_top);
         break;
     }
 
@@ -283,7 +340,7 @@ static QState video_ao_running(video_ao_t* const me, QEvt const* const e)
         break;
 
     default:
-        status = Q_SUPER(&QHsm_top);
+        status = Q_SUPER(&video_ao_top);
         break;
     }
 
@@ -301,7 +358,35 @@ static QState video_ao_error(video_ao_t* const me, QEvt const* const e)
     Q_UNUSED_PAR(me);
     Q_UNUSED_PAR(e);
 
-    return Q_SUPER(&QHsm_top);
+    return Q_SUPER(&video_ao_top);
+}
+
+/**
+ * @brief Terminal state after a coordinated SYSTEM_STOP: resources are released.
+ * @param me Video active object instance.
+ * @param e Event dispatched by QP/C.
+ * @return QP/C state handler result.
+ */
+static QState video_ao_stopped(video_ao_t* const me, QEvt const* const e)
+{
+    Q_UNUSED_PAR(me);
+
+    QState status;
+
+    switch (e->sig)
+    {
+    case Q_ENTRY_SIG:
+        LOG_INFO("video: stopped");
+        status = Q_HANDLED();
+        break;
+
+    default:
+        // Terminal: ignore everything (including a repeated SYSTEM_STOP).
+        status = Q_SUPER(&QHsm_top);
+        break;
+    }
+
+    return status;
 }
 
 // === Public function implementation ============================================================================== //

@@ -35,14 +35,18 @@ typedef struct
 // === Private function declarations =============================================================================== //
 
 static QState usb_audio_ao_initial(usb_audio_ao_t* const me, void const* const par);
+static QState usb_audio_ao_top(usb_audio_ao_t* const me, QEvt const* const e);
 static QState usb_audio_ao_idle(usb_audio_ao_t* const me, QEvt const* const e);
 static QState usb_audio_ao_ready(usb_audio_ao_t* const me, QEvt const* const e);
 static QState usb_audio_ao_error(usb_audio_ao_t* const me, QEvt const* const e);
+static QState usb_audio_ao_stopped(usb_audio_ao_t* const me, QEvt const* const e);
 
 static int on_component_init(usb_audio_ao_t* const me);
 static int on_stream_poll(usb_audio_ao_t* const me);
 static void post_ready(usb_audio_ao_t* const me);
 static void post_error(usb_audio_ao_t* const me, int32_t code);
+static void post_stopped(usb_audio_ao_t* const me);
+static void quiesce(usb_audio_ao_t* const me);
 static void enter_error(usb_audio_ao_t* const me, int32_t code);
 
 // === Public variable definitions ================================================================================= //
@@ -168,7 +172,9 @@ static int on_stream_poll(usb_audio_ao_t* const me)
  * @param code Negative errno-style value.
  * @return None.
  */
-static void enter_error(usb_audio_ao_t* const me, int32_t code)
+// SRC-H07: idempotent teardown of this AO's resources (timer + capture/streaming
+// workers). Shared by the error path and the coordinated-shutdown STOP handler.
+static void quiesce(usb_audio_ao_t* const me)
 {
     if (me->running != 0U)
     {
@@ -176,7 +182,28 @@ static void enter_error(usb_audio_ao_t* const me, int32_t code)
         usb_audio_stream_stop(&me->stream);
         me->running = 0U;
     }
+}
 
+// SRC-H07: acknowledge SYSTEM_STOP to system_ao_t once this AO has quiesced.
+static void post_stopped(usb_audio_ao_t* const me)
+{
+    Q_UNUSED_PAR(me); // used only as the QS trace sender (dropped without Q_SPY)
+
+    component_ready_evt_t* const evt =
+        Q_NEW_X(component_ready_evt_t, APP_CONTROL_EVENT_MARGIN, SYSTEM_STOPPED_SIG);
+
+    if (evt != NULL)
+    {
+        evt->source = COMPONENT_USB_AUDIO;
+        evt->width = 0U;
+        evt->height = 0U;
+        (void)QACTIVE_POST_X(AO_System, &evt->super, APP_CONTROL_EVENT_MARGIN, &me->super);
+    }
+}
+
+static void enter_error(usb_audio_ao_t* const me, int32_t code)
+{
+    quiesce(me);
     post_error(me, code);
 }
 
@@ -192,6 +219,32 @@ static QState usb_audio_ao_initial(usb_audio_ao_t* const me, void const* const p
     Q_UNUSED_PAR(par);
 
     return Q_TRAN(&usb_audio_ao_idle);
+}
+
+/**
+ * @brief Superstate handling the coordinated SYSTEM_STOP command in any substate.
+ * @param me USB audio active object.
+ * @param e Event dispatched by QP/C.
+ * @return QP/C state handler result.
+ */
+static QState usb_audio_ao_top(usb_audio_ao_t* const me, QEvt const* const e)
+{
+    QState status;
+
+    switch (e->sig)
+    {
+    case SYSTEM_STOP_SIG:
+        quiesce(me);
+        post_stopped(me);
+        status = Q_TRAN(&usb_audio_ao_stopped);
+        break;
+
+    default:
+        status = Q_SUPER(&QHsm_top);
+        break;
+    }
+
+    return status;
 }
 
 /**
@@ -218,7 +271,7 @@ static QState usb_audio_ao_idle(usb_audio_ao_t* const me, QEvt const* const e)
         break;
 
     default:
-        status = Q_SUPER(&QHsm_top);
+        status = Q_SUPER(&usb_audio_ao_top);
         break;
     }
 
@@ -242,7 +295,7 @@ static QState usb_audio_ao_ready(usb_audio_ao_t* const me, QEvt const* const e)
         break;
 
     default:
-        status = Q_SUPER(&QHsm_top);
+        status = Q_SUPER(&usb_audio_ao_top);
         break;
     }
 
@@ -260,7 +313,34 @@ static QState usb_audio_ao_error(usb_audio_ao_t* const me, QEvt const* const e)
     Q_UNUSED_PAR(me);
     Q_UNUSED_PAR(e);
 
-    return Q_SUPER(&QHsm_top);
+    return Q_SUPER(&usb_audio_ao_top);
+}
+
+/**
+ * @brief Terminal state after a coordinated SYSTEM_STOP: workers are stopped.
+ * @param me USB audio active object.
+ * @param e Event dispatched by QP/C.
+ * @return QP/C state handler result.
+ */
+static QState usb_audio_ao_stopped(usb_audio_ao_t* const me, QEvt const* const e)
+{
+    Q_UNUSED_PAR(me);
+
+    QState status;
+
+    switch (e->sig)
+    {
+    case Q_ENTRY_SIG:
+        LOG_INFO("usb-audio: stopped");
+        status = Q_HANDLED();
+        break;
+
+    default:
+        status = Q_SUPER(&QHsm_top);
+        break;
+    }
+
+    return status;
 }
 
 // === Public function implementation ============================================================================== //

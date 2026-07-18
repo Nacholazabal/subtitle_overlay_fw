@@ -21,12 +21,23 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include "VideoAO.h"
 
 // === Macros definitions ========================================================================================== //
+
+// SRC-H07: fail-fast coordinated shutdown. On any component failure, system_ao_t
+// broadcasts SYSTEM_STOP to every worker AO, waits for each to acknowledge with
+// SYSTEM_STOPPED (bounded by a timeout), then terminates the QF event loop so the
+// process exits cleanly with hardware/threads/sockets already quiesced.
+#define SYSTEM_STOP_EXPECTED_MASK                                            \
+    ((uint8_t)((1U << COMPONENT_VIDEO) | (1U << COMPONENT_USB_AUDIO)         \
+               | (1U << COMPONENT_SUBTITLE_PIPELINE) | (1U << COMPONENT_STT)))
+#define SYSTEM_SHUTDOWN_TIMEOUT_TICKS (50U) // ~500 ms at 100 Hz
+
 // === Private data type declarations ============================================================================== //
 
 typedef struct
 {
     QActive super;
 
+    QTimeEvt shutdown_timeout_evt;
     component_id_e error_source;
     int32_t error_code;
     uint32_t active_video_width;
@@ -34,6 +45,7 @@ typedef struct
     uint8_t usb_audio_ready;
     uint8_t subtitle_init_requested;
     uint8_t stt_init_requested;
+    uint8_t stopped_mask; ///< SRC-H07: bitmask of components that acked SYSTEM_STOPPED.
 } system_ao_t;
 
 // === Private variable declarations =============================================================================== //
@@ -43,7 +55,9 @@ static QState system_ao_initial(system_ao_t* const me, void const* const par);
 static QState system_ao_active(system_ao_t* const me, QEvt const* const e);
 static QState system_ao_init(system_ao_t* const me, QEvt const* const e);
 static QState system_ao_run(system_ao_t* const me, QEvt const* const e);
-static QState system_ao_error(system_ao_t* const me, QEvt const* const e);
+static QState system_ao_stopping(system_ao_t* const me, QEvt const* const e);
+
+static void broadcast_stop(system_ao_t* const me);
 
 static int post_component_init(system_ao_t* const me,
                                QActive* const target,
@@ -308,7 +322,7 @@ static QState system_ao_active(system_ao_t* const me, QEvt const* const e)
     {
     case COMPONENT_ERROR_SIG:
         on_error(me, Q_EVT_CAST(app_error_evt_t));
-        status = Q_TRAN(&system_ao_error);
+        status = Q_TRAN(&system_ao_stopping);
         break;
 
     default:
@@ -332,7 +346,7 @@ static QState system_ao_init(system_ao_t* const me, QEvt const* const e)
         }
         else
         {
-            status = Q_TRAN(&system_ao_error);
+            status = Q_TRAN(&system_ao_stopping);
         }
         break;
 
@@ -350,7 +364,7 @@ static QState system_ao_init(system_ao_t* const me, QEvt const* const e)
         }
         else
         {
-            status = Q_TRAN(&system_ao_error);
+            status = Q_TRAN(&system_ao_stopping);
         }
         break;
     }
@@ -382,24 +396,71 @@ static QState system_ao_run(system_ao_t* const me, QEvt const* const e)
     return status;
 }
 
-static QState system_ao_error(system_ao_t* const me, QEvt const* const e)
+// SRC-H07: broadcast SYSTEM_STOP to every worker AO. A single immutable static
+// event is posted to all targets, so the broadcast can never fail on pool
+// exhaustion. The worker AOs quiesce their resources and reply SYSTEM_STOPPED.
+static void broadcast_stop(system_ao_t* const me)
+{
+    static QEvt const stop_evt = QEVT_INITIALIZER(SYSTEM_STOP_SIG);
+
+    Q_UNUSED_PAR(me); // used only as the QS trace sender (dropped without Q_SPY)
+
+    (void)QACTIVE_POST_X(AO_Video, &stop_evt, 0U, &me->super);
+    (void)QACTIVE_POST_X(AO_USBAudio, &stop_evt, 0U, &me->super);
+    (void)QACTIVE_POST_X(AO_Subtitle, &stop_evt, 0U, &me->super);
+    (void)QACTIVE_POST_X(AO_Stt, &stop_evt, 0U, &me->super);
+}
+
+// SRC-H07: coordinated fail-fast shutdown state. Enter on any terminal failure;
+// stop every component, then terminate the QF event loop (process exit) once all
+// components have acknowledged or the shutdown timeout elapses.
+static QState system_ao_stopping(system_ao_t* const me, QEvt const* const e)
 {
     QState status;
 
     switch (e->sig)
     {
     case Q_ENTRY_SIG:
-        LOG_ERROR("system: terminal error state source=%s code=%ld",
+        LOG_ERROR("system: fail-fast shutdown (source=%s code=%ld); stopping all components",
                   component_id_to_str(me->error_source),
                   (long)me->error_code);
+        me->stopped_mask = 0U;
+        broadcast_stop(me);
+        QTimeEvt_armX(&me->shutdown_timeout_evt, SYSTEM_SHUTDOWN_TIMEOUT_TICKS, 0U);
+        status = Q_HANDLED();
+        break;
+
+    case SYSTEM_STOPPED_SIG:
+    {
+        component_ready_evt_t const* const ack = Q_EVT_CAST(component_ready_evt_t);
+
+        me->stopped_mask |= (uint8_t)(1U << (unsigned)ack->source);
+        LOG_INFO("system: component stopped: %s", component_id_to_str(ack->source));
+
+        if ((me->stopped_mask & SYSTEM_STOP_EXPECTED_MASK) == SYSTEM_STOP_EXPECTED_MASK)
+        {
+            LOG_INFO("system: all components stopped; terminating");
+            (void)QTimeEvt_disarm(&me->shutdown_timeout_evt);
+            QF_stop();
+        }
+        status = Q_HANDLED();
+        break;
+    }
+
+    case SYSTEM_SHUTDOWN_TIMEOUT_SIG:
+        LOG_WARNING("system: shutdown timeout (stopped_mask=0x%02X); terminating anyway",
+                    (unsigned)me->stopped_mask);
+        QF_stop();
+        status = Q_HANDLED();
+        break;
+
+    case COMPONENT_ERROR_SIG:
+    case COMPONENT_READY_SIG:
+        // Already shutting down: ignore further component traffic.
         status = Q_HANDLED();
         break;
 
     default:
-        /*
-         * This is intentionally a terminal state for the first milestone. Add a
-         * reset or recovery signal later when the desired recovery policy exists.
-         */
         status = Q_SUPER(&QHsm_top);
         break;
     }
@@ -414,6 +475,7 @@ void system_ao_ctor(void)
     system_ao_t* const me = &system_ao_inst;
 
     QActive_ctor(&me->super, Q_STATE_CAST(&system_ao_initial));
+    QTimeEvt_ctorX(&me->shutdown_timeout_evt, &me->super, SYSTEM_SHUTDOWN_TIMEOUT_SIG, 0U);
     me->error_source = COMPONENT_NONE;
     me->error_code = 0;
     me->active_video_width = 0U;
@@ -421,6 +483,7 @@ void system_ao_ctor(void)
     me->usb_audio_ready = 0U;
     me->subtitle_init_requested = 0U;
     me->stt_init_requested = 0U;
+    me->stopped_mask = 0U;
 }
 
 // === End of documentation ======================================================================================== //
