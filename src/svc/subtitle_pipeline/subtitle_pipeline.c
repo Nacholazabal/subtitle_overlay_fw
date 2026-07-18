@@ -15,6 +15,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include <string.h>
 
 #include "errorno.h"
+#include "hw_platform.h"
 #include "subtitle_text_renderer.h"
 
 // === Macros definitions ========================================================================================== //
@@ -90,30 +91,14 @@ static uint8_t pipeline_is_initialized(subtitle_pipeline_t const* const pipeline
     return ((pipeline != NULL) && (pipeline->initialized != 0U)) ? 1U : 0U;
 }
 
-// === Public function implementation ============================================================================== //
-
 /**
- * @brief Initialize subtitle overlay and BRAM service state.
- * @param pipeline Pipeline instance to initialize.
- * @param display_width Active display width in pixels.
- * @param display_height Active display height in lines.
- * @return 0 on success, or a negative errno-style value on failure.
+ * @brief Bring the overlay and BRAM up to a cleared, disabled, ready state.
+ * @param pipeline Pipeline whose hardware is being configured.
+ * @return 0 on success, or the first negative errno-style HAL error.
  */
-int subtitle_pipeline_init(subtitle_pipeline_t* const pipeline,
-                           uint32_t display_width,
-                           uint32_t display_height)
+static int configure_hardware(subtitle_pipeline_t* const pipeline)
 {
     int status;
-
-    if ((pipeline == NULL) || (display_width == 0U) || (display_height == 0U))
-    {
-        return -EINVAL;
-    }
-
-    memset(pipeline, 0, sizeof(*pipeline));
-    pipeline->display_width = display_width;
-    pipeline->display_height = display_height;
-    pipeline->config = default_config(display_width, display_height);
 
     status = subtitle_overlay_init(&pipeline->overlay);
     if (status != 0)
@@ -139,9 +124,48 @@ int subtitle_pipeline_init(subtitle_pipeline_t* const pipeline,
         return status;
     }
 
-    status = subtitle_overlay_enable(&pipeline->overlay, 0);
+    return subtitle_overlay_enable(&pipeline->overlay, 0);
+}
+
+// === Public function implementation ============================================================================== //
+
+/**
+ * @brief Initialize subtitle overlay and BRAM service state.
+ * @param pipeline Pipeline instance to initialize.
+ * @param display_width Active display width in pixels.
+ * @param display_height Active display height in lines.
+ * @return 0 on success, or a negative errno-style value on failure.
+ */
+int subtitle_pipeline_init(subtitle_pipeline_t* const pipeline,
+                           uint32_t display_width,
+                           uint32_t display_height)
+{
+    int status;
+
+    if ((pipeline == NULL) || (display_width == 0U) || (display_height == 0U))
+    {
+        return -EINVAL;
+    }
+
+    memset(pipeline, 0, sizeof(*pipeline));
+    pipeline->display_width = display_width;
+    pipeline->display_height = display_height;
+    pipeline->config = default_config(display_width, display_height);
+
+    // SRC-C02: acquire a reference to the shared MMIO platform before touching
+    // any overlay/BRAM register, and release it again on any failure so a
+    // failed init never leaves a dangling reference.
+    if (hw_platform_init() != 0)
+    {
+        return -EIO;
+    }
+    pipeline->platform_ready = 1U;
+
+    status = configure_hardware(pipeline);
     if (status != 0)
     {
+        hw_platform_cleanup();
+        pipeline->platform_ready = 0U;
         return status;
     }
 
@@ -165,6 +189,14 @@ void subtitle_pipeline_cleanup(subtitle_pipeline_t* const pipeline)
     if (pipeline_is_initialized(pipeline))
     {
         (void)subtitle_overlay_enable(&pipeline->overlay, 0);
+    }
+
+    // SRC-C02: release our reference to the shared MMIO platform. The mapping is
+    // only torn down once VideoAO has released its reference too.
+    if (pipeline->platform_ready != 0U)
+    {
+        hw_platform_cleanup();
+        pipeline->platform_ready = 0U;
     }
 
     memset(pipeline, 0, sizeof(*pipeline));

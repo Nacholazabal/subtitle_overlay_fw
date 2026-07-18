@@ -38,6 +38,7 @@ typedef struct
     subtitle_overlay_config_t config;
     uint32_t display_width;
     uint32_t display_height;
+    uint8_t platform_ready; ///< SRC-C02: this pipeline holds a hw_platform reference.
     uint8_t initialized;
     uint8_t enabled;
 } subtitle_pipeline_t;

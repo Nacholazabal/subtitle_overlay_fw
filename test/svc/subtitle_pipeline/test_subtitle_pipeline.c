@@ -4,6 +4,7 @@
 #include "errorno.h"
 #include "subtitle_pipeline.h"
 
+#include "mock_hw_platform.h"
 #include "mock_subtitle_bram.h"
 #include "mock_subtitle_overlay.h"
 #include "mock_subtitle_text_renderer.h"
@@ -14,6 +15,7 @@ static uint8_t captured_caption_is_final;
 
 static void expect_init_success(void)
 {
+    hw_platform_init_ExpectAndReturn(0); // SRC-C02: acquire shared MMIO platform
     subtitle_overlay_init_ExpectAnyArgsAndReturn(0);
     subtitle_bram_init_ExpectAnyArgsAndReturn(0);
     subtitle_overlay_configure_ExpectAnyArgsAndReturn(0);
@@ -89,34 +91,70 @@ void test_subtitle_pipeline_init_enforces_minimum_mask_sized_bar(void)
 
 void test_subtitle_pipeline_init_returns_hal_errors(void)
 {
+    // SRC-C02: a HAL failure after acquiring the platform must release it again.
+    hw_platform_init_ExpectAndReturn(0);
     subtitle_overlay_init_ExpectAnyArgsAndReturn(-EIO);
+    hw_platform_cleanup_Expect();
     TEST_ASSERT_EQUAL_INT(-EIO, subtitle_pipeline_init(&pipeline, 1280U, 720U));
     TEST_ASSERT_EQUAL_UINT8(0U, pipeline.initialized);
+    TEST_ASSERT_EQUAL_UINT8(0U, pipeline.platform_ready);
 
+    hw_platform_init_ExpectAndReturn(0);
     subtitle_overlay_init_ExpectAnyArgsAndReturn(0);
     subtitle_bram_init_ExpectAnyArgsAndReturn(-EIO);
+    hw_platform_cleanup_Expect();
     TEST_ASSERT_EQUAL_INT(-EIO, subtitle_pipeline_init(&pipeline, 1280U, 720U));
     TEST_ASSERT_EQUAL_UINT8(0U, pipeline.initialized);
+    TEST_ASSERT_EQUAL_UINT8(0U, pipeline.platform_ready);
+}
+
+void test_subtitle_pipeline_init_returns_eio_when_platform_acquire_fails(void)
+{
+    // SRC-C02: if the shared platform cannot be acquired, no overlay/BRAM work
+    // happens and no reference is held.
+    hw_platform_init_ExpectAndReturn(-1);
+    TEST_ASSERT_EQUAL_INT(-EIO, subtitle_pipeline_init(&pipeline, 1280U, 720U));
+    TEST_ASSERT_EQUAL_UINT8(0U, pipeline.initialized);
+    TEST_ASSERT_EQUAL_UINT8(0U, pipeline.platform_ready);
 }
 
 void test_subtitle_pipeline_cleanup_disables_initialized_overlay_and_resets_state(void)
 {
     pipeline.initialized = 1U;
     pipeline.enabled = 1U;
+    pipeline.platform_ready = 1U;
 
     subtitle_overlay_enable_ExpectAnyArgsAndReturn(0);
+    hw_platform_cleanup_Expect(); // SRC-C02: release the platform reference
 
     subtitle_pipeline_cleanup(&pipeline);
 
     TEST_ASSERT_EQUAL_UINT8(0U, pipeline.initialized);
     TEST_ASSERT_EQUAL_UINT8(0U, pipeline.enabled);
+    TEST_ASSERT_EQUAL_UINT8(0U, pipeline.platform_ready);
+}
+
+void test_subtitle_pipeline_cleanup_releases_platform_even_when_not_initialized(void)
+{
+    // SRC-C02: a pipeline that acquired the platform but failed before becoming
+    // fully initialized must still release its reference on cleanup.
+    pipeline.initialized = 0U;
+    pipeline.platform_ready = 1U;
+
+    hw_platform_cleanup_Expect();
+
+    subtitle_pipeline_cleanup(&pipeline);
+
+    TEST_ASSERT_EQUAL_UINT8(0U, pipeline.platform_ready);
 }
 
 void test_subtitle_pipeline_cleanup_ignores_null_or_uninitialized_pipeline(void)
 {
     subtitle_pipeline_cleanup(NULL);
 
+    // No platform reference held: cleanup must not touch hw_platform.
     pipeline.initialized = 0U;
+    pipeline.platform_ready = 0U;
     subtitle_pipeline_cleanup(&pipeline);
 }
 

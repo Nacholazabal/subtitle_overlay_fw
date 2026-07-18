@@ -38,6 +38,13 @@ static hw_platform_mapping_t mappings[HW_REGION_COUNT] = {
 
 static int devmem_fd = -1;
 
+// SRC-C02: the AXI-Lite regions are a single global resource shared by several
+// services (VideoAO owns dynclk/VTC/GPIO, SubtitleAO owns overlay/BRAM). Each
+// service acquires the platform on init and releases it on cleanup; the mapping
+// is torn down only when the LAST owner releases it, so one service's cleanup
+// (e.g. a VideoAO error) can never munmap MMIO another service still uses.
+static unsigned int refcount = 0U;
+
 static void* map_region(hw_platform_mapping_t* const mapping)
 {
     void* const virtual_base = mmap(NULL,
@@ -60,36 +67,10 @@ static void* map_region(hw_platform_mapping_t* const mapping)
     return virtual_base;
 }
 
-int hw_platform_init(void)
-{
-    hw_platform_region_e region;
-
-    if (devmem_fd >= 0)
-    {
-        return 0;
-    }
-
-    devmem_fd = open("/dev/mem", O_RDWR | O_SYNC);
-    if (devmem_fd < 0)
-    {
-        fprintf(stderr, "[hw_platform] open /dev/mem failed: %s\n", strerror(errno));
-        return -1;
-    }
-
-    for (region = HW_REGION_DYNCLK; region < HW_REGION_COUNT; region++)
-    {
-        mappings[region].virtual_base = map_region(&mappings[region]);
-        if (mappings[region].virtual_base == NULL)
-        {
-            hw_platform_cleanup();
-            return -1;
-        }
-    }
-
-    return 0;
-}
-
-void hw_platform_cleanup(void)
+// SRC-C02: unconditional teardown of every mapping and the /dev/mem handle.
+// Used both when the last owner releases the platform and to undo a partial
+// mapping when init fails (where refcount is still 0).
+static void hw_platform_unmap_all(void)
 {
     hw_platform_region_e region;
 
@@ -106,6 +87,53 @@ void hw_platform_cleanup(void)
     {
         close(devmem_fd);
         devmem_fd = -1;
+    }
+}
+
+int hw_platform_init(void)
+{
+    hw_platform_region_e region;
+
+    // SRC-C02: already acquired by another owner -> just take a reference.
+    if (refcount > 0U)
+    {
+        ++refcount;
+        return 0;
+    }
+
+    devmem_fd = open("/dev/mem", O_RDWR | O_SYNC);
+    if (devmem_fd < 0)
+    {
+        fprintf(stderr, "[hw_platform] open /dev/mem failed: %s\n", strerror(errno));
+        return -1;
+    }
+
+    for (region = HW_REGION_DYNCLK; region < HW_REGION_COUNT; region++)
+    {
+        mappings[region].virtual_base = map_region(&mappings[region]);
+        if (mappings[region].virtual_base == NULL)
+        {
+            hw_platform_unmap_all(); // refcount still 0: undo partial mapping
+            return -1;
+        }
+    }
+
+    refcount = 1U; // SRC-C02: first successful owner
+    return 0;
+}
+
+void hw_platform_cleanup(void)
+{
+    // SRC-C02: release a reference; only the last release tears down the maps.
+    if (refcount == 0U)
+    {
+        return; // nothing acquired (or already released): idempotent no-op
+    }
+
+    --refcount;
+    if (refcount == 0U)
+    {
+        hw_platform_unmap_all();
     }
 }
 
