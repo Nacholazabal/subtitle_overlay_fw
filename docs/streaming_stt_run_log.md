@@ -551,6 +551,127 @@ Despues de eso probar una de estas dos ramas:
 - Si Silero ve speech continuo: subir threshold VAD o agregar gate RMS adaptive.
 - Si Silero ve pausas cortas: probar `min_silence_sec=0.35` manteniendo `max_window_sec=4.0`.
 
+## Run S007 - 2026-07-06 - Football Background, Instrumented VAD
+
+Fuente: `python3 scripts/analyze_run.py` sobre `logs/stt_events.jsonl` y `logs/board_audio.wav`.
+
+### Config
+
+| Parametro | Valor |
+| --- | ---: |
+| engine | `stream_server` |
+| transport | `websocket` |
+| model | `small` |
+| max_window_sec | `3.0` |
+| min_silence_sec | `0.3` |
+| partial_sec | `0.5` |
+| partial_agreement | `1` |
+| beam_size | `5` |
+| VAD/filter | `True` |
+| lossless | `True` |
+| partial backpressure | `True` |
+
+### Resultado
+
+Veredicto subjetivo: corrida muy util porque confirma que la instrumentacion VAD ya llega al analyzer. Segmentacion mejor que S006, pero display demasiado inestable por exceso de updates.
+
+Resumen numerico:
+
+| Area | Resultado |
+| --- | --- |
+| Audio | `NOISY FLOOR` |
+| Duracion | 112.6s |
+| Peak | 69.3% full scale |
+| RMS | -24.5 dBFS |
+| Noise floor | p10=-32.0 dBFS, median=-24.9 dBFS, p90=-21.5 dBFS |
+| Dynamic range | 10.5 dB |
+| Events | 166 total, 44 finals, 122 partials |
+| Segment reasons | 11 `max_window`, 33 `silence`, 122 `partial_tick` |
+| Dropped audio jobs | 10 |
+| Final windows | p50=1.41s, p90=3.00s, mean=1.68s |
+| Partial windows | p50=1.00s, p90=2.50s, mean=1.25s |
+| VAD speech ratio | p50=0.89, p90=1.00 |
+| VAD trailing | p50=0.00s, p90=0.31s |
+| Tail RMS | p50=-24.0 dBFS, p90=-21.5 dBFS |
+| GPU infer | p50=0.19s, p90=0.28s, max=0.88s |
+| Server queue | p50=0.00s, p90=0.00s, max=1.05s |
+| Bridge recv lag | p50=0.67s, p90=1.05s, max=2.67s |
+| Display spacing | p50=0.51s, p90=1.11s |
+| Updates under 1.5s | 154/165 all, 121/121 partials, 33/44 finals |
+
+Transcript sample:
+
+```text
+HEAD: Miriones! Fijicamente letal con... es un avion. Con la pelota dominada...
+TAIL: ...Romo te digo, son los duenos del partido. Gordon! Suscribete! El toca atras...
+```
+
+### Lectura
+
+- La instrumentacion VAD funciona: el analyzer ya muestra `VAD [MIXED]`.
+- El VAD detecto mucho mas silencio que en S006: `33/44` finals por `silence`, solo `11/44` por `max_window`.
+- Bajar `max_window` a `3.0s` y `min_silence` a `0.3s` redujo bastante la ventana de final: p50 `1.41s` contra S006 p50 `4.00s`.
+- El audio sigue siendo hostil para VAD: `tail RMS p50=-24.0 dBFS` y `speech_ratio p50=0.89`. O sea, incluso al final de las ventanas el audio sigue fuerte y Silero ve casi todo como speech.
+- El sistema ahora corta por silencio apenas llega a ~0.31s, exactamente lo esperado con `min_silence=0.3`.
+- El pipeline sigue mayormente sano, pero aparecio backlog puntual: queue max `1.05s`, dropped jobs `10`. Probablemente por exceso de parciales con `partial_sec=0.5` y `agreement=1`.
+- La UX quedo demasiado rapida: `154/165` updates duraron menos de 1.5s; todos los parciales se reemplazaron demasiado pronto.
+
+### Hipotesis
+
+- Para segmentacion, `min_silence=0.3` fue una mejora real.
+- Para UX, `partial_sec=0.5` + `partial_agreement=1` es demasiado agresivo bajo futbol de fondo.
+- El VAD no esta "roto"; esta trabajando con un piso alto. El siguiente problema no es que no vea silencios, sino que el ruido hace que esos silencios sean cortos y que los parciales salgan demasiado seguido.
+
+### Proximo Experimento
+
+Mantener la segmentacion que mejoro:
+
+| Parametro | Valor |
+| --- | ---: |
+| max_window_sec | `3.0` |
+| min_silence_sec | `0.3` |
+
+Probar calmar parciales:
+
+| Parametro | Valor |
+| --- | ---: |
+| partial_sec | `0.7` |
+| partial_agreement | `2` |
+
+Objetivo: conservar finals rapidos por silencio, pero bajar updates sub-1.5s y dropped jobs.
+
+## Run S008 - 2026-07-14 16:05 - Short-audio parameter sweep
+
+Fuente: sweep `logs/audio-tests/sweeps/20260714-160545/` con los tres audios `*-short.webm`. Las métricas de exactitud usan la transcripción offline del mismo modelo como pseudorreferencia; todavía no son WER/CER contra una referencia humana.
+
+### Config y resultados
+
+Todos los casos usaron Whisper `small`, beam `5` y gain automático. Las corridas variaron ventana, silencio, parciales y thresholds VAD.
+
+| Caso | Win | Silence | Partial | Agr | VAD / neg | WER proxy | CER proxy | p90 | Legibilidad | Partial skips | Alucinaciones |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| baseline | 3.0 | 0.3 | 0.5 | 1 | 0.50 / 0.35 | 27.22% | 19.36% | 0.68s | 6.00 | 27 | 3 |
+| calmer_updates | 3.0 | 0.3 | 1.0 | 1 | 0.50 / 0.35 | 30.93% | 22.28% | 0.77s | 12.57 | 1 | 2 |
+| stable_partials | 3.0 | 0.3 | 1.0 | 2 | 0.50 / 0.35 | 30.37% | 19.32% | 0.77s | 62.24 | 2 | 2 |
+| wider_context | 4.0 | 0.5 | 1.0 | 2 | 0.50 / 0.35 | **23.52%** | **15.57%** | 0.93s | 51.92 | 2 | **0** |
+| sensitive_vad | 3.0 | 0.3 | 1.0 | 2 | 0.35 / 0.20 | 31.48% | 24.51% | 0.79s | 65.26 | 5 | 2 |
+| strict_vad | 3.0 | 0.3 | 1.0 | 2 | 0.65 / 0.50 | 29.81% | 18.80% | 0.77s | 61.86 | 6 | 3 |
+
+No hubo drops reales de chunks de audio ni de trabajos finales. Los `partial skips` fueron parciales reemplazados por backpressure y no pérdidas de audio/finales.
+
+### Lectura
+
+- `wider_context` fue el ganador de exactitud: WER proxy `23.52%`, CER `15.57%`, p90 `0.93s` y cero candidatos a alucinación.
+- `partial_sec=1.0` con `partial_agreement=2` mejoró fuertemente la legibilidad respecto del baseline de parciales cada `0.5s`.
+- Cambiar los thresholds VAD no produjo una mejora concluyente en este sweep.
+- La confiabilidad PC (audio, Colab y generación de eventos) fue 100% en las seis corridas.
+- Sólo la primera corrida es válida como observación física del display. En las corridas 2–6 el emisor volvió a `seq=0`, pero el firmware conservó la secuencia de la conexión anterior y descartó todos los eventos. Los reportes antiguos no observaban ese descarte, por lo que su confiabilidad no certifica entrega a la placa.
+- Aun en una corrida con ACKs, la reconstrucción lógica no equivale a una captura de los píxeles HDMI.
+
+### Próximo experimento
+
+Corregir las sesiones y agregar ACKs permanentes en el protocolo de producción. Luego ejecutar un factorial `2×2` de `window={3.0,4.0}` y `silence={0.3,0.5}`, manteniendo `partial=1.0`, `agreement=2`, VAD `0.5/0.35`, con tres réplicas intercaladas del control `4.0/0.5`.
+
 ## Template
 
 ```md

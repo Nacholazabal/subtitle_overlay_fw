@@ -36,6 +36,8 @@ CONFIG_KEYS = (
     "config_partial_agreement",
     "config_beam_size",
     "config_vad_filter",
+    "config_vad_threshold",
+    "config_vad_neg_threshold",
     "config_lossless_live",
     "config_realtime",
     "config_gain",
@@ -221,6 +223,10 @@ def analyze_config(events):
     print(f"  agreement    : {config.get('config_partial_agreement')}")
     print(f"  beam         : {config.get('config_beam_size')}")
     print(f"  VAD/filter   : {config.get('config_vad_filter')}")
+    print(
+        f"  VAD threshold: {config.get('config_vad_threshold')} "
+        f"(negative={config.get('config_vad_neg_threshold')})"
+    )
     print(f"  lossless     : {config.get('config_lossless_live')}")
     print(f"  partial bp   : {config.get('config_partial_backpressure', False)}")
     if "config_transport" in config:
@@ -250,12 +256,20 @@ def analyze_events(events):
 
     seq_verdict = "OK" if not seq_issues else f"ISSUES: {'; '.join(seq_issues[:5])}"
     reasons = Counter(event.get("segment_reason", "unknown") for event in events)
-    dropped = max((int(event.get("dropped_audio_jobs", 0)) for event in events), default=0)
+    partial_skips = max(
+        (
+            int(event.get("partial_jobs_skipped", event.get("dropped_audio_jobs", 0)))
+            for event in events
+        ),
+        default=0,
+    )
+    final_drops = max((int(event.get("final_jobs_dropped", 0)) for event in events), default=0)
 
     print_header("EVENTS", f"seq {seq_verdict}")
     print(f"  total     : {total}  (finals={len(finals)}, partials={len(partials)})")
     print(f"  reasons   : {dict(sorted(reasons.items()))}")
-    print(f"  dropped   : {dropped} audio job(s)")
+    print(f"  partial skips: {partial_skips} replaced partial job(s), not final loss")
+    print(f"  final drops  : {final_drops}")
     if hallucinations:
         print(f"  hallucin. : {len(hallucinations)} event(s) flagged")
         for event in hallucinations[:3]:
@@ -319,6 +333,68 @@ def analyze_segmentation(events):
         first_final_window = event_window_sec(finals[0])
         if first_final_window is not None:
             print(f"  first final      : window={first_final_window:.2f}s seq={finals[0].get('seq')}")
+    for note in notes:
+        print(f"  NOTE: {note}")
+    print()
+
+
+def analyze_vad(events):
+    vad_events = [
+        event
+        for event in events
+        if "vad_speech_ratio" in event
+        or "vad_segment_count" in event
+        or "tail_rms_dbfs" in event
+    ]
+    if not vad_events:
+        print_header("VAD", "not instrumented")
+        print("  no VAD diagnostics in JSONL")
+        print()
+        return
+
+    finals = [event for event in vad_events if event.get("is_final")]
+    silence_finals = [event for event in finals if event.get("segment_reason") == "silence"]
+    cap_finals = [event for event in finals if event.get("segment_reason") == "max_window"]
+    speech_ratio = numeric_values(vad_events, "vad_speech_ratio")
+    segment_counts = numeric_values(vad_events, "vad_segment_count")
+    vad_trailing = numeric_values(vad_events, "vad_trailing_silence_sec")
+    trailing = numeric_values(vad_events, "trailing_silence_sec")
+    window_rms = numeric_values(vad_events, "window_rms_dbfs")
+    tail_rms = numeric_values(vad_events, "tail_rms_dbfs")
+    cap_speech_ratio = numeric_values(cap_finals, "vad_speech_ratio")
+    silence_trailing = numeric_values(silence_finals, "vad_trailing_silence_sec")
+
+    notes = []
+    if cap_finals and len(cap_finals) >= len(silence_finals):
+        notes.append(f"{len(cap_finals)}/{len(finals)} finals still reached max_window")
+    if speech_ratio and percentile(speech_ratio, 0.50) >= 0.85:
+        notes.append("median VAD speech ratio is high; VAD may be seeing near-continuous speech")
+    if tail_rms and percentile(tail_rms, 0.50) > -35.0:
+        notes.append(f"tail RMS is noisy (p50={percentile(tail_rms, 0.50):.1f} dBFS)")
+    if silence_finals:
+        notes.append(f"{len(silence_finals)} final(s) were cut by VAD silence")
+
+    if not notes:
+        verdict = "OK"
+    elif silence_finals and cap_finals:
+        verdict = "MIXED"
+    elif cap_finals:
+        verdict = "CAP-LIMITED"
+    else:
+        verdict = "ATTENTION"
+
+    print_header("VAD", verdict)
+    print_stat_line("segments/event", segment_counts, unit="")
+    print_stat_line("speech ratio", speech_ratio, unit="")
+    print_stat_line("vad trailing", vad_trailing)
+    print_stat_line("job trailing", trailing)
+    print_stat_line("window RMS", window_rms, unit=" dBFS")
+    print_stat_line("tail RMS", tail_rms, unit=" dBFS")
+    print(f"  final reasons     : silence={len(silence_finals)} max_window={len(cap_finals)} total={len(finals)}")
+    if cap_speech_ratio:
+        print_stat_line("cap speech ratio", cap_speech_ratio, unit="")
+    if silence_trailing:
+        print_stat_line("silence trailing", silence_trailing)
     for note in notes:
         print(f"  NOTE: {note}")
     print()
@@ -529,6 +605,7 @@ def main():
     analyze_config(events)
     analyze_events(events)
     analyze_segmentation(events)
+    analyze_vad(events)
     analyze_pipeline(events)
     analyze_display_cadence(events)
     analyze_timing(events)

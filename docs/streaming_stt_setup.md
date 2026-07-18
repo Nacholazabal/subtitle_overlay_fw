@@ -64,7 +64,12 @@ El bridge:
 - forwardea frames binarios al WebSocket;
 - recibe transcript events del servidor;
 - escribe `logs/stt_events.jsonl`;
-- manda NDJSON compatible al firmware en `192.168.1.10:5001`.
+- abre una sesión NDJSON bidireccional con el firmware en `192.168.1.10:5001`;
+- espera `session_ready` y correlaciona un `transcript_ack` por cada evento enviado.
+
+Cada conexión TCP es una sesión independiente y puede volver a comenzar en `seq=0`. Un ACK
+`accepted` confirma que `SttAO` recibió y encoló el evento hacia `SubtitleAO`; no confirma los
+píxeles físicos del HDMI.
 
 ## 3. Board
 
@@ -89,6 +94,17 @@ La sección `PIPELINE` ahora muestra un breakdown streaming si los eventos lo tr
 - `GPU infer`;
 - `server emit lag`;
 - `bridge recv lag`.
+
+La sección `VAD` aparece cuando la run fue hecha con el server instrumentado. Muestra:
+
+- `segments/event`;
+- `speech ratio`;
+- `vad trailing`;
+- `window RMS`;
+- `tail RMS`;
+- conteo de finals por `silence` vs `max_window`.
+
+Si aparece `VAD [not instrumented]`, la run fue generada con un server viejo o con eventos anteriores a esta instrumentación.
 
 ## Próximo Paso
 

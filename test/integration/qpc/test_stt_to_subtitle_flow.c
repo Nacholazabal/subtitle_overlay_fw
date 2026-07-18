@@ -58,6 +58,7 @@ static void expect_stt_init_success(void)
 {
     stt_event_rx_default_config_Ignore();
     stt_event_rx_init_IgnoreAndReturn(0);
+    stt_event_rx_report_delivery_IgnoreAndReturn(0);
 }
 
 static void post_component_init(QActive* const target, uint32_t width, uint32_t height)
@@ -324,7 +325,7 @@ void test_subtitle_clear_signal_clears_all_broadcast_slots(void)
     TEST_ASSERT_EQUAL_STRING("solo actual", captured_text);
 }
 
-void test_stt_discards_duplicate_transcript_sequence(void)
+void test_stt_forwards_every_event_returned_by_session_aware_receiver(void)
 {
     subtitle_text_evt_t events[2];
 
@@ -348,7 +349,8 @@ void test_stt_discards_duplicate_transcript_sequence(void)
     qpc_test_post_signal(AO_Stt, STT_POLL_SIG);
     qpc_test_dispatch_one(AO_Stt);
 
-    TEST_ASSERT_EQUAL_UINT16(1U, qpc_test_queue_use(AO_Subtitle));
+    TEST_ASSERT_EQUAL_UINT16(2U, qpc_test_queue_use(AO_Subtitle));
+    qpc_test_gc(qpc_test_pop(AO_Subtitle));
     qpc_test_gc(qpc_test_pop(AO_Subtitle));
 }
 

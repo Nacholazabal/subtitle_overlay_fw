@@ -129,33 +129,73 @@ class JsonlTranscriptSink(TranscriptSink):
 
 
 class TcpTranscriptSink(TranscriptSink):
-    def __init__(self, host, port, max_queue=32):
+    PROTOCOL_VERSION = 1
+    RESPONSE_MAX_BYTES = 512
+
+    def __init__(self, host, port, max_queue=32, ack_jsonl=None, socket_timeout=2.0):
         self.host = host
         self.port = port
+        self.socket_timeout = socket_timeout
         self.sock = None
         self.events = queue.Queue(maxsize=max_queue)
         self.stop_event = threading.Event()
+        self.ready_event = threading.Event()
+        self.stats_lock = threading.Lock()
+        self.ack_lock = threading.Lock()
+        self.ack_file = None
+        if ack_jsonl:
+            self.ack_file = open(ack_jsonl, "w", encoding="utf-8")
+        self.stats = {
+            "handshake_ok": False,
+            "protocol_version": None,
+            "session_id": None,
+            "connections": 0,
+            "generated": 0,
+            "sent": 0,
+            "accepted": 0,
+            "rejected": 0,
+            "delivery_unknown": 0,
+            "sink_dropped_partials": 0,
+            "sink_dropped_finals": 0,
+            "protocol_errors": 0,
+            "ack_latency_sec": [],
+            "first_generated_wall_sec": None,
+            "first_ack_wall_sec": None,
+        }
         self.worker = threading.Thread(target=self._worker_main, daemon=True)
         self.worker.start()
 
     def handle_event(self, event):
+        queued_event = dict(event)
+        generated_wall = time.time()
+        queued_event["_sink_generated_wall_sec"] = generated_wall
+        with self.stats_lock:
+            self.stats["generated"] += 1
+            if self.stats["first_generated_wall_sec"] is None:
+                self.stats["first_generated_wall_sec"] = generated_wall
         try:
-            self.events.put_nowait(event)
+            self.events.put_nowait(queued_event)
             return
         except queue.Full:
             pass
 
-        if not event.get("is_final", False):
+        if not queued_event.get("is_final", False):
+            with self.stats_lock:
+                self.stats["sink_dropped_partials"] += 1
+            self._record_sink_drop(queued_event, "sink_dropped_partial")
             print("subtitle TCP queue full: dropping partial transcript", flush=True)
             return
 
         if self._drop_one_partial_from_queue():
             try:
-                self.events.put_nowait(event)
+                self.events.put_nowait(queued_event)
                 return
             except queue.Full:
                 pass
 
+        with self.stats_lock:
+            self.stats["sink_dropped_finals"] += 1
+        self._record_sink_drop(queued_event, "sink_dropped_final")
         print("subtitle TCP queue full: dropping final transcript", flush=True)
 
     def _drop_one_partial_from_queue(self):
@@ -167,9 +207,13 @@ class TcpTranscriptSink(TranscriptSink):
                 queued = self.events.get_nowait()
             except queue.Empty:
                 break
+            self.events.task_done()
 
             if (not dropped) and (not queued.get("is_final", False)):
                 dropped = True
+                with self.stats_lock:
+                    self.stats["sink_dropped_partials"] += 1
+                self._record_sink_drop(queued, "sink_dropped_partial")
                 continue
 
             kept.append(queued)
@@ -184,14 +228,149 @@ class TcpTranscriptSink(TranscriptSink):
 
     def _connect(self):
         if self.sock is None:
-            self.sock = socket.create_connection((self.host, self.port), timeout=2.0)
-            self.sock.settimeout(2.0)
-            print(f"subtitle TCP connected to {self.host}:{self.port}", flush=True)
+            sock = socket.create_connection(
+                (self.host, self.port), timeout=self.socket_timeout
+            )
+            sock.settimeout(self.socket_timeout)
+            self.sock = sock
+            try:
+                ready = self._recv_message()
+                if ready.get("type") != "session_ready":
+                    raise RuntimeError(f"unexpected subtitle handshake: {ready}")
+                if ready.get("version") != self.PROTOCOL_VERSION:
+                    raise RuntimeError(
+                        f"unsupported subtitle protocol version: {ready.get('version')}"
+                    )
+                session_id = ready.get("session_id")
+                if not isinstance(session_id, int) or isinstance(session_id, bool) or session_id <= 0:
+                    raise RuntimeError(f"invalid subtitle session id: {session_id!r}")
+            except Exception:
+                self._close_socket()
+                raise
+
+            with self.stats_lock:
+                self.stats["handshake_ok"] = True
+                self.stats["protocol_version"] = self.PROTOCOL_VERSION
+                self.stats["session_id"] = session_id
+                self.stats["connections"] += 1
+            self.ready_event.set()
+            print(
+                f"subtitle TCP connected to {self.host}:{self.port}, session={session_id}",
+                flush=True,
+            )
+
+    def _recv_message(self):
+        data = bytearray()
+        while len(data) < self.RESPONSE_MAX_BYTES:
+            chunk = self.sock.recv(1)
+            if not chunk:
+                raise EOFError("subtitle TCP connection closed")
+            if chunk == b"\n":
+                try:
+                    message = json.loads(data.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise RuntimeError("invalid subtitle protocol JSON") from exc
+                if not isinstance(message, dict):
+                    raise RuntimeError("subtitle protocol response must be an object")
+                return message
+            if chunk != b"\r":
+                data.extend(chunk)
+        raise RuntimeError("subtitle protocol response too large")
 
     def _send_event(self, event):
         line = json.dumps(self._wire_event(event), ensure_ascii=False) + "\n"
         self._connect()
-        self.sock.sendall(line.encode("utf-8"))
+        session_id = self.stats_snapshot()["session_id"]
+        sent_wall = time.time()
+        sent_monotonic = time.monotonic()
+        try:
+            self.sock.sendall(line.encode("utf-8"))
+            with self.stats_lock:
+                self.stats["sent"] += 1
+            ack = self._recv_message()
+            ack_wall = time.time()
+            if ack.get("type") != "transcript_ack":
+                raise RuntimeError(f"unexpected subtitle response: {ack}")
+            if ack.get("version") != self.PROTOCOL_VERSION:
+                raise RuntimeError(f"invalid ACK version: {ack.get('version')}")
+            if ack.get("session_id") != session_id:
+                raise RuntimeError(
+                    f"ACK session mismatch: expected {session_id}, got {ack.get('session_id')}"
+                )
+            if ack.get("seq") != event.get("seq"):
+                raise RuntimeError(
+                    f"ACK sequence mismatch: expected {event.get('seq')}, got {ack.get('seq')}"
+                )
+            status = ack.get("status")
+            if status not in {
+                "accepted",
+                "rejected_old_seq",
+                "dropped_event_pool",
+                "dropped_subtitle_queue",
+            }:
+                raise RuntimeError(f"invalid ACK status: {status!r}")
+        except Exception as exc:
+            self._record_unknown(event, session_id, sent_wall, exc)
+            raise
+
+        latency = max(0.0, time.monotonic() - sent_monotonic)
+        record = {
+            "generated_wall_sec": event.get("_sink_generated_wall_sec"),
+            "sent_wall_sec": sent_wall,
+            "ack_wall_sec": ack_wall,
+            "ack_latency_sec": latency,
+            "session_id": session_id,
+            "seq": event.get("seq"),
+            "is_final": bool(event.get("is_final", False)),
+            "status": status,
+        }
+        with self.stats_lock:
+            self.stats["ack_latency_sec"].append(latency)
+            if self.stats["first_ack_wall_sec"] is None:
+                self.stats["first_ack_wall_sec"] = ack_wall
+            if status == "accepted":
+                self.stats["accepted"] += 1
+            else:
+                self.stats["rejected"] += 1
+        self._write_ack_record(record)
+
+    def _record_unknown(self, event, session_id, sent_wall, exc):
+        record = {
+            "generated_wall_sec": event.get("_sink_generated_wall_sec"),
+            "sent_wall_sec": sent_wall,
+            "ack_wall_sec": None,
+            "ack_latency_sec": None,
+            "session_id": session_id,
+            "seq": event.get("seq"),
+            "is_final": bool(event.get("is_final", False)),
+            "status": "delivery_unknown",
+            "error": str(exc),
+        }
+        with self.stats_lock:
+            self.stats["delivery_unknown"] += 1
+            self.stats["protocol_errors"] += 1
+        self._write_ack_record(record)
+
+    def _record_sink_drop(self, event, status):
+        with self.stats_lock:
+            session_id = self.stats.get("session_id")
+        record = {
+            "generated_wall_sec": event.get("_sink_generated_wall_sec"),
+            "sent_wall_sec": None,
+            "ack_wall_sec": None,
+            "ack_latency_sec": None,
+            "session_id": session_id,
+            "seq": event.get("seq"),
+            "is_final": bool(event.get("is_final", False)),
+            "status": status,
+        }
+        self._write_ack_record(record)
+
+    def _write_ack_record(self, record):
+        if getattr(self, "ack_file", None) is not None:
+            with self.ack_lock:
+                self.ack_file.write(json.dumps(record, ensure_ascii=False) + "\n")
+                self.ack_file.flush()
 
     @staticmethod
     def _wire_event(event):
@@ -206,19 +385,29 @@ class TcpTranscriptSink(TranscriptSink):
 
     def _worker_main(self):
         while not self.stop_event.is_set():
+            if self.sock is None:
+                try:
+                    self._connect()
+                except (OSError, EOFError, RuntimeError) as exc:
+                    print(f"subtitle TCP handshake failed: {exc}", flush=True)
+                    if isinstance(exc, RuntimeError):
+                        with self.stats_lock:
+                            self.stats["protocol_errors"] += 1
+                    self.stop_event.wait(0.5)
+                    continue
             try:
                 event = self.events.get(timeout=0.1)
             except queue.Empty:
                 continue
 
-            while not self.stop_event.is_set():
-                try:
-                    self._send_event(event)
-                    break
-                except OSError as exc:
-                    print(f"subtitle TCP send failed: {exc}", flush=True)
-                    self._close_socket()
-                    self.stop_event.wait(0.5)
+            try:
+                self._send_event(event)
+            except (OSError, EOFError, RuntimeError) as exc:
+                print(f"subtitle TCP delivery failed: {exc}", flush=True)
+                self._close_socket()
+                self.ready_event.clear()
+            finally:
+                self.events.task_done()
 
     def _close_socket(self):
         if self.sock is not None:
@@ -227,15 +416,43 @@ class TcpTranscriptSink(TranscriptSink):
             finally:
                 self.sock = None
 
+    def wait_ready(self, timeout):
+        return self.ready_event.wait(timeout)
+
+    def flush(self, timeout=5.0):
+        deadline = time.monotonic() + timeout
+        while self.events.unfinished_tasks and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return self.events.unfinished_tasks == 0
+
+    def stats_snapshot(self):
+        with self.stats_lock:
+            result = dict(self.stats)
+            latencies = list(result.pop("ack_latency_sec"))
+        result["ack_latency_sec"] = latencies
+        result["reconnections"] = max(0, int(result.get("connections", 0)) - 1)
+        if result["first_generated_wall_sec"] is not None and result["first_ack_wall_sec"] is not None:
+            result["time_to_first_subtitle_sec"] = max(
+                0.0,
+                result["first_ack_wall_sec"] - result["first_generated_wall_sec"],
+            )
+        else:
+            result["time_to_first_subtitle_sec"] = None
+        return result
+
     def close(self):
+        self.flush(timeout=5.0)
         self.stop_event.set()
         if self.sock is not None:
             try:
                 self.sock.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
-        self._close_socket()
         self.worker.join(timeout=2.0)
+        self._close_socket()
+        if self.ack_file is not None:
+            self.ack_file.close()
+            self.ack_file = None
 
 
 class CompositeTranscriptSink(TranscriptSink):
@@ -437,6 +654,8 @@ class ChunkTranscriber:
         drop_oldest=True,
         realtime=True,
         run_config=None,
+        vad_threshold=0.5,
+        vad_neg_threshold=None,
     ):
         import numpy as np
         from faster_whisper.vad import VadOptions
@@ -466,11 +685,21 @@ class ChunkTranscriber:
         self._audio_start_monotonic = None
         self._job_seq = 0
         self._dropped_jobs = 0
+        self._last_vad_metrics = {}
         self._queue_lock = threading.Lock()
         self._partial_jobs_outstanding = 0
         # Tight VAD segments so the trailing-silence measurement is accurate; the
         # finalize decision uses our own min_silence threshold below.
-        self._vad_options = VadOptions(min_silence_duration_ms=100, speech_pad_ms=30)
+        self.vad_threshold = float(vad_threshold)
+        self.vad_neg_threshold = (
+            float(vad_neg_threshold) if vad_neg_threshold is not None else None
+        )
+        self._vad_options = VadOptions(
+            threshold=self.vad_threshold,
+            neg_threshold=self.vad_neg_threshold,
+            min_silence_duration_ms=100,
+            speech_pad_ms=30,
+        )
         # window holds the current (growing) utterance until it is finalized.
         self.window = np.empty(0, dtype=np.float32)
         self.window_start_sample = 0
@@ -518,7 +747,9 @@ class ChunkTranscriber:
 
     def flush(self):
         if self.window.size > 0:
-            self._finalize_upto(self.window.size, reason="flush")
+            self._finalize_upto(self.window.size,
+                                reason="flush",
+                                vad_metrics=self._last_vad_metrics)
         self.pending_chunks.join()
 
     def close(self):
@@ -535,6 +766,7 @@ class ChunkTranscriber:
 
         speech = get_speech_timestamps(self.window, self._vad_options, self.target_rate)
         if not speech:
+            self._last_vad_metrics = self._vad_metrics(speech, last_speech_end=0)
             # Drop accumulated non-speech so leading silence never piles up.
             if self.window.size >= self.min_silence_samples:
                 self.window_start_sample += self.window.size
@@ -544,20 +776,58 @@ class ChunkTranscriber:
 
         last_speech_end = int(speech[-1]["end"])
         trailing_silence = self.window.size - last_speech_end
+        self._last_vad_metrics = self._vad_metrics(speech, last_speech_end)
 
         if trailing_silence >= self.min_silence_samples:
             # Cut at the end of speech so the pause (not a word) splits the phrase.
             self._finalize_upto(last_speech_end,
                                 reason="silence",
-                                trailing_silence_samples=trailing_silence)
+                                trailing_silence_samples=trailing_silence,
+                                vad_metrics=self._last_vad_metrics)
             return True
 
         if self.window.size >= self.max_window_samples:
             # Speaker never paused; force a cut so latency and cost stay bounded.
-            self._finalize_upto(self.window.size, reason="max_window")
+            self._finalize_upto(self.window.size,
+                                reason="max_window",
+                                vad_metrics=self._last_vad_metrics)
             return True
 
         return False
+
+    def _vad_metrics(self, speech, last_speech_end):
+        import numpy as np
+
+        window_samples = int(self.window.size)
+        speech_samples = sum(max(0, int(item["end"]) - int(item["start"])) for item in speech)
+        trailing_samples = max(0, window_samples - int(last_speech_end))
+        tail_count = min(window_samples, max(self.min_silence_samples, 1))
+        tail = self.window[-tail_count:] if tail_count > 0 else self.window[:0]
+
+        metrics = {
+            "vad_segment_count": len(speech),
+            "vad_speech_ratio": round(speech_samples / window_samples, 3) if window_samples > 0 else 0.0,
+            "vad_window_sec": round(window_samples / self.target_rate, 3),
+            "vad_trailing_silence_sec": round(trailing_samples / self.target_rate, 3),
+            "window_rms_dbfs": self._dbfs_float(np, self.window),
+            "tail_rms_dbfs": self._dbfs_float(np, tail),
+        }
+        if speech:
+            metrics["vad_last_speech_end_sec"] = round(
+                (self.window_start_sample + int(last_speech_end)) / self.target_rate,
+                3,
+            )
+        return metrics
+
+    @staticmethod
+    def _dbfs_float(np, samples):
+        if samples.size == 0:
+            return -120.0
+        values = samples.astype(np.float64, copy=False)
+        rms = float(np.sqrt(np.mean(values * values)))
+        if rms <= 1e-12:
+            return -120.0
+        return round(max(-120.0, 20.0 * np.log10(rms)), 1)
 
     def _apply_gain(self, np, samples):
         if self.gain > 0.0:
@@ -587,9 +857,10 @@ class ChunkTranscriber:
                         end_sample,
                         is_final=False,
                         reason="partial_tick",
-                        trailing_silence_samples=0)
+                        trailing_silence_samples=0,
+                        vad_metrics=self._last_vad_metrics)
 
-    def _finalize_upto(self, count, reason, trailing_silence_samples=0):
+    def _finalize_upto(self, count, reason, trailing_silence_samples=0, vad_metrics=None):
         chunk = self.window[:count].copy()
         start_sample = self.window_start_sample
         end_sample = start_sample + count
@@ -602,9 +873,19 @@ class ChunkTranscriber:
                         end_sample,
                         is_final=True,
                         reason=reason,
-                        trailing_silence_samples=trailing_silence_samples)
+                        trailing_silence_samples=trailing_silence_samples,
+                        vad_metrics=vad_metrics)
 
-    def _queue_job(self, chunk, start_sample, end_sample, is_final, reason, trailing_silence_samples):
+    def _queue_job(
+        self,
+        chunk,
+        start_sample,
+        end_sample,
+        is_final,
+        reason,
+        trailing_silence_samples,
+        vad_metrics=None,
+    ):
         queued_at = time.monotonic()
         job = {
             "job_id": self._job_seq,
@@ -614,6 +895,7 @@ class ChunkTranscriber:
             "is_final": is_final,
             "reason": reason,
             "trailing_silence_samples": trailing_silence_samples,
+            "vad_metrics": dict(vad_metrics or {}),
             "queued_at": queued_at,
             "audio_end_monotonic": self._audio_end_monotonic(end_sample),
         }
@@ -731,6 +1013,10 @@ class ChunkTranscriber:
         event["infer_sec"] = round(infer_sec, 3)
         event["stt_wall_sec"] = round(queue_wait + infer_sec, 3)
         event["queue_depth_after_get"] = self.pending_chunks.qsize()
+        event["partial_jobs_skipped"] = self._dropped_jobs
+        event["final_jobs_dropped"] = 0
+        # Kept for compatibility with older analysis tools. This counter tracks
+        # superseded partial jobs; final transcript jobs are never dropped.
         event["dropped_audio_jobs"] = self._dropped_jobs
         event["partial_jobs_outstanding"] = self._partial_jobs_outstanding
         event["job_id"] = job["job_id"]
@@ -738,6 +1024,8 @@ class ChunkTranscriber:
             job["trailing_silence_samples"] / self.target_rate,
             3,
         )
+        for key, value in job.get("vad_metrics", {}).items():
+            event[key] = value
         if job["audio_end_monotonic"] is not None:
             event["emit_lag_sec"] = round(emitted_at - job["audio_end_monotonic"], 3)
         for key, value in self.run_config.items():

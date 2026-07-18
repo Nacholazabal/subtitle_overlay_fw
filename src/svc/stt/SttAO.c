@@ -36,8 +36,6 @@ typedef struct
     QTimeEvt poll_time_evt;
 
     stt_event_rx_t rx;
-    uint32_t last_seq;
-    uint8_t have_last_seq;
     uint8_t running;
 } stt_ao_t;
 
@@ -190,6 +188,8 @@ static int on_poll(stt_ao_t* const me)
 static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
 {
     subtitle_text_evt_t* subtitle_evt;
+    stt_event_rx_delivery_status_t delivery_status;
+    int status;
     uint16_t const margin = (e->is_final != 0U) ? STT_AO_FINAL_EVENT_MARGIN
                                                 : STT_AO_PARTIAL_EVENT_MARGIN;
 
@@ -198,17 +198,6 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
         return -EINVAL;
     }
 
-    if ((me->have_last_seq != 0U) && (e->seq <= me->last_seq))
-    {
-        LOG_WARNING("stt: discarding old transcript seq=%lu last=%lu",
-                    (unsigned long)e->seq,
-                    (unsigned long)me->last_seq);
-        return -EAGAIN;
-    }
-
-    me->have_last_seq = 1U;
-    me->last_seq = e->seq;
-
     subtitle_evt = Q_NEW_X(subtitle_text_evt_t, margin, SUBTITLE_TEXT_SIG);
     if (subtitle_evt == NULL)
     {
@@ -216,6 +205,8 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
                     (e->is_final != 0U) ? "final" : "partial",
                     (unsigned long)e->seq,
                     (unsigned)margin);
+        (void)stt_event_rx_report_delivery(
+            &me->rx, e->seq, STT_EVENT_RX_DELIVERY_DROPPED_EVENT_POOL);
         return -EAGAIN;
     }
 
@@ -234,7 +225,24 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
                     (e->is_final != 0U) ? "final" : "partial",
                     (unsigned long)e->seq,
                     (unsigned)margin);
+        delivery_status = STT_EVENT_RX_DELIVERY_DROPPED_SUBTITLE_QUEUE;
+        status = stt_event_rx_report_delivery(&me->rx, e->seq, delivery_status);
+        if (status != 0)
+        {
+            LOG_WARNING("stt: failed to queue delivery ACK seq=%lu, code=%ld",
+                        (unsigned long)e->seq,
+                        (long)status);
+        }
         return -EAGAIN;
+    }
+
+    delivery_status = STT_EVENT_RX_DELIVERY_ACCEPTED;
+    status = stt_event_rx_report_delivery(&me->rx, e->seq, delivery_status);
+    if (status != 0)
+    {
+        LOG_WARNING("stt: failed to queue delivery ACK seq=%lu, code=%ld",
+                    (unsigned long)e->seq,
+                    (long)status);
     }
 
     return 0;
@@ -364,8 +372,6 @@ void stt_ao_ctor(void)
 
     QActive_ctor(&me->super, Q_STATE_CAST(&stt_ao_initial));
     QTimeEvt_ctorX(&me->poll_time_evt, &me->super, STT_POLL_SIG, 0U);
-    me->last_seq = 0U;
-    me->have_last_seq = 0U;
     me->running = 0U;
 }
 

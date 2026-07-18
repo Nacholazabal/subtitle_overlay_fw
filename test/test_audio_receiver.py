@@ -33,7 +33,24 @@ class AudioReceiverTests(unittest.TestCase):
             ready.set()
             conn, _addr = server.accept()
             with conn:
-                received.append(conn.recv(4096))
+                conn.sendall(b'{"type":"session_ready","version":1,"session_id":1}\n')
+                payload = conn.makefile("r", encoding="utf-8").readline()
+                received.append(payload.encode())
+                event = json.loads(payload)
+                conn.sendall(
+                    (
+                        json.dumps(
+                            {
+                                "type": "transcript_ack",
+                                "version": 1,
+                                "session_id": 1,
+                                "seq": event["seq"],
+                                "status": "accepted",
+                            }
+                        )
+                        + "\n"
+                    ).encode()
+                )
 
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
             server.bind(("127.0.0.1", 0))
@@ -69,6 +86,13 @@ class AudioReceiverTests(unittest.TestCase):
     def test_tcp_subtitle_sink_preserves_final_by_dropping_queued_partial(self):
         sink = TcpSubtitleSink.__new__(TcpSubtitleSink)
         sink.events = queue.Queue(maxsize=1)
+        sink.stats_lock = threading.Lock()
+        sink.stats = {
+            "generated": 0,
+            "first_generated_wall_sec": None,
+            "sink_dropped_partials": 0,
+            "sink_dropped_finals": 0,
+        }
 
         sink.handle_event({"seq": 1, "is_final": False, "type": "partial", "text": "a"})
         sink.handle_event({"seq": 2, "is_final": True, "type": "final", "text": "b"})

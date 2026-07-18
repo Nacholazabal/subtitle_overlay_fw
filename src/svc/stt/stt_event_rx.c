@@ -68,6 +68,10 @@ static int json_skip_value(char const** cursor);
 static int set_nonblocking(int fd);
 static int bind_server(char const* host, uint32_t port);
 static void close_fd(int* fd);
+static void disconnect_client(stt_event_rx_t* rx);
+static int queue_response(stt_event_rx_t* rx, char const* response);
+static int queue_transcript_ack(stt_event_rx_t* rx, uint32_t seq, char const* status);
+static void flush_responses(stt_event_rx_t* rx);
 static int accept_client(stt_event_rx_t* rx);
 static int process_byte(stt_event_rx_t* rx,
                         char ch,
@@ -400,6 +404,102 @@ static void close_fd(int* const fd)
     }
 }
 
+/** @brief Close the active client and reset all state owned by that TCP session. */
+static void disconnect_client(stt_event_rx_t* const rx)
+{
+    close_fd(&rx->client_fd);
+    rx->client_connected = 0U;
+    rx->line_used = 0U;
+    rx->discarding_line = 0U;
+    rx->response_head = 0U;
+    rx->response_count = 0U;
+    rx->last_seq = 0U;
+    rx->have_last_seq = 0U;
+}
+
+/** @brief Append one already formatted NDJSON response to the bounded output queue. */
+static int queue_response(stt_event_rx_t* const rx, char const* const response)
+{
+    stt_event_rx_response_t* item;
+    uint32_t tail;
+    int length;
+
+    if (rx->response_count >= STT_EVENT_RX_TX_QUEUE_DEPTH)
+    {
+        return -EAGAIN;
+    }
+
+    tail = ((uint32_t)rx->response_head + (uint32_t)rx->response_count)
+           % STT_EVENT_RX_TX_QUEUE_DEPTH;
+    item = &rx->responses[tail];
+    length = snprintf(item->data, sizeof(item->data), "%s", response);
+    if ((length < 0) || ((size_t)length >= sizeof(item->data)))
+    {
+        return -EINVAL;
+    }
+
+    item->length = (uint16_t)length;
+    item->sent = 0U;
+    rx->response_count++;
+    return 0;
+}
+
+/** @brief Format and queue one transcript acknowledgement for the current session. */
+static int queue_transcript_ack(stt_event_rx_t* const rx,
+                                uint32_t seq,
+                                char const* const status)
+{
+    char response[STT_EVENT_RX_RESPONSE_MAX];
+    int const length = snprintf(response,
+                                sizeof(response),
+                                "{\"type\":\"transcript_ack\",\"version\":1,"
+                                "\"session_id\":%lu,\"seq\":%lu,\"status\":\"%s\"}\n",
+                                (unsigned long)rx->session_id,
+                                (unsigned long)seq,
+                                status);
+
+    if ((length < 0) || ((size_t)length >= sizeof(response)))
+    {
+        return -EINVAL;
+    }
+    return queue_response(rx, response);
+}
+
+/** @brief Advance queued responses with bounded nonblocking socket writes. */
+static void flush_responses(stt_event_rx_t* const rx)
+{
+    while ((rx->client_fd >= 0) && (rx->response_count > 0U))
+    {
+        stt_event_rx_response_t* const item = &rx->responses[rx->response_head];
+        size_t const remaining = (size_t)item->length - (size_t)item->sent;
+        ssize_t sent = send(rx->client_fd,
+                            &item->data[item->sent],
+                            remaining,
+                            MSG_DONTWAIT | MSG_NOSIGNAL);
+
+        if (sent > 0)
+        {
+            item->sent = (uint16_t)((size_t)item->sent + (size_t)sent);
+            if (item->sent == item->length)
+            {
+                rx->response_head =
+                    (uint8_t)(((uint32_t)rx->response_head + 1U) % STT_EVENT_RX_TX_QUEUE_DEPTH);
+                rx->response_count--;
+            }
+            continue;
+        }
+
+        if ((sent < 0) && ((errno == EAGAIN) || (errno == EWOULDBLOCK)))
+        {
+            break;
+        }
+
+        LOG_WARNING("stt-rx: response send failed, disconnecting client");
+        disconnect_client(rx);
+        break;
+    }
+}
+
 /**
  * @brief Accept one pending STT client connection if available.
  * @param rx Receiver instance.
@@ -434,7 +534,32 @@ static int accept_client(stt_event_rx_t* const rx)
     rx->client_connected = 1U;
     rx->line_used = 0U;
     rx->discarding_line = 0U;
-    LOG_INFO("stt-rx: client connected");
+    rx->response_head = 0U;
+    rx->response_count = 0U;
+    rx->last_seq = 0U;
+    rx->have_last_seq = 0U;
+    rx->session_id++;
+    if (rx->session_id == 0U)
+    {
+        rx->session_id = 1U;
+    }
+
+    {
+        char response[STT_EVENT_RX_RESPONSE_MAX];
+        int const length = snprintf(response,
+                                    sizeof(response),
+                                    "{\"type\":\"session_ready\",\"version\":1,"
+                                    "\"session_id\":%lu}\n",
+                                    (unsigned long)rx->session_id);
+        if ((length < 0) || ((size_t)length >= sizeof(response))
+            || (queue_response(rx, response) != 0))
+        {
+            disconnect_client(rx);
+            return -EIO;
+        }
+    }
+
+    LOG_INFO("stt-rx: client connected, session=%lu", (unsigned long)rx->session_id);
     return 0;
 }
 
@@ -495,7 +620,26 @@ static int process_byte(stt_event_rx_t* const rx,
     status = stt_event_rx_parse_line(rx->line, &events[*event_count]);
     if (status == 0)
     {
-        (*event_count)++;
+        subtitle_text_evt_t const* const event = &events[*event_count];
+
+        if ((rx->have_last_seq != 0U) && (event->seq <= rx->last_seq))
+        {
+            LOG_WARNING("stt-rx: rejecting old transcript session=%lu seq=%lu last=%lu",
+                        (unsigned long)rx->session_id,
+                        (unsigned long)event->seq,
+                        (unsigned long)rx->last_seq);
+            if (queue_transcript_ack(rx, event->seq, "rejected_old_seq") != 0)
+            {
+                LOG_WARNING("stt-rx: response queue full for rejected seq=%lu",
+                            (unsigned long)event->seq);
+            }
+        }
+        else
+        {
+            rx->have_last_seq = 1U;
+            rx->last_seq = event->seq;
+            (*event_count)++;
+        }
     }
     else
     {
@@ -611,6 +755,8 @@ int stt_event_rx_poll(stt_event_rx_t* const rx,
         return status;
     }
 
+    flush_responses(rx);
+
     while ((rx->client_fd >= 0) && (bytes_processed < STT_EVENT_RX_MAX_BYTES_PER_POLL)
            && (*event_count < max_events))
     {
@@ -631,10 +777,7 @@ int stt_event_rx_poll(stt_event_rx_t* const rx,
         if (received == 0)
         {
             LOG_INFO("stt-rx: client disconnected");
-            close_fd(&rx->client_fd);
-            rx->client_connected = 0U;
-            rx->line_used = 0U;
-            rx->discarding_line = 0U;
+            disconnect_client(rx);
             break;
         }
 
@@ -644,14 +787,45 @@ int stt_event_rx_poll(stt_event_rx_t* const rx,
         }
 
         LOG_WARNING("stt-rx: recv failed");
-        close_fd(&rx->client_fd);
-        rx->client_connected = 0U;
-        rx->line_used = 0U;
-        rx->discarding_line = 0U;
+        disconnect_client(rx);
         break;
     }
 
+    flush_responses(rx);
+
     return 0;
+}
+
+/**
+ * @brief Queue the result of forwarding a parsed transcript into the subtitle AO.
+ */
+int stt_event_rx_report_delivery(stt_event_rx_t* const rx,
+                                 uint32_t seq,
+                                 stt_event_rx_delivery_status_t status)
+{
+    char const* status_text;
+
+    if ((rx == NULL) || (rx->initialized == 0U) || (rx->client_fd < 0))
+    {
+        return -APP_ESTATE;
+    }
+
+    switch (status)
+    {
+    case STT_EVENT_RX_DELIVERY_ACCEPTED:
+        status_text = "accepted";
+        break;
+    case STT_EVENT_RX_DELIVERY_DROPPED_EVENT_POOL:
+        status_text = "dropped_event_pool";
+        break;
+    case STT_EVENT_RX_DELIVERY_DROPPED_SUBTITLE_QUEUE:
+        status_text = "dropped_subtitle_queue";
+        break;
+    default:
+        return -EINVAL;
+    }
+
+    return queue_transcript_ack(rx, seq, status_text);
 }
 
 /**
@@ -666,8 +840,11 @@ void stt_event_rx_cleanup(stt_event_rx_t* const rx)
         return;
     }
 
-    close_fd(&rx->client_fd);
-    close_fd(&rx->server_fd);
+    if (rx->initialized != 0U)
+    {
+        close_fd(&rx->client_fd);
+        close_fd(&rx->server_fd);
+    }
     memset(rx, 0, sizeof(*rx));
 }
 
