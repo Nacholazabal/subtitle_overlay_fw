@@ -61,7 +61,6 @@ void test_video_pipeline_init_success_sets_waiting_for_signal(void)
     TEST_ASSERT_EQUAL_INT(XST_SUCCESS, video_pipeline_init(&pipeline));
     TEST_ASSERT_EQUAL(VIDEO_PIPELINE_WAITING_FOR_SIGNAL, video_pipeline_get_state(&pipeline));
     TEST_ASSERT_NULL(video_pipeline_get_active_mode(&pipeline));
-    TEST_ASSERT_EQUAL_UINT32(0U, pipeline.active_frame);
     TEST_ASSERT_EQUAL_UINT8(1U, pipeline.platform_ready);
 }
 
@@ -248,7 +247,6 @@ void test_video_pipeline_poll_starts_passthrough_for_supported_timing(void)
     timing.width = 1280U;
     timing.height = 720U;
     pipeline.state = VIDEO_PIPELINE_ACQUIRING_TIMING;
-    pipeline.active_frame = 2U;
 
     video_input_locked_ExpectAnyArgsAndReturn(1U);
     video_input_read_timing_ExpectAnyArgsAndReturn(XST_SUCCESS);
