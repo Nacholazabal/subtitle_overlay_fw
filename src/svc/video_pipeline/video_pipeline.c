@@ -19,9 +19,9 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 // === Macros definitions ========================================================================================== //
 
-// SRC-H03: how long to wait for the input timing detector to report a mode
-// before restarting it. Real sources deliver timing within tens of ms; this
-// generous ceiling only trips on a stalled/absent detector.
+// How long to wait for the input timing detector to report a mode before
+// restarting it. Real sources deliver timing within tens of ms; this generous
+// ceiling only trips on a stalled/absent detector.
 #define VIDEO_PIPELINE_TIMING_TIMEOUT_MS (2000U)
 
 // === Private data type declarations ============================================================================== //
@@ -60,7 +60,7 @@ static video_pipeline_poll_result_e start_passthrough(video_pipeline_t* const pi
 {
     int status;
 
-    // SRC-H02: single-buffer passthrough — capture and display share one frame.
+    // Single-buffer passthrough — capture and display share one frame.
     status = video_output_start(&pipeline->output, mode, VIDEO_PIPELINE_PASSTHROUGH_FRAME);
     if (status != XST_SUCCESS)
     {
@@ -199,9 +199,9 @@ video_pipeline_poll_result_e video_pipeline_poll(video_pipeline_t* const pipelin
         status = video_input_read_timing(&pipeline->input, &timing);
         if (status == XST_NO_DATA)
         {
-            // SRC-H03: bound the wait for detected timing. If the detector
-            // stalls past the timeout, restart it so an absent/flaky source
-            // cannot strand ACQUIRING_TIMING forever.
+            // Bound the wait for detected timing. If the detector stalls past
+            // the timeout, restart it so an absent/flaky source cannot strand
+            // ACQUIRING_TIMING forever.
             if (video_input_detector_elapsed_ms(&pipeline->input, now_ms)
                 >= VIDEO_PIPELINE_TIMING_TIMEOUT_MS)
             {

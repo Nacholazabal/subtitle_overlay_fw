@@ -214,8 +214,8 @@ int video_dma_init(video_dma_t* const dma,
         return XST_FAILURE;
     }
 
-    // SRC-M05: never advertise more frames than the kernel actually exposes.
-    // Mapping i % info.frame_count would silently alias framebuffers and leave
+    // Never advertise more frames than the kernel actually exposes. Mapping
+    // i % info.frame_count would silently alias framebuffers and leave
     // dma->frame_count claiming buffers a later *_SELECT/config would reject.
     if (info.frame_count < frame_count)
     {

@@ -20,13 +20,11 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 // === Macros definitions ========================================================================================== //
 
-// SRC-H05: single-source drift guard. The subtitle mask must never be larger
-// than the AXI BRAM controller's address window, otherwise subtitle_bram_clear()
-// and the renderer would write past the mapped BRAM. This is a gnu99-safe
-// build-time assert (negative array size) — it fails the compile if the two
-// contracts ever drift apart. NOTE: the reference HW project (256x64 / 8 KiB)
-// is stale relative to the board bitstream the firmware targets; keep this
-// bound in sync with the flashed bitstream, not the reference folder.
+// Build-time guard: the subtitle mask must never be larger than the AXI BRAM
+// controller's address window, otherwise subtitle_bram_clear() and the renderer
+// would write past the mapped BRAM. gnu99-safe negative-array-size assert — it
+// fails the compile if the two contracts drift apart. Keep the bound in sync with
+// the flashed bitstream, not the reference HW folder (which is stale).
 #define SUBTITLE_BRAM_WINDOW_BYTES \
     ((XPAR_AXI_BRAM_CTRL_0_S_AXI_HIGHADDR - XPAR_AXI_BRAM_CTRL_0_S_AXI_BASEADDR) + 1U)
 typedef char subtitle_bram_mask_fits_window_assert

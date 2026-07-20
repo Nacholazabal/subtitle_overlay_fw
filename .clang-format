@@ -47,7 +47,15 @@ IndentPPDirectives: BeforeHash
 KeepEmptyLinesAtTheStartOfBlocks: false
 MaxEmptyLinesToKeep: 1
 
-SortIncludes: Never
+SortIncludes: CaseInsensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^<.*>'
+    Priority: 2
+  - Regex: '^"(qpc|qf_|qs_|qep|qk_|qv_|qs\.|qf\.)'
+    Priority: 3
+  - Regex: '.*'
+    Priority: 4
 SpaceBeforeParens: ControlStatementsExceptControlMacros
 SpacesBeforeTrailingComments: 1
 

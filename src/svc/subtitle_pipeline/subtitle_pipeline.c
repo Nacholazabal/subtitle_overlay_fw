@@ -118,8 +118,8 @@ static int configure_hardware(subtitle_pipeline_t* const pipeline)
         status = subtitle_overlay_enable(&pipeline->overlay, 0);
     }
 
-    // SRC-M03: if any stage after overlay init failed, leave the overlay
-    // explicitly disabled instead of partially configured and possibly enabled.
+    // If any stage after overlay init failed, leave the overlay explicitly
+    // disabled instead of partially configured and possibly enabled.
     if (status != 0)
     {
         (void)subtitle_overlay_enable(&pipeline->overlay, 0);
@@ -153,9 +153,9 @@ int subtitle_pipeline_init(subtitle_pipeline_t* const pipeline,
     pipeline->display_height = display_height;
     pipeline->config = default_config(display_width, display_height);
 
-    // SRC-C02: acquire a reference to the shared MMIO platform before touching
-    // any overlay/BRAM register, and release it again on any failure so a
-    // failed init never leaves a dangling reference.
+    // Acquire a reference to the shared MMIO platform before touching any
+    // overlay/BRAM register, and release it again on any failure so a failed
+    // init never leaves a dangling reference.
     if (hw_platform_init() != 0)
     {
         return -EIO;
@@ -192,8 +192,8 @@ void subtitle_pipeline_cleanup(subtitle_pipeline_t* const pipeline)
         (void)subtitle_overlay_enable(&pipeline->overlay, 0);
     }
 
-    // SRC-C02: release our reference to the shared MMIO platform. The mapping is
-    // only torn down once VideoAO has released its reference too.
+    // Release our reference to the shared MMIO platform. The mapping is only torn
+    // down once VideoAO has released its reference too.
     if (pipeline->platform_ready != 0U)
     {
         hw_platform_cleanup();

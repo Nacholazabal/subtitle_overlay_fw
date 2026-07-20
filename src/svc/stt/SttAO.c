@@ -10,16 +10,17 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 // === Headers files inclusions ==================================================================================== //
 
-#include "qpc.h"
+#include "SttAO.h"
 
 #include <stdio.h>
 #include <string.h>
 
+#include "qpc.h"
+
 #include "app.h"
 #include "log.h"
-#include "SttAO.h"
-#include "SubtitleAO.h"
 #include "stt_event_rx.h"
+#include "SubtitleAO.h"
 
 // === Macros definitions ========================================================================================== //
 
@@ -196,8 +197,7 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
     int status;
     uint16_t margin;
 
-    // SRC-M01: validate me/e before reading any field (e->is_final was read to
-    // compute the margin before this NULL check existed).
+    // Validate me/e before reading any field.
     if ((me == NULL) || (e == NULL) || (e->text[0] == '\0'))
     {
         return -EINVAL;
@@ -212,8 +212,9 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
                     (e->is_final != 0U) ? "final" : "partial",
                     (unsigned long)e->seq,
                     (unsigned)margin);
-        (void)stt_event_rx_report_delivery(
-            &me->rx, e->seq, STT_EVENT_RX_DELIVERY_DROPPED_EVENT_POOL);
+        (void)stt_event_rx_report_delivery(&me->rx,
+                                           e->seq,
+                                           STT_EVENT_RX_DELIVERY_DROPPED_EVENT_POOL);
         return -EAGAIN;
     }
 
@@ -261,8 +262,8 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
  * @param code Negative errno-style value.
  * @return None.
  */
-// SRC-H07: idempotent teardown of this AO's resources (timer + TCP receiver).
-// Shared by the error path and the coordinated-shutdown STOP handler.
+// Idempotent teardown of this AO's resources (timer + TCP receiver). Shared by
+// the error path and the coordinated-shutdown STOP handler.
 static void quiesce(stt_ao_t* const me)
 {
     if (me->running != 0U)
@@ -273,7 +274,7 @@ static void quiesce(stt_ao_t* const me)
     }
 }
 
-// SRC-H07: acknowledge SYSTEM_STOP to system_ao_t once this AO has quiesced.
+// Acknowledge SYSTEM_STOP to system_ao_t once this AO has quiesced.
 static void post_stopped(stt_ao_t* const me)
 {
     Q_UNUSED_PAR(me); // used only as the QS trace sender (dropped without Q_SPY)

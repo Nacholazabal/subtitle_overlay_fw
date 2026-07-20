@@ -8,7 +8,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 /// @file stt_event_rx.h
 /// @brief Nonblocking TCP NDJSON receiver for STT transcript events
 ///
-/// SRC-M07 — Wire protocol contract (must match the PC-side sender):
+/// Wire protocol contract (must match the PC-side sender):
 ///  * Transport: one JSON object per line, newline-delimited (NDJSON), over TCP.
 ///  * Encoding: UTF-8 **literal** bytes. The sender MUST emit non-ASCII text as
 ///    raw UTF-8 (Python: `json.dumps(..., ensure_ascii=False)`). `\uXXXX`

@@ -9,16 +9,17 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 // === Headers files inclusions ==================================================================================== //
 
-#include "qpc.h"
+#include "SubtitleAO.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "qpc.h"
+
 #include "app.h"
 #include "log.h"
 #include "number_parse.h"
-#include "SubtitleAO.h"
 #include "subtitle_pipeline.h"
 
 // === Macros definitions ========================================================================================== //
@@ -35,11 +36,11 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 /// Inactivity timeout: clear the overlay and reset broadcast slots when no new subtitle
 /// text arrives for this long, so stale captions disappear instead of lingering.
-#define SUBTITLE_AO_TICKS_PER_SEC            (100U)
-#define SUBTITLE_AO_CLEAR_TIMEOUT_MS         (5000U)
-#define SUBTITLE_AO_CLEAR_TIMEOUT_MIN_MS     (1000U)
-#define SUBTITLE_AO_PREVIOUS_HOLD_MS         (3000U)
-#define SUBTITLE_AO_PREVIOUS_HOLD_MIN_MS     (250U)
+#define SUBTITLE_AO_TICKS_PER_SEC        (100U)
+#define SUBTITLE_AO_CLEAR_TIMEOUT_MS     (5000U)
+#define SUBTITLE_AO_CLEAR_TIMEOUT_MIN_MS (1000U)
+#define SUBTITLE_AO_PREVIOUS_HOLD_MS     (3000U)
+#define SUBTITLE_AO_PREVIOUS_HOLD_MIN_MS (250U)
 
 // === Private data type declarations ============================================================================== //
 
@@ -230,9 +231,9 @@ static int on_component_init(subtitle_ao_t* const me, component_init_evt_t const
 
     if (status == 0)
     {
-        // SRC-M02: the startup DONE marker is a temporary diagnostic. Arm the
-        // inactivity clear timer now so it is removed after the normal timeout
-        // even if no STT transcript ever arrives.
+        // The startup DONE marker is a temporary diagnostic. Arm the inactivity
+        // clear timer now so it is removed after the normal timeout even if no
+        // STT transcript ever arrives.
         QTimeEvt_rearm(&me->clear_time_evt, me->clear_timeout_ticks);
         post_ready(me);
         LOG_INFO("subtitle: pipeline ready");
@@ -277,9 +278,9 @@ static void clear_subtitle(subtitle_ao_t* const me)
     reset_text_state(me);
     (void)QTimeEvt_disarm(&me->previous_expire_evt);
 
-    // SRC-M03: surface (do not silently discard) failures to blank the overlay,
-    // since the logical text state is being reset regardless and a failure here
-    // means the physical overlay may still be showing stale content.
+    // Surface (do not silently discard) failures to blank the overlay: the
+    // logical text state is reset regardless, and a failure here means the
+    // physical overlay may still be showing stale content.
     status = subtitle_pipeline_clear(&me->pipeline);
     if (status != 0)
     {
@@ -376,9 +377,7 @@ static int render_current_state(subtitle_ao_t* const me)
     status = subtitle_pipeline_clear(&me->pipeline);
     if (status == 0)
     {
-        status = subtitle_pipeline_write_caption(&me->pipeline,
-                                                 render_text,
-                                                 me->current_is_final);
+        status = subtitle_pipeline_write_caption(&me->pipeline, render_text, me->current_is_final);
     }
     if (status == 0)
     {
@@ -445,8 +444,8 @@ static int on_previous_expired(subtitle_ao_t* const me)
  * @param code Negative errno-style value to post to system_ao_t.
  * @return None.
  */
-// SRC-H07: idempotent teardown of this AO's resources (timers + overlay/BRAM).
-// Shared by the error path and the coordinated-shutdown STOP handler.
+// Idempotent teardown of this AO's resources (timers + overlay/BRAM). Shared by
+// the error path and the coordinated-shutdown STOP handler.
 static void quiesce(subtitle_ao_t* const me)
 {
     (void)QTimeEvt_disarm(&me->clear_time_evt);
@@ -454,7 +453,7 @@ static void quiesce(subtitle_ao_t* const me)
     subtitle_pipeline_cleanup(&me->pipeline);
 }
 
-// SRC-H07: acknowledge SYSTEM_STOP to system_ao_t once this AO has quiesced.
+// Acknowledge SYSTEM_STOP to system_ao_t once this AO has quiesced.
 static void post_stopped(subtitle_ao_t* const me)
 {
     Q_UNUSED_PAR(me); // used only as the QS trace sender (dropped without Q_SPY)

@@ -10,24 +10,25 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 // === Headers files inclusions ==================================================================================== //
 
+#include "SystemAO.h"
+
 #include "qpc.h"
 
 #include "app.h"
 #include "log.h"
 #include "SttAO.h"
 #include "SubtitleAO.h"
-#include "SystemAO.h"
 #include "USBAudioAO.h"
 #include "VideoAO.h"
 
 // === Macros definitions ========================================================================================== //
 
-// SRC-H07: fail-fast coordinated shutdown. On any component failure, system_ao_t
-// broadcasts SYSTEM_STOP to every worker AO, waits for each to acknowledge with
-// SYSTEM_STOPPED (bounded by a timeout), then terminates the QF event loop so the
-// process exits cleanly with hardware/threads/sockets already quiesced.
-#define SYSTEM_STOP_EXPECTED_MASK                                            \
-    ((uint8_t)((1U << COMPONENT_VIDEO) | (1U << COMPONENT_USB_AUDIO)         \
+// Fail-fast shutdown: on any component failure, broadcast SYSTEM_STOP to every
+// worker AO, wait for each to acknowledge SYSTEM_STOPPED (bounded by a timeout),
+// then terminate the QF event loop so the process exits with hardware, threads,
+// and sockets already quiesced.
+#define SYSTEM_STOP_EXPECTED_MASK                                    \
+    ((uint8_t)((1U << COMPONENT_VIDEO) | (1U << COMPONENT_USB_AUDIO) \
                | (1U << COMPONENT_SUBTITLE_PIPELINE) | (1U << COMPONENT_STT)))
 #define SYSTEM_SHUTDOWN_TIMEOUT_TICKS (50U) // ~500 ms at 100 Hz
 
@@ -45,7 +46,7 @@ typedef struct
     uint8_t usb_audio_ready;
     uint8_t subtitle_init_requested;
     uint8_t stt_init_requested;
-    uint8_t stopped_mask; ///< SRC-H07: bitmask of components that acked SYSTEM_STOPPED.
+    uint8_t stopped_mask; ///< bitmask of components that acked SYSTEM_STOPPED.
 } system_ao_t;
 
 // === Private variable declarations =============================================================================== //
@@ -187,10 +188,9 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
 
         me->active_video_width = e->width;
         me->active_video_height = e->height;
-        // SRC-M04: only request subtitle init once, and only when usb-audio is
-        // also ready. Guarding on subtitle_init_requested (like the usb-audio
-        // branch) makes a duplicate video-ready event idempotent instead of
-        // posting a second COMPONENT_INIT to the subtitle AO.
+        // Request subtitle init only once, and only when usb-audio is also
+        // ready; the subtitle_init_requested guard makes a duplicate video-ready
+        // event idempotent.
         if ((me->usb_audio_ready != 0U) && (me->subtitle_init_requested == 0U))
         {
             LOG_INFO("system: requesting subtitle init for %lux%lu",
@@ -396,9 +396,9 @@ static QState system_ao_run(system_ao_t* const me, QEvt const* const e)
     return status;
 }
 
-// SRC-H07: broadcast SYSTEM_STOP to every worker AO. A single immutable static
-// event is posted to all targets, so the broadcast can never fail on pool
-// exhaustion. The worker AOs quiesce their resources and reply SYSTEM_STOPPED.
+// Broadcast SYSTEM_STOP to every worker AO. A single immutable static event is
+// posted to all targets, so the broadcast can never fail on pool exhaustion; the
+// worker AOs quiesce their resources and reply SYSTEM_STOPPED.
 static void broadcast_stop(system_ao_t* const me)
 {
     static QEvt const stop_evt = QEVT_INITIALIZER(SYSTEM_STOP_SIG);
@@ -411,9 +411,9 @@ static void broadcast_stop(system_ao_t* const me)
     (void)QACTIVE_POST_X(AO_Stt, &stop_evt, 0U, &me->super);
 }
 
-// SRC-H07: coordinated fail-fast shutdown state. Enter on any terminal failure;
-// stop every component, then terminate the QF event loop (process exit) once all
-// components have acknowledged or the shutdown timeout elapses.
+// Coordinated fail-fast shutdown state: stop every component, then terminate the
+// QF event loop (process exit) once all components acknowledge or the shutdown
+// timeout elapses.
 static QState system_ao_stopping(system_ao_t* const me, QEvt const* const e)
 {
     QState status;

@@ -39,15 +39,33 @@ extern "C" {
     #define LOG_WARNING(...) log_message(LOG_LEVEL_WARNING, __VA_ARGS__)
     #define LOG_ERROR(...)   log_message(LOG_LEVEL_ERROR, __VA_ARGS__)
 #else
-    // SRC-L06: expand to a `do { } while (0)` statement so a disabled log call
-    // stays a single statement (safe after `if (...)` without braces, before an
-    // `else`, and when followed by a semicolon).
-    #define LOG(...)         do { } while (0)
-    #define LOG_TRACE(...)   do { } while (0)
-    #define LOG_DEBUG(...)   do { } while (0)
-    #define LOG_INFO(...)    do { } while (0)
-    #define LOG_WARNING(...) do { } while (0)
-    #define LOG_ERROR(...)   do { } while (0)
+    // Expand to a `do { } while (0)` statement so a disabled log call stays a
+    // single statement (safe after `if (...)` without braces, before an `else`,
+    // and when followed by a semicolon).
+    #define LOG(...) \
+        do           \
+        {}           \
+        while (0)
+    #define LOG_TRACE(...) \
+        do                 \
+        {}                 \
+        while (0)
+    #define LOG_DEBUG(...) \
+        do                 \
+        {}                 \
+        while (0)
+    #define LOG_INFO(...) \
+        do                \
+        {}                \
+        while (0)
+    #define LOG_WARNING(...) \
+        do                   \
+        {}                   \
+        while (0)
+    #define LOG_ERROR(...) \
+        do                 \
+        {}                 \
+        while (0)
 #endif
 
 // === Public data type declarations =============================================================================== //
