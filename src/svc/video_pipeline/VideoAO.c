@@ -10,12 +10,13 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 // === Headers files inclusions ==================================================================================== //
 
+#include "VideoAO.h"
+
 #include "qpc.h"
 
 #include "app.h"
 #include "log.h"
 #include "video_pipeline.h"
-#include "VideoAO.h"
 
 // === Macros definitions ========================================================================================== //
 
@@ -200,8 +201,8 @@ static int on_video_poll(video_ao_t* const me)
  * @param code Negative errno-style value to post to system_ao_t.
  * @return None.
  */
-// SRC-H07: idempotent teardown of this AO's resources (timer + pipeline/MMIO).
-// Shared by the error path and the coordinated-shutdown STOP handler.
+// Idempotent teardown of this AO's resources (timer + pipeline/MMIO). Shared by
+// the error path and the coordinated-shutdown STOP handler.
 static void quiesce(video_ao_t* const me)
 {
     if (me->running)
@@ -213,7 +214,7 @@ static void quiesce(video_ao_t* const me)
     }
 }
 
-// SRC-H07: acknowledge SYSTEM_STOP to system_ao_t once this AO has quiesced.
+// Acknowledge SYSTEM_STOP to system_ao_t once this AO has quiesced.
 static void post_stopped(video_ao_t* const me)
 {
     Q_UNUSED_PAR(me); // used only as the QS trace sender (dropped without Q_SPY)

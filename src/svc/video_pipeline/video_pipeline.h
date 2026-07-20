@@ -26,19 +26,17 @@ extern "C" {
 
 // === Public macros definitions =================================================================================== //
 
-// SRC-H02: explicit single-buffer passthrough. Capture (S2MM) and display (MM2S)
-// are both pinned to one framebuffer, so no producer/consumer swap exists and no
-// extra buffers are mapped. This is a deliberate choice over triple buffering:
-// there is no frame-boundary swap, so simultaneous capture/display of the same
-// buffer can tear; the alternative (real triple buffering with an SOF-synchronized
-// swap) was not implemented. The prior 3-frame mapping was dead scaffolding
-// (active_frame was fixed at 0 and never advanced).
+// Single-buffer passthrough: capture (S2MM) and display (MM2S) are both pinned
+// to one framebuffer, so no producer/consumer swap exists and no extra buffers
+// are mapped. Simultaneous capture/display of the same buffer can tear; this is a
+// deliberate trade-off over triple buffering (rationale in
+// docs/legacy-llm/decisions.md, SRC-H02).
 #define VIDEO_PIPELINE_FRAME_COUNT       1U
 #define VIDEO_PIPELINE_PASSTHROUGH_FRAME 0U
-#define VIDEO_PIPELINE_MAX_WIDTH       1920U
-#define VIDEO_PIPELINE_MAX_HEIGHT      1080U
-#define VIDEO_PIPELINE_BYTES_PER_PIXEL 3U
-#define VIDEO_PIPELINE_STRIDE          (VIDEO_PIPELINE_MAX_WIDTH * VIDEO_PIPELINE_BYTES_PER_PIXEL)
+#define VIDEO_PIPELINE_MAX_WIDTH         1920U
+#define VIDEO_PIPELINE_MAX_HEIGHT        1080U
+#define VIDEO_PIPELINE_BYTES_PER_PIXEL   3U
+#define VIDEO_PIPELINE_STRIDE            (VIDEO_PIPELINE_MAX_WIDTH * VIDEO_PIPELINE_BYTES_PER_PIXEL)
 
 // === Public data type declarations =============================================================================== //
 
@@ -59,7 +57,7 @@ typedef enum
     VIDEO_PIPELINE_POLL_STREAMING_STARTED,
     VIDEO_PIPELINE_POLL_SIGNAL_LOST,
     VIDEO_PIPELINE_POLL_UNSUPPORTED_INPUT,
-    VIDEO_PIPELINE_POLL_TIMING_TIMEOUT, ///< SRC-H03: timing did not arrive; detector restarted.
+    VIDEO_PIPELINE_POLL_TIMING_TIMEOUT, ///< timing did not arrive; detector restarted.
     VIDEO_PIPELINE_POLL_ERROR,
 } video_pipeline_poll_result_e;
 

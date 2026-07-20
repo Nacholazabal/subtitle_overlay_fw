@@ -11,9 +11,8 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 #include "usb_audio_stream.h"
 
-#include "errorno.h"
-
 #include <arpa/inet.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -26,10 +25,9 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include <time.h>
 #include <unistd.h>
 
+#include "errorno.h"
 #include "log.h"
 #include "number_parse.h"
-
-#include <errno.h>
 
 // === Macros definitions ========================================================================================== //
 

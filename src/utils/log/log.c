@@ -9,12 +9,12 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 // === Headers files inclusions ==================================================================================== //
 
+#include "log.h"
+
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
-
-#include "log.h"
 
 // === Macros definitions ========================================================================================== //
 // === Private data type declarations ============================================================================== //

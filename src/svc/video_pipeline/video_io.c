@@ -125,7 +125,7 @@ uint32_t video_input_detector_elapsed_ms(video_input_t const* const input, uint3
 }
 
 /**
- * @brief Clear the timing detector so it can be restarted (SRC-H03).
+ * @brief Clear the timing detector so it can be restarted.
  * @param input Initialized input helper.
  * @return None.
  */

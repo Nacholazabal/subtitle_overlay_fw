@@ -191,10 +191,9 @@ static int json_parse_string(char const** const cursor,
 
     if (dst != NULL)
     {
-        // SRC-M07: a byte-boundary truncation can split a multi-byte UTF-8 code
-        // point. Trim any incomplete trailing sequence so the field always ends
-        // on a whole code point instead of leaving a mangled byte the sanitizer
-        // would later replace.
+        // A byte-boundary truncation can split a multi-byte UTF-8 code point.
+        // Trim any incomplete trailing sequence so the field always ends on a
+        // whole code point instead of a mangled byte.
         if ((was_truncated != 0U) && (out > 0U))
         {
             size_t i = out;
@@ -476,8 +475,8 @@ static int queue_response(stt_event_rx_t* const rx, char const* const response)
         return -EAGAIN;
     }
 
-    tail = ((uint32_t)rx->response_head + (uint32_t)rx->response_count)
-           % STT_EVENT_RX_TX_QUEUE_DEPTH;
+    tail =
+        ((uint32_t)rx->response_head + (uint32_t)rx->response_count) % STT_EVENT_RX_TX_QUEUE_DEPTH;
     item = &rx->responses[tail];
     length = snprintf(item->data, sizeof(item->data), "%s", response);
     if ((length < 0) || ((size_t)length >= sizeof(item->data)))
@@ -492,9 +491,7 @@ static int queue_response(stt_event_rx_t* const rx, char const* const response)
 }
 
 /** @brief Format and queue one transcript acknowledgement for the current session. */
-static int queue_transcript_ack(stt_event_rx_t* const rx,
-                                uint32_t seq,
-                                char const* const status)
+static int queue_transcript_ack(stt_event_rx_t* const rx, uint32_t seq, char const* const status)
 {
     char response[STT_EVENT_RX_RESPONSE_MAX];
     int const length = snprintf(response,
@@ -519,10 +516,8 @@ static void flush_responses(stt_event_rx_t* const rx)
     {
         stt_event_rx_response_t* const item = &rx->responses[rx->response_head];
         size_t const remaining = (size_t)item->length - (size_t)item->sent;
-        ssize_t sent = send(rx->client_fd,
-                            &item->data[item->sent],
-                            remaining,
-                            MSG_DONTWAIT | MSG_NOSIGNAL);
+        ssize_t sent =
+            send(rx->client_fd, &item->data[item->sent], remaining, MSG_DONTWAIT | MSG_NOSIGNAL);
 
         if (sent > 0)
         {

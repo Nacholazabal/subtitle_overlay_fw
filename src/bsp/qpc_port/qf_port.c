@@ -54,33 +54,23 @@
 Q_DEFINE_THIS_MODULE("qf_port")
 
 //============================================================================
-// PROJECT-OWNED PORT COPY (subtitle_overlay_fw) — SRC-C01
+// PROJECT-OWNED PORT COPY (subtitle_overlay_fw)
 //----------------------------------------------------------------------------
-// This is a project-owned copy of the QP/C 8.1.4 posix-qv port
-// (src/qpc/ports/posix-qv/qf_port.c). The vendored `src/qpc` submodule is kept
-// pristine at the upstream 8.1.4 tag; the build compiles THIS copy instead
-// (see project.yml / Makefile). QP/C is explicitly designed for the port layer
-// to be adapted per project, so the fix below lives here, not in the submodule.
-//
-// Local fix over upstream 8.1.4 (SRC-C01): the upstream port had a start-up
-// race and a data race on `l_isRunning`:
-//   * `l_isRunning` was written `true` AFTER the ticker thread was created, so
-//     if the ticker ran in that window it saw `false`, exited immediately and
-//     NO QTimeEvt ever fired again (systemic timer freeze).
-//   * `l_isRunning` was a plain `bool` shared across threads with no atomicity.
-//   * the ticker was DETACHED and QF_run destroyed the mutex/condvar without
-//     joining it.
-// Fix: `l_isRunning` is accessed via GCC `__atomic_*` builtins (acquire/release,
-// gnu99-safe — the firmware builds with -std=gnu99, so C11 <stdatomic.h> is not
-// relied upon), published `true` BEFORE the ticker is created; the ticker is
-// JOINABLE and QF_run joins it before destroying the sync primitives.
-// If you re-sync with upstream, re-apply this fix (or adopt a fixed release).
+// Project-owned copy of the QP/C 8.1.4 posix-qv port
+// (src/qpc/ports/posix-qv/qf_port.c). The vendored `src/qpc` submodule stays
+// pristine at upstream 8.1.4; the build compiles THIS copy instead (see
+// project.yml / Makefile). It carries a local fix over upstream 8.1.4 for a
+// start-up/data race on `l_isRunning`: the flag is accessed via GCC `__atomic_*`
+// builtins (acquire/release, gnu99-safe) and published `true` BEFORE the ticker
+// thread is created, and the ticker is JOINABLE so QF_run joins it before
+// destroying the sync primitives. If you re-sync with upstream, re-apply this fix
+// or adopt a fixed release. Full rationale: docs/legacy-llm/decisions.md, SRC-C01.
 //============================================================================
 
 // Local objects =============================================================
 
-static bool l_isRunning;        // flag indicating when QF is running (SRC-C01)
-static pthread_t   l_ticker;    // ticker thread handle, joinable (SRC-C01)
+static bool l_isRunning;        // flag indicating when QF is running (atomic)
+static pthread_t   l_ticker;    // ticker thread handle, joinable
 static bool        l_tickerValid; // whether l_ticker holds a live thread
 static struct timespec l_tick; // structure for the clock tick
 static int_t l_tickPrio;       // priority of the ticker thread
@@ -144,8 +134,8 @@ static void *ticker_thread(void *arg) { // for pthread_create()
     // round down nanoseconds to the nearest configured period
     next_tick.tv_nsec = (next_tick.tv_nsec / l_tick.tv_nsec) * l_tick.tv_nsec;
 
-    // SRC-C01: acquire-load so this thread observes the `true` published by
-    // QF_run before the ticker was created.
+    // Acquire-load so this thread observes the `true` published by QF_run before
+    // the ticker was created.
     while (__atomic_load_n(&l_isRunning, __ATOMIC_ACQUIRE)) {
 
         // advance to the next tick (absolute time)
@@ -227,9 +217,9 @@ void QF_init(void) {
 int QF_run(void) {
     QF_CRIT_STAT
 
-    // SRC-C01: publish the running flag BEFORE the ticker thread is created,
-    // with release ordering, so the ticker can never observe a stale `false`
-    // in the start-up window and exit immediately.
+    // Publish the running flag BEFORE the ticker thread is created, with release
+    // ordering, so the ticker can never observe a stale `false` in the start-up
+    // window and exit immediately.
     __atomic_store_n(&l_isRunning, true, __ATOMIC_RELEASE);
     l_tickerValid = false;
 
@@ -242,8 +232,8 @@ int QF_run(void) {
         // SCHED_FIFO corresponds to real-time preemptive priority-based
         // scheduler.
         // NOTE: This scheduling policy requires the superuser privileges
-        // SRC-C01: created JOINABLE (default detach state) so QF_run can join
-        // the ticker on shutdown before destroying the sync primitives.
+        // Created JOINABLE (default detach state) so QF_run can join the ticker
+        // on shutdown before destroying the sync primitives.
         pthread_attr_setschedpolicy (&attr, SCHED_FIFO);
         pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
 
@@ -267,7 +257,7 @@ int QF_run(void) {
         Q_ASSERT_INCRIT(310, err == 0); // ticker thread must be created
         QF_CRIT_EXIT();
 
-        l_tickerValid = (err == 0); // SRC-C01: remember to join on shutdown
+        l_tickerValid = (err == 0); // remember to join on shutdown
 
         //pthread_attr_getschedparam(&attr, &param);
         //printf("param.sched_priority==%d\n", param.sched_priority);
@@ -327,9 +317,9 @@ int QF_run(void) {
     }
     QF_CRIT_EXIT();
 
-    // SRC-C01: join the ticker (if any) BEFORE destroying the mutex/condvar it
-    // relies on, so shutdown never tears down synchronization objects still in
-    // use by a live ticker thread.
+    // Join the ticker (if any) BEFORE destroying the mutex/condvar it relies on,
+    // so shutdown never tears down synchronization objects still in use by a live
+    // ticker thread.
     if (l_tickerValid) {
         pthread_join(l_ticker, (void *)0);
         l_tickerValid = false;
@@ -345,7 +335,7 @@ int QF_run(void) {
 }
 //............................................................................
 void QF_stop(void) {
-    // SRC-C01: release-store so the ticker and the event loop observe the stop.
+    // Release-store so the ticker and the event loop observe the stop.
     __atomic_store_n(&l_isRunning, false, __ATOMIC_RELEASE);
 
     // unblock the event-loop so it can terminate

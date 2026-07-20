@@ -11,8 +11,8 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 // === Headers files inclusions ==================================================================================== //
 
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "xstatus.h"
 

@@ -10,10 +10,11 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 // === Headers files inclusions ==================================================================================== //
 
+#include "app.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "app.h"
 #include "log.h"
 #include "SttAO.h"
 #include "SubtitleAO.h"

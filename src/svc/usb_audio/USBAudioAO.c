@@ -9,11 +9,12 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 // === Headers files inclusions ==================================================================================== //
 
+#include "USBAudioAO.h"
+
 #include "qpc.h"
 
 #include "app.h"
 #include "log.h"
-#include "USBAudioAO.h"
 #include "usb_audio_stream.h"
 
 // === Macros definitions ========================================================================================== //
@@ -172,7 +173,7 @@ static int on_stream_poll(usb_audio_ao_t* const me)
  * @param code Negative errno-style value.
  * @return None.
  */
-// SRC-H07: idempotent teardown of this AO's resources (timer + capture/streaming
+// Idempotent teardown of this AO's resources (timer + capture/streaming
 // workers). Shared by the error path and the coordinated-shutdown STOP handler.
 static void quiesce(usb_audio_ao_t* const me)
 {
@@ -184,7 +185,7 @@ static void quiesce(usb_audio_ao_t* const me)
     }
 }
 
-// SRC-H07: acknowledge SYSTEM_STOP to system_ao_t once this AO has quiesced.
+// Acknowledge SYSTEM_STOP to system_ao_t once this AO has quiesced.
 static void post_stopped(usb_audio_ao_t* const me)
 {
     Q_UNUSED_PAR(me); // used only as the QS trace sender (dropped without Q_SPY)

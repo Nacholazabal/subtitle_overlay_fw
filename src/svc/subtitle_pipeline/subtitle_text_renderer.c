@@ -36,13 +36,13 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #define RENDER_TEXT_X         (24U)
 #define RENDER_TEXT_BLOCK_HEIGHT \
     (GLYPH_RENDERED_HEIGHT + ((RENDER_MAX_LINES - 1U) * RENDER_LINE_HEIGHT))
-#define RENDER_TEXT_Y                                                                   \
-    ((SUBTITLE_BRAM_MASK_HEIGHT > RENDER_TEXT_BLOCK_HEIGHT)                             \
-         ? ((SUBTITLE_BRAM_MASK_HEIGHT - RENDER_TEXT_BLOCK_HEIGHT) / 2U)                \
+#define RENDER_TEXT_Y                                                    \
+    ((SUBTITLE_BRAM_MASK_HEIGHT > RENDER_TEXT_BLOCK_HEIGHT)              \
+         ? ((SUBTITLE_BRAM_MASK_HEIGHT - RENDER_TEXT_BLOCK_HEIGHT) / 2U) \
          : 0U)
-#define RENDER_BITMAP_STRIDE  ((size_t)SUBTITLE_BRAM_MASK_WIDTH / 8U)
-#define RENDER_BITMAP_SIZE    (RENDER_BITMAP_STRIDE * SUBTITLE_BRAM_MASK_HEIGHT)
-#define RENDER_SANITIZE_MAX   (512U)
+#define RENDER_BITMAP_STRIDE ((size_t)SUBTITLE_BRAM_MASK_WIDTH / 8U)
+#define RENDER_BITMAP_SIZE   (RENDER_BITMAP_STRIDE * SUBTITLE_BRAM_MASK_HEIGHT)
+#define RENDER_SANITIZE_MAX  (512U)
 #define RENDER_GLYPHS_PER_LINE \
     (((SUBTITLE_BRAM_MASK_WIDTH - RENDER_TEXT_X - GLYPH_RENDERED_WIDTH) / GLYPH_ADVANCE) + 1U)
 #define RENDER_LAYOUT_MAX_LINES (32U)
@@ -73,8 +73,9 @@ static void append_word(char lines[RENDER_LAYOUT_MAX_LINES][RENDER_GLYPHS_PER_LI
                         char const* word,
                         size_t word_len);
 static int sanitize_slice(char const* src, size_t len, char* dst, size_t dst_size);
-static uint32_t build_wrapped_lines(char const* text,
-                                    char lines[RENDER_LAYOUT_MAX_LINES][RENDER_GLYPHS_PER_LINE + 1U]);
+static uint32_t
+build_wrapped_lines(char const* text,
+                    char lines[RENDER_LAYOUT_MAX_LINES][RENDER_GLYPHS_PER_LINE + 1U]);
 static uint32_t copy_tail_lines(char dst[RENDER_MAX_LINES][RENDER_GLYPHS_PER_LINE + 1U],
                                 uint8_t dst_roles[RENDER_MAX_LINES],
                                 uint32_t dst_start,
@@ -264,9 +265,7 @@ static void append_layout_line(char lines[RENDER_LAYOUT_MAX_LINES][RENDER_GLYPHS
 
     if (*line_count >= RENDER_LAYOUT_MAX_LINES)
     {
-        memmove(lines[0],
-                lines[1],
-                (RENDER_LAYOUT_MAX_LINES - 1U) * sizeof(lines[0]));
+        memmove(lines[0], lines[1], (RENDER_LAYOUT_MAX_LINES - 1U) * sizeof(lines[0]));
         *line_count = RENDER_LAYOUT_MAX_LINES - 1U;
     }
 
@@ -287,9 +286,8 @@ static void append_word(char lines[RENDER_LAYOUT_MAX_LINES][RENDER_GLYPHS_PER_LI
 
         if (current_len == 0U)
         {
-            size_t const copy_len = (word_len > RENDER_LINE_TEXT_MAX)
-                                        ? (RENDER_LINE_TEXT_MAX - 1U)
-                                        : word_len;
+            size_t const copy_len = (word_len > RENDER_LINE_TEXT_MAX) ? (RENDER_LINE_TEXT_MAX - 1U)
+                                                                      : word_len;
 
             memcpy(current, word, copy_len);
             current[copy_len] = (word_len > RENDER_LINE_TEXT_MAX) ? '-' : '\0';
@@ -332,8 +330,9 @@ static int sanitize_slice(char const* const src, size_t len, char* const dst, si
     return subtitle_text_sanitize(raw, dst, dst_size);
 }
 
-static uint32_t build_wrapped_lines(char const* const text,
-                                    char lines[RENDER_LAYOUT_MAX_LINES][RENDER_GLYPHS_PER_LINE + 1U])
+static uint32_t
+build_wrapped_lines(char const* const text,
+                    char lines[RENDER_LAYOUT_MAX_LINES][RENDER_GLYPHS_PER_LINE + 1U])
 {
     char current[RENDER_GLYPHS_PER_LINE + 1U] = {0};
     uint32_t line_count = 0U;
@@ -450,7 +449,8 @@ static void draw_text_line(uint8_t* const dst,
     uint32_t const y = RENDER_TEXT_Y + (line * RENDER_LINE_HEIGHT);
     char const* cursor;
 
-    for (cursor = text; (*cursor != '\0') && ((x + GLYPH_RENDERED_WIDTH) <= SUBTITLE_BRAM_MASK_WIDTH);
+    for (cursor = text;
+         (*cursor != '\0') && ((x + GLYPH_RENDERED_WIDTH) <= SUBTITLE_BRAM_MASK_WIDTH);
          cursor++)
     {
         draw_glyph(dst, x, y, glyph_for_char(*cursor), dimmed);
@@ -505,10 +505,9 @@ int subtitle_text_renderer_render_caption(char const* const text,
 
     for (visible_line = 0U; visible_line < line_count; visible_line++)
     {
-        uint8_t const dimmed = ((current_is_final == 0U)
-                                && (line_roles[visible_line] == RENDER_LINE_CURRENT))
-                                   ? 1U
-                                   : 0U;
+        uint8_t const dimmed =
+            ((current_is_final == 0U) && (line_roles[visible_line] == RENDER_LINE_CURRENT)) ? 1U
+                                                                                            : 0U;
         draw_text_line(dst, lines[visible_line], visible_line, dimmed);
     }
 
