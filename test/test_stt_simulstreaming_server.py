@@ -104,6 +104,20 @@ class SessionConfigTests(unittest.TestCase):
         self.assertEqual(RUN_ENGINE, message["run_config"]["run_engine"])
 
 
+class ServerModuleContractTests(unittest.TestCase):
+    def test_no_pep563_future_annotations(self):
+        # PEP 563 stringizes annotations, which breaks FastAPI's resolution of the
+        # locally-imported ``request: Request`` parameter and yields HTTP 422 on
+        # /stt/offline. The server module must keep concrete annotations.
+        import scripts.stt_simulstreaming_server as srv
+
+        # A real `from __future__ import annotations` statement binds the name
+        # `annotations` into the module globals; the docstring merely mentions it.
+        self.assertNotIn("annotations", vars(srv))
+        stripped = [line.strip() for line in Path(srv.__file__).read_text(encoding="utf-8").splitlines()]
+        self.assertNotIn("from __future__ import annotations", stripped)
+
+
 class OfflineHandlerTests(unittest.TestCase):
     def test_offline_returns_proxy_labelled_transcription(self):
         result = run_offline_transcription(

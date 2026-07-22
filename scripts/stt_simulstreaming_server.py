@@ -11,9 +11,13 @@ existing bridge, session protocol and firmware ACK path are reused verbatim:
 Only the STT engine changes. ``fastapi``/``uvicorn``/``torch``/SimulStreaming are
 imported lazily so this module imports in the WSL test environment; the state
 machine and session manager are plain classes exercised by unit tests with fakes.
-"""
 
-from __future__ import annotations
+NOTE: this module deliberately does NOT use ``from __future__ import annotations``.
+FastAPI resolves route handler annotations at request time; with PEP 563 stringized
+annotations, the ``request: Request`` parameter (whose ``Request`` type is imported
+locally inside ``create_app``) cannot be resolved and FastAPI mis-treats it as a
+required query parameter (HTTP 422). Concrete annotations avoid that.
+"""
 
 import argparse
 import asyncio
