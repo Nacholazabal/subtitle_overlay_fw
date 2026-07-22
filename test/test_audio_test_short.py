@@ -11,6 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts import audio_test_short
 from scripts.audio_test_short import (
+    FASTER_WHISPER_PROFILE,
+    SIMULSTREAMING_PROFILE,
+    backend_metrics,
     board_delivery_result,
     accuracy_result,
     assign_events,
@@ -20,9 +23,11 @@ from scripts.audio_test_short import (
     make_report,
     normalize_text,
     offline_reference,
+    offline_signature,
     overlay_timeline,
     replicate_summaries,
     reliability_result,
+    select_profile,
 )
 from scripts.stt_stream_server import ServerConfig, transcribe_offline_bytes
 
@@ -343,6 +348,80 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(100.0, report["scores"]["accuracy"]["score"])
             self.assertTrue((root / "report.md").exists())
             self.assertTrue((root / "overlay_timeline.json").exists())
+
+
+class ProfileTests(unittest.TestCase):
+    def test_default_profile_is_faster_whisper(self):
+        self.assertIs(FASTER_WHISPER_PROFILE, select_profile(None))
+        self.assertIs(SIMULSTREAMING_PROFILE, select_profile("simulstreaming_alignatt"))
+
+    def test_unknown_profile_raises(self):
+        with self.assertRaises(RuntimeError):
+            select_profile("whisperx")
+
+    def test_simulstreaming_profile_verifies_engine(self):
+        SIMULSTREAMING_PROFILE.verify_health({"run_engine": "simulstreaming_alignatt"})
+        with self.assertRaises(RuntimeError):
+            SIMULSTREAMING_PROFILE.verify_health({"run_engine": "stream_server"})
+        # faster_whisper accepts the legacy server that omits run_engine.
+        FASTER_WHISPER_PROFILE.verify_health({"status": "ok"})
+
+    def test_simulstreaming_config_env_is_a_single_backend_json(self):
+        env = SIMULSTREAMING_PROFILE.config_env({"frame_threshold": 12, "use_vac": True})
+        self.assertIn("STT_BACKEND_CONFIG_JSON", env)
+        self.assertEqual(
+            {"frame_threshold": 12, "use_vac": True},
+            json.loads(env["STT_BACKEND_CONFIG_JSON"]),
+        )
+
+    def test_faster_whisper_config_env_uses_named_env_vars(self):
+        env = FASTER_WHISPER_PROFILE.config_env({"max_window_sec": 4.0})
+        self.assertEqual("4.0", env["STT_MAX_WINDOW_SEC"])
+        self.assertNotIn("STT_BACKEND_CONFIG_JSON", env)
+
+    def test_offline_signatures_differ_across_backends(self):
+        health = {"run_config": {"config_model": "small", "run_engine": "simulstreaming_alignatt"}}
+        fw = offline_signature(health, None, FASTER_WHISPER_PROFILE)
+        simul = offline_signature(health, None, SIMULSTREAMING_PROFILE)
+        self.assertNotEqual(fw, simul)
+        self.assertEqual("faster_whisper", fw["__profile__"])
+        self.assertEqual("simulstreaming_alignatt", simul["__profile__"])
+
+
+class SimulStreamingSweepTests(unittest.TestCase):
+    def test_initial_sweep_file_loads_four_alignatt_cases(self):
+        cases = load_sweep_cases(None, SIMULSTREAMING_PROFILE)
+        self.assertEqual(4, len(cases))
+        self.assertEqual(
+            ["official_default", "paper_margin", "no_trim", "paper_no_trim"],
+            [case["name"] for case in cases],
+        )
+        self.assertEqual(12, cases[1]["frame_threshold"])
+        self.assertTrue(cases[2]["never_fire"])
+
+    def test_sweep_rejects_faster_whisper_params_under_simul_profile(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "sweep.json"
+            path.write_text(json.dumps([{"name": "bad", "max_window_sec": 4.0}]), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_sweep_cases(path, SIMULSTREAMING_PROFILE)
+
+
+class BackendMetricsTests(unittest.TestCase):
+    def test_partial_replacements_and_stability(self):
+        events = [
+            {"seq": 0, "is_final": False, "text": "hola"},
+            {"seq": 1, "is_final": False, "text": "hola mundo"},   # extension, stable
+            {"seq": 2, "is_final": False, "text": "adios"},        # replacement
+            {"seq": 3, "is_final": True, "text": "adios amigo", "truncated_last_word": True},
+        ]
+        metrics = backend_metrics(events, {"empty_decodes": 2}, audio_duration_sec=10.0)
+        self.assertEqual(1, metrics["finals"])
+        self.assertEqual(3, metrics["partials"])
+        self.assertEqual(1, metrics["partial_replacements"])
+        self.assertEqual(2, metrics["empty_decodes"])
+        self.assertEqual(1, metrics["last_word_truncations"])
+        self.assertAlmostEqual(0.4, metrics["update_rate_hz"])
 
 
 if __name__ == "__main__":

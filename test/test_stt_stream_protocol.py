@@ -22,8 +22,10 @@ from scripts.stt_stream_protocol import (
     decode_audio_frame,
     encode_audio_frame,
     make_session_start,
+    validate_backend_config,
     validate_session_start,
 )
+from scripts.stt_stream_bridge import parse_backend_config
 
 
 class SttStreamProtocolTests(unittest.TestCase):
@@ -139,6 +141,39 @@ class SttStreamProtocolTests(unittest.TestCase):
         self.assertEqual(100.0, timeline.available_at(0.25))
         self.assertEqual(100.5, timeline.available_at(0.75))
         self.assertEqual(100.5, timeline.available_at(1.5))
+
+
+class BackendConfigTests(unittest.TestCase):
+    def test_session_start_carries_generic_backend_config(self):
+        message = make_session_start(
+            sample_rate_hz=48000,
+            channels=1,
+            fmt=FORMAT_S16_LE,
+            chunk_ms=20,
+            samples_per_chunk=960,
+            bytes_per_chunk=1920,
+            backend_config={"frame_threshold": 12, "use_vac": True, "cif_ckpt_path": ""},
+        )
+
+        self.assertEqual(
+            {"frame_threshold": 12, "use_vac": True, "cif_ckpt_path": ""},
+            message["backend_config"],
+        )
+        # backend_config is NOT whitelisted like the faster-whisper config_overrides.
+        self.assertNotIn("config_overrides", message)
+
+    def test_backend_config_must_be_object_of_scalars(self):
+        with self.assertRaises(ValueError):
+            validate_backend_config([1, 2, 3])
+        with self.assertRaises(ValueError):
+            validate_backend_config({"nested": {"bad": 1}})
+        with self.assertRaises(ValueError):
+            validate_backend_config({"": 1})
+
+    def test_bridge_parses_backend_config_json_string(self):
+        self.assertEqual({"beams": 1}, parse_backend_config('{"beams": 1}'))
+        self.assertIsNone(parse_backend_config(None))
+        self.assertIsNone(parse_backend_config(""))
 
 
 class RecordingSink:

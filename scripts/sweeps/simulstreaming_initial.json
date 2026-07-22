@@ -1,0 +1,37 @@
+{
+  "_comment": "Initial SimulStreaming/AlignAtt sweep for the Whisper small (es) checkpoint. Run only after one normal run validates end-to-end. AlignAtt frame_threshold is measured in Whisper encoder frames of 0.02 s each (identical for small and large-v3): 25 frames = 0.50 s tail margin, 12 frames = 0.24 s (the paper's tighter margin). never_fire=true disables last-word truncation. Upstream defaults verified at commit 077ea37d5ab4ff98bc567e4507f140dc4e5d5ad6: frame_threshold default 25 (CLI) / beams 1 / audio_max_len 30 / never_fire false; VAC recommended.",
+  "cases": [
+    {
+      "name": "official_default",
+      "min_chunk_sec": 1.0,
+      "frame_threshold": 25,
+      "beams": 1,
+      "use_vac": true,
+      "never_fire": false
+    },
+    {
+      "name": "paper_margin",
+      "min_chunk_sec": 1.0,
+      "frame_threshold": 12,
+      "beams": 1,
+      "use_vac": true,
+      "never_fire": false
+    },
+    {
+      "name": "no_trim",
+      "min_chunk_sec": 1.0,
+      "frame_threshold": 25,
+      "beams": 1,
+      "use_vac": true,
+      "never_fire": true
+    },
+    {
+      "name": "paper_no_trim",
+      "min_chunk_sec": 1.0,
+      "frame_threshold": 12,
+      "beams": 1,
+      "use_vac": true,
+      "never_fire": true
+    }
+  ]
+}

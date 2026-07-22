@@ -27,6 +27,7 @@ from urllib.parse import urlsplit, urlunsplit
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 from scripts.stt_stream_protocol import validate_config_overrides
+from scripts import stt_simulstreaming_backend as simul_backend
 
 
 DEFAULT_AUDIO_DIR = Path("/mnt/c/Users/nacho/Desktop/Postgrado/TESIS/audios")
@@ -58,6 +59,29 @@ SESSION_PARAMETER_MAP = {
     "vad_threshold": ("config_vad_threshold", "STT_VAD_THRESHOLD"),
     "vad_neg_threshold": ("config_vad_neg_threshold", "STT_VAD_NEG_THRESHOLD"),
 }
+
+# SimulStreaming session tuning carried as a generic backend-config JSON. Each
+# entry maps the wire/param name to the effective run_config key reported by the
+# server, so verify_effective_config can confirm Colab actually applied it.
+SIMULSTREAMING_PARAMETER_MAP = {
+    "min_chunk_sec": ("config_min_chunk_sec", None),
+    "frame_threshold": ("config_frame_threshold", None),
+    "beams": ("config_beams", None),
+    "use_vac": ("config_use_vac", None),
+    "never_fire": ("config_never_fire", None),
+    "audio_max_len": ("config_audio_max_len", None),
+    "audio_min_len": ("config_audio_min_len", None),
+    "language": ("config_language", None),
+    "task": ("config_task", None),
+}
+
+
+def validate_simulstreaming_overrides(overrides: dict) -> dict:
+    """Validate SimulStreaming session overrides via the backend's own schema and
+    return the normalized subset that was requested."""
+    config = simul_backend.SimulStreamingConfig.from_overrides(overrides)
+    return {name: getattr(config, name) for name in overrides}
+
 
 DEFAULT_SWEEP_CASES = (
     {
@@ -123,6 +147,135 @@ DEFAULT_SWEEP_CASES = (
 )
 
 
+class Profile:
+    """A backend/profile binds the bench to one STT engine without duplicating the
+    bench. faster_whisper keeps the exact current behavior; simulstreaming_alignatt
+    swaps launcher, session-param schema, offline signature and health check.
+
+    Fields:
+      name              profile id
+      expected_engine   run_engine that /health must report (None = accept legacy)
+      launcher          wrapper script under scripts/
+      param_map         name -> (run_config key, env var or None)
+      validator         session-override validator returning a normalized dict
+      sweep_file        default sweep JSON (None = built-in faster-whisper matrix)
+      offline_header    HTTP header carrying offline overrides
+      offline_keys      run_config keys forming the offline cache signature
+    """
+
+    def __init__(self, name, expected_engine, launcher, param_map, validator,
+                 sweep_file, offline_header, offline_keys, offline_override_keys):
+        self.name = name
+        self.expected_engine = expected_engine
+        self.launcher = launcher
+        self.param_map = param_map
+        self.validator = validator
+        self.sweep_file = sweep_file
+        self.offline_header = offline_header
+        self.offline_keys = offline_keys
+        self.offline_override_keys = offline_override_keys
+
+    def verify_health(self, health: dict) -> None:
+        if self.expected_engine is None:
+            return
+        engine = health.get("run_engine") or health.get("run_config", {}).get("run_engine")
+        if engine != self.expected_engine:
+            raise RuntimeError(
+                f"connected server reports run_engine={engine!r}; profile {self.name!r} "
+                f"requires {self.expected_engine!r}. Refusing to play audio against the wrong backend."
+            )
+
+    def config_env(self, config: dict) -> dict:
+        """Environment the launcher needs to apply the requested session config."""
+        environment: dict = {}
+        json_keys = {}
+        for name, value in config.items():
+            _config_key, env_key = self.param_map[name]
+            if env_key is not None:
+                environment[env_key] = str(value)
+            else:
+                json_keys[name] = value
+        if json_keys:
+            environment["STT_BACKEND_CONFIG_JSON"] = json.dumps(json_keys, separators=(",", ":"))
+        return environment
+
+    def offline_override_subset(self, session_config: dict | None) -> dict:
+        return {
+            key: value
+            for key, value in (session_config or {}).items()
+            if key in self.offline_override_keys
+        }
+
+
+FASTER_WHISPER_PROFILE = Profile(
+    name="faster_whisper",
+    expected_engine=None,
+    launcher="run_stt_colab_stream.sh",
+    param_map=SESSION_PARAMETER_MAP,
+    validator=validate_config_overrides,
+    sweep_file=None,
+    offline_header="X-STT-Config-Overrides",
+    offline_keys=(
+        "config_model",
+        "config_language",
+        "config_device",
+        "config_compute_type",
+        "config_beam_size",
+        "config_vad_filter",
+        "config_vad_threshold",
+        "config_vad_neg_threshold",
+    ),
+    offline_override_keys=("vad_threshold", "vad_neg_threshold"),
+)
+
+SIMULSTREAMING_PROFILE = Profile(
+    name="simulstreaming_alignatt",
+    expected_engine=simul_backend.RUN_ENGINE,
+    launcher="run_stt_colab_simulstream.sh",
+    param_map=SIMULSTREAMING_PARAMETER_MAP,
+    validator=validate_simulstreaming_overrides,
+    sweep_file=REPO_ROOT / "scripts" / "sweeps" / "simulstreaming_initial.json",
+    offline_header="X-STT-Backend-Config",
+    offline_keys=(
+        "run_engine",
+        "upstream_commit",
+        "model_sha256",
+        "config_model",
+        "config_language",
+        "config_task",
+        "config_min_chunk_sec",
+        "config_frame_threshold",
+        "config_beams",
+        "config_use_vac",
+        "config_never_fire",
+    ),
+    offline_override_keys=(
+        "min_chunk_sec",
+        "frame_threshold",
+        "beams",
+        "use_vac",
+        "never_fire",
+        "audio_max_len",
+        "audio_min_len",
+    ),
+)
+
+PROFILES = {
+    FASTER_WHISPER_PROFILE.name: FASTER_WHISPER_PROFILE,
+    SIMULSTREAMING_PROFILE.name: SIMULSTREAMING_PROFILE,
+}
+
+
+def select_profile(name: str | None) -> Profile:
+    name = name or os.environ.get("AUDIO_TEST_PROFILE") or FASTER_WHISPER_PROFILE.name
+    try:
+        return PROFILES[name]
+    except KeyError:
+        raise RuntimeError(
+            f"unknown profile {name!r}; choose one of {', '.join(sorted(PROFILES))}"
+        ) from None
+
+
 def write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -155,18 +308,20 @@ def load_jsonl(path: Path) -> list[dict]:
     return events
 
 
-def requested_session_config(args) -> dict:
+def requested_session_config(args, profile: "Profile" = None) -> dict:
+    profile = profile or FASTER_WHISPER_PROFILE
     requested = {
         name: value
-        for name in SESSION_PARAMETER_MAP
+        for name in profile.param_map
         if (value := getattr(args, name, None)) is not None
     }
-    return validate_config_overrides(requested)
+    return profile.validator(requested)
 
 
-def verify_effective_config(requested: dict, effective: dict) -> None:
+def verify_effective_config(requested: dict, effective: dict, profile: "Profile" = None) -> None:
+    profile = profile or FASTER_WHISPER_PROFILE
     for name, expected in requested.items():
-        config_key, _environment_key = SESSION_PARAMETER_MAP[name]
+        config_key, _environment_key = profile.param_map[name]
         actual = effective.get(config_key)
         if isinstance(expected, float):
             matches = isinstance(actual, (int, float)) and not isinstance(actual, bool)
@@ -227,7 +382,8 @@ def request_json(url: str, data: bytes | None = None, headers: dict[str, str] | 
 
 def health_check(stream_url: str) -> dict:
     health = request_json(http_base_from_stream_url(stream_url) + "/health")
-    if health.get("status") != "ok":
+    ready = health.get("status") == "ok" or health.get("ready") is True
+    if not ready:
         raise RuntimeError(f"Colab health check was not OK: {health}")
     return health
 
@@ -258,21 +414,18 @@ def offline_vad_overrides(session_config: dict | None) -> dict:
     }
 
 
-def offline_signature(health: dict, session_config: dict | None = None) -> dict:
+def offline_signature(
+    health: dict, session_config: dict | None = None, profile: "Profile" = None
+) -> dict:
+    profile = profile or FASTER_WHISPER_PROFILE
     config = health.get("run_config", {})
-    keys = (
-        "config_model",
-        "config_language",
-        "config_device",
-        "config_compute_type",
-        "config_beam_size",
-        "config_vad_filter",
-        "config_vad_threshold",
-        "config_vad_neg_threshold",
-    )
-    signature = {key: config.get(key) for key in keys}
-    for name, value in offline_vad_overrides(session_config).items():
-        signature[SESSION_PARAMETER_MAP[name][0]] = value
+    signature = {key: config.get(key) for key in profile.offline_keys}
+    # Include the profile's own run_engine so faster-whisper and SimulStreaming
+    # offline caches never collide even for identical audio.
+    signature["__profile__"] = profile.name
+    for name, value in profile.offline_override_subset(session_config).items():
+        config_key, _env = profile.param_map[name]
+        signature[config_key] = value
     return signature
 
 
@@ -282,9 +435,11 @@ def offline_reference(
     health: dict,
     refresh: bool = False,
     session_config: dict | None = None,
+    profile: "Profile" = None,
 ) -> tuple[dict, Path, bool]:
+    profile = profile or FASTER_WHISPER_PROFILE
     audio_hash = sha256_file(clip)
-    signature = offline_signature(health, session_config)
+    signature = offline_signature(health, session_config, profile)
     cache_material = json.dumps(
         {"audio_sha256": audio_hash, "config": signature}, sort_keys=True
     ).encode("utf-8")
@@ -299,13 +454,14 @@ def offline_reference(
         headers={
             "Content-Type": "application/octet-stream",
             "X-Audio-Filename": clip.name,
-            "X-STT-Config-Overrides": json.dumps(
-                offline_vad_overrides(session_config), separators=(",", ":")
+            profile.offline_header: json.dumps(
+                profile.offline_override_subset(session_config), separators=(",", ":")
             ),
         },
     )
     result["audio_sha256"] = audio_hash
     result["cache_key"] = cache_key
+    result["profile"] = profile.name
     write_json(cache_path, result)
     return result, cache_path, False
 
@@ -701,6 +857,51 @@ def reliability_result(done: dict, valid_sequence: bool) -> dict:
     }
 
 
+def backend_metrics(events: list[dict], done: dict, audio_duration_sec: float | None) -> dict:
+    """Engine-agnostic streaming-quality metrics, richer for SimulStreaming.
+
+    Partial stability / replacement counting: whenever a non-final event's visible
+    text is not a forward extension of the previous visible text, some already
+    shown text was withdrawn or replaced. These are internal partial revisions and
+    are NOT counted as lost audio."""
+    finals = [event for event in events if event.get("is_final")]
+    partials = [event for event in events if not event.get("is_final")]
+    replacements = 0
+    previous_text = ""
+    for event in sorted(events, key=lambda item: item.get("seq", 0)):
+        text = str(event.get("text", ""))
+        if previous_text and not text.startswith(previous_text) and not event.get("is_final"):
+            replacements += 1
+        previous_text = text if not event.get("is_final") else ""
+    infer_values = event_values(events, "gpu_infer_sec")
+    total_infer = sum(infer_values)
+    truncations = sum(1 for event in events if event.get("truncated_last_word"))
+    return {
+        "events": len(events),
+        "finals": len(finals),
+        "partials": len(partials),
+        "vac_endpoints": int(done.get("vac_endpoints", len(finals)) or 0),
+        "empty_decodes": int(done.get("empty_decodes", 0) or 0),
+        "last_word_truncations": int(done.get("last_word_truncations", truncations) or 0),
+        "partial_replacements": replacements,
+        "partial_stability": (
+            round(1.0 - replacements / len(partials), 4) if partials else None
+        ),
+        "update_rate_hz": (
+            round(len(events) / audio_duration_sec, 3)
+            if audio_duration_sec and audio_duration_sec > 0
+            else None
+        ),
+        "inference_sec": distribution(infer_values),
+        "real_time_factor": (
+            round(total_infer / audio_duration_sec, 4)
+            if audio_duration_sec and audio_duration_sec > 0
+            else None
+        ),
+        "gpu_peak_mem_mb": done.get("gpu_peak_mem_mb"),
+    }
+
+
 def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
     events = load_jsonl(run_dir / "live" / "events.jsonl")
     board_acks = load_jsonl(run_dir / "live" / "board_acks.jsonl")
@@ -892,15 +1093,30 @@ def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
         first_subtitle_sec = round(
             min(received_wall) - first_play_wall, 3
         )
+    run_config = ready.get("run_config", {})
+    run_engine = (
+        manifest.get("run_engine")
+        or run_config.get("run_engine")
+        or "faster_whisper"
+    )
+    audio_duration_sec = done.get("audio_duration_sec")
     report = {
         "schema_version": 1,
         "run_id": manifest["run_id"],
+        "run_engine": run_engine,
+        "profile": manifest.get("profile"),
+        "upstream_commit": run_config.get("upstream_commit"),
+        "model_sha256": run_config.get("model_sha256"),
+        "reference_note": (
+            "WER/CER use an automatic offline_proxy reference (same engine, complete "
+            "file), NOT a verified human transcript, unless a .txt reference exists."
+        ),
         "status": (
             "complete"
             if done.get("status") == "complete" and reliability["protocol_ok"]
             else "invalid"
         ),
-        "config": ready.get("run_config", {}),
+        "config": run_config,
         "scores": {
             "accuracy": aggregate_accuracy(
                 list(zip(selected_references, live_hypotheses)), reference_kind
@@ -948,6 +1164,7 @@ def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
                     "bridge_receive_lag_sec",
                 )
             },
+            "backend": backend_metrics(events, done, audio_duration_sec),
         },
         "clips": clip_reports,
         "artifacts": {
@@ -1121,12 +1338,14 @@ def run_offline(
     refresh: bool,
     output_dir: Path | None,
     session_config: dict | None = None,
+    profile: "Profile" = None,
 ) -> list[dict]:
+    profile = profile or FASTER_WHISPER_PROFILE
     references = []
     for clip in clips:
         print(f"Offline reference: {clip.name} ...", flush=True)
         reference, cache_path, cache_hit = offline_reference(
-            clip, stream_url, health, refresh, session_config
+            clip, stream_url, health, refresh, session_config, profile
         )
         print(f"  {'cache hit' if cache_hit else 'generated'}: {cache_path.relative_to(REPO_ROOT)}")
         references.append(reference)
@@ -1136,13 +1355,15 @@ def run_offline(
 
 
 def run_benchmark(args) -> int:
+    profile = select_profile(getattr(args, "profile", None))
     audio_dir = Path(os.environ.get("AUDIO_TEST_DIR", str(DEFAULT_AUDIO_DIR)))
     stream_url = os.environ.get("STT_STREAM_URL", DEFAULT_STREAM_URL)
     clips = discover_clips(audio_dir)
     health = health_check(stream_url)
-    requested_config = requested_session_config(args)
+    profile.verify_health(health)
+    requested_config = requested_session_config(args, profile)
     if args.offline_only:
-        run_offline(clips, stream_url, health, args.refresh_offline, None, requested_config)
+        run_offline(clips, stream_url, health, args.refresh_offline, None, requested_config, profile)
         return 0
     if shutil.which("ffplay") is None:
         raise RuntimeError("ffplay is required but was not found in WSL PATH")
@@ -1168,6 +1389,12 @@ def run_benchmark(args) -> int:
         "stream_url": stream_url,
         "gap_sec": gap_sec,
         "health": health,
+        "profile": profile.name,
+        "run_engine": (
+            health.get("run_engine")
+            or health.get("run_config", {}).get("run_engine")
+            or profile.expected_engine
+        ),
         "requested_session_config": requested_config,
         "sweep": getattr(args, "sweep_metadata", None),
         "clips": [],
@@ -1175,7 +1402,7 @@ def run_benchmark(args) -> int:
     write_json(run_dir / "manifest.json", manifest)
     try:
         run_offline(
-            clips, stream_url, health, args.refresh_offline, offline_dir, requested_config
+            clips, stream_url, health, args.refresh_offline, offline_dir, requested_config, profile
         )
     except Exception:
         manifest["status"] = "failed_offline"
@@ -1198,12 +1425,10 @@ def run_benchmark(args) -> int:
             "STT_STOP_FILE": relative(stop_file),
         }
     )
-    for name, value in requested_config.items():
-        _config_key, environment_key = SESSION_PARAMETER_MAP[name]
-        environment[environment_key] = str(value)
+    environment.update(profile.config_env(requested_config))
     bridge_log = (live_dir / "bridge.log").open("w", encoding="utf-8")
     bridge = subprocess.Popen(
-        [str(REPO_ROOT / "scripts" / "run_stt_colab_stream.sh")],
+        [str(REPO_ROOT / "scripts" / profile.launcher)],
         cwd=REPO_ROOT,
         env=environment,
         stdout=bridge_log,
@@ -1227,7 +1452,7 @@ def run_benchmark(args) -> int:
             flush=True,
         )
         ready = wait_for_file(ready_file, bridge, ready_timeout)
-        verify_effective_config(requested_config, ready.get("run_config", {}))
+        verify_effective_config(requested_config, ready.get("run_config", {}), profile)
         manifest["status"] = "playing"
         manifest["bridge_ready"] = ready
         write_json(run_dir / "manifest.json", manifest)
@@ -1309,11 +1534,16 @@ def run_benchmark(args) -> int:
         signal.signal(signal.SIGTERM, previous_sigterm)
 
 
-def load_sweep_cases(path: Path | None = None) -> list[dict]:
+def load_sweep_cases(path: Path | None = None, profile: "Profile" = None) -> list[dict]:
+    profile = profile or FASTER_WHISPER_PROFILE
+    param_map = profile.param_map
     if path is None:
-        raw_cases = [dict(case) for case in DEFAULT_SWEEP_CASES]
-    else:
-        parsed = json.loads(path.read_text(encoding="utf-8"))
+        if profile.sweep_file is not None:
+            path = profile.sweep_file
+        else:
+            raw_cases = [dict(case) for case in DEFAULT_SWEEP_CASES]
+    if path is not None:
+        parsed = json.loads(Path(path).read_text(encoding="utf-8"))
         raw_cases = parsed.get("cases") if isinstance(parsed, dict) else parsed
         if not isinstance(raw_cases, list):
             raise ValueError("sweep file must be a JSON list or an object with a 'cases' list")
@@ -1326,14 +1556,14 @@ def load_sweep_cases(path: Path | None = None) -> list[dict]:
         if not isinstance(raw_case, dict):
             raise ValueError(f"sweep case {index} must be a JSON object")
         metadata_fields = {"name", "group", "replicate"}
-        unknown = sorted(set(raw_case) - (metadata_fields | set(SESSION_PARAMETER_MAP)))
+        unknown = sorted(set(raw_case) - (metadata_fields | set(param_map)))
         if unknown:
             raise ValueError(f"unsupported field(s) in sweep case {index}: {', '.join(unknown)}")
         name = str(raw_case.get("name", f"case_{index}")).strip()
         if not name or name in names:
             raise ValueError(f"sweep case name must be non-empty and unique: {name!r}")
-        config = validate_config_overrides(
-            {key: value for key, value in raw_case.items() if key in SESSION_PARAMETER_MAP}
+        config = profile.validator(
+            {key: value for key, value in raw_case.items() if key in param_map}
         )
         if not config:
             raise ValueError(f"sweep case {name!r} has no session parameters")
@@ -1355,7 +1585,8 @@ def new_sweep_dir() -> Path:
     return candidate
 
 
-def sweep_row(case: dict, report: dict) -> dict:
+def sweep_row(case: dict, report: dict, profile: "Profile" = None) -> dict:
+    profile = profile or FASTER_WHISPER_PROFILE
     scores = report["scores"]
     reliability = scores["reliability"]
     return {
@@ -1363,7 +1594,7 @@ def sweep_row(case: dict, report: dict) -> dict:
         "group": case.get("group"),
         "replicate": case.get("replicate"),
         "requested_config": {
-            key: value for key, value in case.items() if key in SESSION_PARAMETER_MAP
+            key: value for key, value in case.items() if key in profile.param_map
         },
         "run_id": report["run_id"],
         "status": report["status"],
@@ -1474,13 +1705,16 @@ def render_sweep_markdown(sweep: dict) -> str:
 
 
 def run_sweep(args) -> int:
-    cases = load_sweep_cases(Path(args.sweep_file) if args.sweep_file else None)
+    profile = select_profile(getattr(args, "profile", None))
+    cases = load_sweep_cases(Path(args.sweep_file) if args.sweep_file else None, profile)
     sweep_dir = new_sweep_dir()
     sweep = {
         "schema_version": 1,
         "sweep_id": sweep_dir.name,
         "created_wall_sec": time.time(),
         "status": "running",
+        "profile": profile.name,
+        "run_engine": profile.expected_engine or "faster_whisper",
         "cases": cases,
         "runs": [],
     }
@@ -1490,7 +1724,7 @@ def run_sweep(args) -> int:
 
     exit_code = 0
     for index, case in enumerate(cases, 1):
-        config = {key: value for key, value in case.items() if key in SESSION_PARAMETER_MAP}
+        config = {key: value for key, value in case.items() if key in profile.param_map}
         print(f"\n=== SWEEP {index}/{len(cases)}: {case['name']} ===")
         print("  " + "  ".join(f"{key}={value}" for key, value in config.items()))
         run_args = copy.copy(args)
@@ -1504,7 +1738,7 @@ def run_sweep(args) -> int:
             "group": case.get("group"),
             "replicate": case.get("replicate"),
         }
-        for parameter in SESSION_PARAMETER_MAP:
+        for parameter in profile.param_map:
             setattr(run_args, parameter, config.get(parameter))
         try:
             result = run_benchmark(run_args)
@@ -1512,7 +1746,7 @@ def run_sweep(args) -> int:
                 raise KeyboardInterrupt
             if result != 0 or run_args.completed_report is None:
                 raise RuntimeError(f"benchmark returned {result} without a report")
-            sweep["runs"].append(sweep_row(case, run_args.completed_report))
+            sweep["runs"].append(sweep_row(case, run_args.completed_report, profile))
         except KeyboardInterrupt:
             sweep["status"] = "interrupted"
             exit_code = 130
@@ -1553,6 +1787,12 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--compare", action="store_true", help="compare completed historical runs")
     mode.add_argument("--sweep", action="store_true", help="run the built-in parameter matrix")
     mode.add_argument("--sweep-file", help="run cases from a JSON parameter matrix")
+    parser.add_argument(
+        "--profile",
+        choices=sorted(PROFILES),
+        help="STT backend profile (default from AUDIO_TEST_PROFILE or faster_whisper)",
+    )
+    # faster_whisper session parameters.
     parser.add_argument("--max-window-sec", type=float)
     parser.add_argument("--min-silence-sec", type=float)
     parser.add_argument("--partial-sec", type=float)
@@ -1560,13 +1800,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gain", type=float)
     parser.add_argument("--vad-threshold", type=float)
     parser.add_argument("--vad-neg-threshold", type=float)
+    # simulstreaming_alignatt session parameters (optional single-run overrides).
+    parser.add_argument("--min-chunk-sec", type=float)
+    parser.add_argument("--frame-threshold", type=int)
+    parser.add_argument("--beams", type=int)
+    parser.add_argument("--use-vac", dest="use_vac", action="store_const", const=True, default=None)
+    parser.add_argument("--no-use-vac", dest="use_vac", action="store_const", const=False)
+    parser.add_argument("--never-fire", dest="never_fire", action="store_const", const=True, default=None)
+    parser.add_argument("--no-never-fire", dest="never_fire", action="store_const", const=False)
+    parser.add_argument("--audio-max-len", type=float)
+    parser.add_argument("--audio-min-len", type=float)
     parser.add_argument(
         "--refresh-offline", action="store_true", help="ignore and replace matching offline cache entries"
     )
     args = parser.parse_args()
     try:
-        requested_session_config(args)
-    except ValueError as exc:
+        requested_session_config(args, select_profile(getattr(args, "profile", None)))
+    except (ValueError, RuntimeError) as exc:
         parser.error(str(exc))
     return args
 

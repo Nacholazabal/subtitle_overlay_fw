@@ -87,6 +87,7 @@ def make_session_start(
     bytes_per_chunk,
     client_monotonic=None,
     config_overrides=None,
+    backend_config=None,
 ):
     message = {
         "type": MESSAGE_SESSION_START,
@@ -102,7 +103,30 @@ def make_session_start(
         message["client_monotonic"] = float(client_monotonic)
     if config_overrides:
         message["config_overrides"] = validate_config_overrides(config_overrides)
+    if backend_config:
+        message["backend_config"] = validate_backend_config(backend_config)
     return message
+
+
+def validate_backend_config(backend_config):
+    """Generic, backend-agnostic session config carried alongside the faster-whisper
+    ``config_overrides``. Unlike ``config_overrides`` this is NOT whitelisted here:
+    each STT backend validates the keys it understands server-side (see
+    ``stt_simulstreaming_backend.SimulStreamingConfig.from_overrides``). This keeps
+    the wire protocol shared while letting alternative engines carry their own tuning
+    without adding per-backend flags to the bridge."""
+    if backend_config is None:
+        return {}
+    if not isinstance(backend_config, dict):
+        raise ValueError("backend_config must be a JSON object")
+    normalized = {}
+    for name, value in backend_config.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("backend_config keys must be non-empty strings")
+        if not isinstance(value, (str, int, float, bool)) and value is not None:
+            raise ValueError(f"backend_config[{name!r}] must be a JSON scalar")
+        normalized[name] = value
+    return normalized
 
 
 def validate_config_overrides(overrides):

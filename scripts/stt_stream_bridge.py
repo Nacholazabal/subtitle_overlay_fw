@@ -36,6 +36,7 @@ from scripts.stt_stream_protocol import (
     encode_audio_frame,
     encode_json_message,
     make_session_start,
+    validate_backend_config,
 )
 
 
@@ -58,6 +59,19 @@ def session_config_overrides(args):
 
 def board_drop_delta(start, end):
     return max(0, int(end or 0) - int(start or 0))
+
+
+def parse_backend_config(raw):
+    """Parse the optional generic backend-config JSON passed by the launcher.
+
+    Backend-agnostic: the faster-whisper path leaves this empty, while the
+    SimulStreaming launcher forwards its AlignAtt/VAC tuning here. The server
+    validates the keys it understands; the bridge only checks it is a JSON
+    object of scalars."""
+    if not raw:
+        return None
+    parsed = json.loads(raw) if isinstance(raw, str) else raw
+    return validate_backend_config(parsed)
 
 
 def write_json_file(path, payload):
@@ -217,6 +231,7 @@ class StreamingBridge:
                         *stream_info,
                         client_monotonic=time.monotonic(),
                         config_overrides=session_config_overrides(self.args),
+                        backend_config=parse_backend_config(getattr(self.args, "backend_config_json", None)),
                     )
                 )
             )
@@ -442,7 +457,16 @@ def parse_args():
     parser.add_argument("--gain", type=float)
     parser.add_argument("--vad-threshold", type=float)
     parser.add_argument("--vad-neg-threshold", type=float)
+    parser.add_argument(
+        "--backend-config-json",
+        help="generic backend-specific session config as a JSON object (e.g. SimulStreaming AlignAtt tuning)",
+    )
     args = parser.parse_args()
+    if args.backend_config_json is not None:
+        try:
+            parse_backend_config(args.backend_config_json)
+        except (json.JSONDecodeError, ValueError) as exc:
+            parser.error(f"--backend-config-json is not a valid JSON object: {exc}")
     if args.max_window_sec is not None and args.max_window_sec <= 0:
         parser.error("--max-window-sec must be positive")
     if args.min_silence_sec is not None and args.min_silence_sec < 0:
