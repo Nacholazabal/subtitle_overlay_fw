@@ -123,6 +123,23 @@ class CheckpointTests(unittest.TestCase):
             good_sha = hashlib.sha256(b"not the real weights").hexdigest()
             self.assertEqual(good_sha, validate_checkpoint(checkpoint, expected_sha256=good_sha))
 
+    def test_link_as_known_name_gives_whisper_a_valid_filename(self):
+        import os
+        import tempfile
+        from scripts.stt_simulstreaming_backend import link_checkpoint_as_known_name
+
+        with tempfile.TemporaryDirectory() as tmp:
+            drive_file = Path(tmp) / "whisper-small.pt"
+            drive_file.write_bytes(b"weights")
+            linked = link_checkpoint_as_known_name(drive_file, "small")
+            self.assertEqual("small.pt", os.path.basename(linked))
+            self.assertEqual(b"weights", Path(linked).read_bytes())
+            # Already-canonical names are passed through unchanged.
+            canonical = Path(tmp) / "small.pt"
+            canonical.write_bytes(b"w")
+            self.assertEqual(os.path.abspath(str(canonical)),
+                             link_checkpoint_as_known_name(canonical, "small"))
+
 
 class AudioHelperTests(unittest.TestCase):
     def test_pcm_s16le_round_trips_to_float(self):

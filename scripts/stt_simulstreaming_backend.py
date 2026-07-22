@@ -189,6 +189,34 @@ def sha256_file(path: str | Path, *, chunk_size: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
+def link_checkpoint_as_known_name(checkpoint_path: str | Path, model_name: str) -> str:
+    """Present the checkpoint to SimulStreaming under a name its Whisper loader
+    accepts.
+
+    Upstream computes ``name = basename(model_path).replace('.pt','')`` and only
+    accepts a canonical Whisper name (``small``) or an existing file named exactly
+    ``<name>.pt``. Our Drive file is ``whisper-small.pt`` (deliberately, so we can
+    validate its SHA), which upstream would read as the unknown name
+    ``whisper-small``. So we hand it a ``small.pt`` symlink in a temp dir; since our
+    bytes are the official ``small`` checkpoint (same SHA-256), Whisper's downloader
+    finds it, verifies the checksum and reuses it without downloading anything."""
+    import os
+    import shutil
+    import tempfile
+
+    source = os.path.abspath(str(checkpoint_path))
+    desired = f"{model_name}.pt"
+    if os.path.basename(source) == desired:
+        return source
+    work_dir = tempfile.mkdtemp(prefix="simulstreaming-model-")
+    link = os.path.join(work_dir, desired)
+    try:
+        os.symlink(source, link)
+    except (OSError, NotImplementedError):
+        shutil.copy(source, link)
+    return link
+
+
 def validate_checkpoint(path: str | Path, expected_sha256: str = MODEL_SHA256) -> str:
     """Fail loudly for the wrong checkpoint (faster-whisper dir, CTranslate2 model,
     ``small.en``, or a corrupt download). Returns the verified SHA-256."""
@@ -483,12 +511,15 @@ class SharedSimulModel:
             raise ValueError("SimulStreamingConfig.model_path is required to load a model")
         validate_checkpoint(config.model_path)
         self.config = config
+        # Upstream derives the model name from the checkpoint's filename, so hand it
+        # a canonical "<model>.pt" (symlink) pointing at our validated file.
+        self._effective_model_path = link_checkpoint_as_known_name(config.model_path, config.model)
         # Build the heavy ASR (loads the checkpoint) ONCE. Per-session online
         # processors are created cheaply around it in ``build_online``.
-        self.asr, self._online_cls = self._build_asr(config)
+        self.asr, self._online_cls = self._build_asr(config, self._effective_model_path)
 
     @staticmethod
-    def _build_asr(config: SimulStreamingConfig):
+    def _build_asr(config: SimulStreamingConfig, effective_model_path: str):
         # Imported here so the module stays torch-free at import time.
         from simulstreaming_whisper import simul_asr_factory
         from types import SimpleNamespace
@@ -497,7 +528,7 @@ class SharedSimulModel:
         # commit 077ea37d5ab4ff98bc567e4507f140dc4e5d5ad6). ``log_level`` and the
         # prompt/context fields must be present or it raises AttributeError.
         args = SimpleNamespace(
-            model_path=config.model_path,
+            model_path=effective_model_path,
             lan=config.language,
             task=config.task,
             beams=config.beams,
