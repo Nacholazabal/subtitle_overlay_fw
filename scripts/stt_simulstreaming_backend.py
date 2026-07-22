@@ -322,7 +322,11 @@ def normalize_iter_result(result) -> dict | None:
     if isinstance(result, dict):
         if not result:
             return None
-        text = str(result.get("text", "") or "").strip()
+        # Keep the RAW text: Whisper tokens carry their own leading-space word
+        # boundaries. Stripping each committed piece and re-joining with a space is
+        # what split words like "policía" into "polic ía". Concatenation happens
+        # verbatim downstream; we only strip for the emptiness check.
+        text = str(result.get("text", "") or "")
         start = _coerce_float(result.get("start", result.get("beg")))
         end = _coerce_float(result.get("end"))
         is_final = bool(result.get("is_final", False))
@@ -331,13 +335,13 @@ def normalize_iter_result(result) -> dict | None:
     elif isinstance(result, (tuple, list)) and len(result) >= 3:
         start = _coerce_float(result[0])
         end = _coerce_float(result[1])
-        text = str(result[2] or "").strip()
+        text = str(result[2] or "")
         is_final = False
         words = None
         truncated = False
     else:
         raise TypeError(f"unsupported process_iter result: {result!r}")
-    if not text and not is_final:
+    if not text.strip() and not is_final:
         return None
     return {
         "text": text,
@@ -370,6 +374,7 @@ class TranscriptAdapter:
         self.seq = 0
         self._segment_text = ""
         self._segment_start = None
+        self._last_end = None
         # Analysis counters.
         self.empty_decodes = 0
         self.vac_endpoints = 0
@@ -378,17 +383,23 @@ class TranscriptAdapter:
         self.finals = 0
 
     def _emit(self, visible, start, end, is_final, normalized, infer_sec) -> dict:
+        # Firmware/bridge require numeric start_sec/end_sec (the bridge does
+        # float(end_sec)); never emit None. Fall back to the last known end.
+        if not isinstance(start, (int, float)) or isinstance(start, bool):
+            start = self._last_end if self._last_end is not None else 0.0
+        if not isinstance(end, (int, float)) or isinstance(end, bool):
+            end = self._last_end if self._last_end is not None else start
         bounded = bounded_tail(visible, self.display_max_chars)
         event = {
             "type": "transcript",
             "seq": self.seq,
             "is_final": bool(is_final),
-            "start_sec": round(start, 3) if isinstance(start, (int, float)) else None,
-            "end_sec": round(end, 3) if isinstance(end, (int, float)) else None,
+            "start_sec": round(float(start), 3),
+            "end_sec": round(float(end), 3),
             # Firmware-visible rolling tail; full segment kept for reconstruction.
             "text": bounded,
             "full_text": visible,
-            "delta_text": normalized["text"],
+            "delta_text": normalized["text"].strip(),
             "run_engine": RUN_ENGINE,
             "alignatt_frame_threshold": self.config.frame_threshold,
             "alignatt_frame_threshold_sec": frame_threshold_seconds(self.config.frame_threshold),
@@ -410,15 +421,20 @@ class TranscriptAdapter:
             return []
 
         delta = normalized["text"]
-        if delta:
-            self._segment_text = (self._segment_text + " " + delta).strip() if self._segment_text else delta
+        if delta.strip():
+            # Concatenate verbatim: the token's own leading space (Whisper word
+            # boundary) is preserved, so "polic" + "ía" -> "policía" and
+            # "planta" + " El" -> "planta El". Whitespace is collapsed for display.
+            self._segment_text = (self._segment_text + delta) if self._segment_text else delta.lstrip()
         if self._segment_start is None and normalized["start"] is not None:
             self._segment_start = normalized["start"]
+        if normalized["end"] is not None:
+            self._last_end = normalized["end"]
         if normalized["truncated_last_word"]:
             self.truncations += 1
 
         is_final = normalized["is_final"]
-        visible = self._segment_text
+        visible = " ".join(self._segment_text.split())
         start = self._segment_start
         end = normalized["end"]
         event = self._emit(visible, start, end, is_final, normalized, infer_sec)
@@ -438,17 +454,20 @@ class TranscriptAdapter:
 
         Used on session close if the processor's ``finish`` did not already flush
         an is_final event, so the last segment is never dropped."""
-        if not self._segment_text:
+        visible = " ".join(self._segment_text.split())
+        if not visible:
             return []
         normalized = {
             "text": "",
             "start": self._segment_start,
-            "end": None,
+            "end": self._last_end,
             "is_final": True,
             "words": None,
             "truncated_last_word": False,
         }
-        event = self._emit(self._segment_text, self._segment_start, None, True, normalized, infer_sec)
+        # _emit coerces start/end to numeric (never None), so the bridge's
+        # float(end_sec) cannot crash on the flush event.
+        event = self._emit(visible, self._segment_start, self._last_end, True, normalized, infer_sec)
         event["forced_flush"] = True
         self.finals += 1
         self._segment_text = ""

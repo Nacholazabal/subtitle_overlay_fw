@@ -166,12 +166,13 @@ class NormalizeTests(unittest.TestCase):
         self.assertIsNone(normalize_iter_result(None))
 
     def test_dict_and_tuple_forms(self):
+        # Raw text is preserved (leading space = Whisper word boundary).
         as_dict = normalize_iter_result({"text": " hola ", "start": 0.0, "end": 1.0, "is_final": True})
-        self.assertEqual("hola", as_dict["text"])
+        self.assertEqual("hola", as_dict["text"].strip())
         self.assertTrue(as_dict["is_final"])
 
         as_tuple = normalize_iter_result((1.0, 2.0, " mundo "))
-        self.assertEqual("mundo", as_tuple["text"])
+        self.assertEqual("mundo", as_tuple["text"].strip())
         self.assertFalse(as_tuple["is_final"])
 
     def test_final_with_empty_text_is_kept(self):
@@ -183,8 +184,9 @@ class NormalizeTests(unittest.TestCase):
 class TranscriptAdapterTests(unittest.TestCase):
     def test_seq_starts_at_zero_and_accumulates_visible_text(self):
         adapter = TranscriptAdapter(SimulStreamingConfig())
+        # Whisper deltas carry their own leading space for word starts.
         first = adapter.ingest({"text": "hola", "start": 0.0, "end": 1.0, "is_final": False})[0]
-        second = adapter.ingest({"text": "mundo", "start": 1.0, "end": 2.0, "is_final": False})[0]
+        second = adapter.ingest({"text": " mundo", "start": 1.0, "end": 2.0, "is_final": False})[0]
 
         self.assertEqual(0, first["seq"])
         self.assertEqual("hola", first["text"])
@@ -194,16 +196,36 @@ class TranscriptAdapterTests(unittest.TestCase):
         self.assertEqual("mundo", second["delta_text"])
         self.assertEqual(RUN_ENGINE, second["run_engine"])
 
+    def test_word_pieces_join_without_spurious_spaces(self):
+        # Regression for "polic ía" / "premat uro": continuation tokens have no
+        # leading space and must attach to the previous word.
+        adapter = TranscriptAdapter(SimulStreamingConfig())
+        adapter.ingest({"text": "la polic", "start": 0.0, "end": 1.0, "is_final": False})
+        event = adapter.ingest({"text": "ía móvil", "start": 1.0, "end": 2.0, "is_final": False})[0]
+        self.assertEqual("la policía móvil", event["text"])
+
     def test_final_resets_segment_and_reports_visible_state(self):
         adapter = TranscriptAdapter(SimulStreamingConfig())
         adapter.ingest({"text": "hola", "start": 0.0, "end": 1.0, "is_final": False})
-        final = adapter.ingest({"text": "mundo", "start": 1.0, "end": 2.0, "is_final": True})[0]
+        final = adapter.ingest({"text": " mundo", "start": 1.0, "end": 2.0, "is_final": True})[0]
         after = adapter.ingest({"text": "nuevo", "start": 2.0, "end": 3.0, "is_final": False})[0]
 
         self.assertTrue(final["is_final"])
         self.assertEqual("hola mundo", final["text"])
         self.assertEqual("nuevo", after["text"])  # accumulator reset
         self.assertEqual(1, adapter.stats_snapshot()["finals_emitted"])
+
+    def test_timestamps_are_always_numeric_even_when_missing(self):
+        # The bridge does float(end_sec); None would crash it. force_final and
+        # results without an end must still yield numeric timestamps.
+        adapter = TranscriptAdapter(SimulStreamingConfig())
+        adapter.ingest({"text": "hola", "start": 0.0, "end": 2.5, "is_final": False})
+        no_end = adapter.ingest({"text": " mundo", "start": None, "end": None, "is_final": False})[0]
+        self.assertIsInstance(no_end["end_sec"], (int, float))
+        self.assertIsInstance(no_end["start_sec"], (int, float))
+        flushed = adapter.force_final()[0]
+        self.assertIsInstance(flushed["end_sec"], (int, float))
+        self.assertIsInstance(flushed["start_sec"], (int, float))
 
     def test_long_segment_bounds_visible_text_but_keeps_full_text(self):
         from scripts.stt_simulstreaming_backend import VISIBLE_TEXT_MAX_CHARS
@@ -212,7 +234,7 @@ class TranscriptAdapterTests(unittest.TestCase):
         event = None
         for i in range(60):
             event = adapter.ingest(
-                {"text": f"palabra{i}", "start": float(i), "end": float(i) + 1, "is_final": False}
+                {"text": f" palabra{i}", "start": float(i), "end": float(i) + 1, "is_final": False}
             )[0]
         # Firmware-visible text stays bounded (line/buffer safe); full_text complete.
         self.assertLessEqual(len(event["text"]), VISIBLE_TEXT_MAX_CHARS)
@@ -247,7 +269,7 @@ class SessionTests(unittest.TestCase):
         self.assertEqual("hola", events[0]["text"])
         self.assertEqual("voice", events[0]["vac_status"])
 
-        online.feed({"text": "mundo", "start": 1.0, "end": 2.0, "is_final": False})
+        online.feed({"text": " mundo", "start": 1.0, "end": 2.0, "is_final": False})
         session.push_float32(np.zeros(1600, dtype="float32"))
 
         # No is_final arrived; flush must emit the accumulated "hola mundo" as final.

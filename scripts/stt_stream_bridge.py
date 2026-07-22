@@ -110,12 +110,13 @@ class BridgeTranscriptSink:
         received_wall = time.time()
         event["bridge_received_monotonic"] = round(received_at, 6)
         event["bridge_received_wall_sec"] = round(received_wall, 6)
-        if "end_sec" in event:
-            available_at = self.timeline.available_at(float(event["end_sec"]))
+        end_sec = event.get("end_sec")
+        if isinstance(end_sec, (int, float)) and not isinstance(end_sec, bool):
+            available_at = self.timeline.available_at(float(end_sec))
             if available_at is not None:
                 event["bridge_receive_lag_sec"] = round(received_at - available_at, 3)
                 event["bridge_audio_available_monotonic"] = round(available_at, 6)
-            available_wall = self.wall_timeline.available_at(float(event["end_sec"]))
+            available_wall = self.wall_timeline.available_at(float(end_sec))
             if available_wall is not None:
                 event["bridge_audio_available_wall_sec"] = round(available_wall, 6)
         self.sink.handle_event(event)
