@@ -919,7 +919,12 @@ def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
         name = clip["name"]
         clip_events = assigned[name]
         finals = [event for event in clip_events if event.get("is_final")]
-        live_text = " ".join(event.get("text", "").strip() for event in finals).strip()
+        # Prefer full_text (SimulStreaming keeps the complete segment there; the
+        # firmware-facing ``text`` is only a bounded rolling tail). faster-whisper
+        # events have no full_text, so text is used unchanged.
+        live_text = " ".join(
+            (event.get("full_text") or event.get("text", "")).strip() for event in finals
+        ).strip()
         offline = load_json(run_dir / "offline" / f"{name}.json")
         offline_text = str(offline.get("text", ""))
         human_path = Path(clip["source_path"]).with_suffix(".txt")

@@ -276,6 +276,31 @@ def resample_to_16k(mono_float32, source_rate: int):
 # --- Result mapping (fully testable with a fake processor) ------------------
 
 
+# The firmware subtitle line is bounded: SUBTITLE_TEXT_MAX_LEN=128 chars and the
+# whole NDJSON line must stay under STT_EVENT_RX_LINE_MAX=512 bytes, or it is
+# discarded and the TCP client is dropped. faster-whisper never hit this because
+# its window is short; SimulStreaming accumulates a whole VAC segment, which can
+# grow without bound. So the firmware-visible ``text`` is a rolling tail of the
+# most recent words (see the rolling-transcript display), while the complete
+# segment text is preserved as ``full_text`` for WER/offline reconstruction.
+VISIBLE_TEXT_MAX_CHARS = 120
+
+
+def bounded_tail(text: str, max_chars: int = VISIBLE_TEXT_MAX_CHARS) -> str:
+    """Longest whole-word suffix of ``text`` that fits in ``max_chars``."""
+    if len(text) <= max_chars:
+        return text
+    kept: list[str] = []
+    total = 0
+    for word in reversed(text.split()):
+        extra = len(word) + (1 if kept else 0)
+        if total + extra > max_chars:
+            break
+        kept.insert(0, word)
+        total += extra
+    return " ".join(kept) if kept else text[-max_chars:]
+
+
 def _coerce_float(value):
     if isinstance(value, bool) or value is None:
         return None
@@ -330,8 +355,9 @@ class TranscriptAdapter:
     Responsibilities the firmware relies on:
 
     * ``seq`` starts at 0 per session and grows monotonically.
-    * ``text`` carries the *accumulated visible state* for the current segment
-      (not just the delta), because the firmware replaces the current line.
+    * ``text`` carries the visible rolling state the firmware replaces the line
+      with — a bounded tail of the accumulated segment (the firmware line buffer
+      is limited); ``full_text`` carries the complete segment for analysis/WER.
     * The confirmed delta is preserved as ``delta_text`` metadata for analysis.
     * ``is_final=True`` when VAC closes a segment or on flush; the visible
       accumulator resets so the next segment starts clean, and the last text is
@@ -340,6 +366,7 @@ class TranscriptAdapter:
 
     def __init__(self, config: SimulStreamingConfig):
         self.config = config
+        self.display_max_chars = getattr(config, "display_max_chars", VISIBLE_TEXT_MAX_CHARS)
         self.seq = 0
         self._segment_text = ""
         self._segment_start = None
@@ -351,13 +378,16 @@ class TranscriptAdapter:
         self.finals = 0
 
     def _emit(self, visible, start, end, is_final, normalized, infer_sec) -> dict:
+        bounded = bounded_tail(visible, self.display_max_chars)
         event = {
             "type": "transcript",
             "seq": self.seq,
             "is_final": bool(is_final),
             "start_sec": round(start, 3) if isinstance(start, (int, float)) else None,
             "end_sec": round(end, 3) if isinstance(end, (int, float)) else None,
-            "text": visible,
+            # Firmware-visible rolling tail; full segment kept for reconstruction.
+            "text": bounded,
+            "full_text": visible,
             "delta_text": normalized["text"],
             "run_engine": RUN_ENGINE,
             "alignatt_frame_threshold": self.config.frame_threshold,

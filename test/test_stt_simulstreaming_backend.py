@@ -205,6 +205,27 @@ class TranscriptAdapterTests(unittest.TestCase):
         self.assertEqual("nuevo", after["text"])  # accumulator reset
         self.assertEqual(1, adapter.stats_snapshot()["finals_emitted"])
 
+    def test_long_segment_bounds_visible_text_but_keeps_full_text(self):
+        from scripts.stt_simulstreaming_backend import VISIBLE_TEXT_MAX_CHARS
+
+        adapter = TranscriptAdapter(SimulStreamingConfig())
+        event = None
+        for i in range(60):
+            event = adapter.ingest(
+                {"text": f"palabra{i}", "start": float(i), "end": float(i) + 1, "is_final": False}
+            )[0]
+        # Firmware-visible text stays bounded (line/buffer safe); full_text complete.
+        self.assertLessEqual(len(event["text"]), VISIBLE_TEXT_MAX_CHARS)
+        self.assertTrue(event["full_text"].startswith("palabra0 palabra1"))
+        self.assertGreater(len(event["full_text"]), len(event["text"]))
+        self.assertTrue(event["text"] in event["full_text"] or event["text"].split()[-1] == "palabra59")
+
+    def test_bounded_tail_keeps_whole_words_from_the_end(self):
+        from scripts.stt_simulstreaming_backend import bounded_tail
+
+        self.assertEqual("hola mundo", bounded_tail("hola mundo", 50))
+        self.assertEqual("c d", bounded_tail("a b c d", 3))
+
     def test_force_final_flushes_pending_visible_text_once(self):
         adapter = TranscriptAdapter(SimulStreamingConfig())
         adapter.ingest({"text": "colgado", "start": 0.0, "end": 1.0, "is_final": False})

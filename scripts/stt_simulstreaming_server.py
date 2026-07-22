@@ -237,10 +237,12 @@ def run_offline_transcription(
         {
             "start_sec": event.get("start_sec"),
             "end_sec": event.get("end_sec"),
-            "text": event.get("text", ""),
+            # Offline reference needs the complete segment text, not the bounded
+            # rolling tail the live firmware display uses.
+            "text": (event.get("full_text") or event.get("text", "")),
         }
         for event in finals
-        if event.get("text")
+        if (event.get("full_text") or event.get("text"))
     ]
     text = " ".join(segment["text"] for segment in segments).strip()
     result_config = config.run_config(realtime=False, transport="http_offline")
