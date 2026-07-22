@@ -483,43 +483,66 @@ class SharedSimulModel:
             raise ValueError("SimulStreamingConfig.model_path is required to load a model")
         validate_checkpoint(config.model_path)
         self.config = config
-        self.asr, self._factory = self._build_asr(config)
+        # Build the heavy ASR (loads the checkpoint) ONCE. Per-session online
+        # processors are created cheaply around it in ``build_online``.
+        self.asr, self._online_cls = self._build_asr(config)
 
     @staticmethod
     def _build_asr(config: SimulStreamingConfig):
         # Imported here so the module stays torch-free at import time.
-        from simulstreaming.whisper.simul_whisper.config import AlignAttConfig
-        from simulstreaming.whisper.whisper_streaming.whisper_online_main import asr_factory
         from simulstreaming_whisper import simul_asr_factory
         from types import SimpleNamespace
 
+        # simul_asr_factory reads exactly these attributes (verified against upstream
+        # commit 077ea37d5ab4ff98bc567e4507f140dc4e5d5ad6). ``log_level`` and the
+        # prompt/context fields must be present or it raises AttributeError.
         args = SimpleNamespace(
             model_path=config.model_path,
             lan=config.language,
-            language=config.language,
             task=config.task,
             beams=config.beams,
             decoder=config.decoder_type,
             audio_max_len=config.audio_max_len,
             audio_min_len=config.audio_min_len,
             frame_threshold=config.frame_threshold,
-            cif_ckpt_path=config.cif_ckpt_path or None,
+            cif_ckpt_path=(config.cif_ckpt_path or None),
             never_fire=config.never_fire,
             init_prompt=None,
             static_init_prompt=None,
             max_context_tokens=None,
             min_chunk_size=config.min_chunk_sec,
-            vac=config.use_vac,
-            vac_chunk_size=0.04,
             logdir=None,
+            log_level="INFO",
         )
-        asr, _online = simul_asr_factory(args)
-        return asr, (asr_factory, simul_asr_factory, args)
+        asr, template_online = simul_asr_factory(args)
+        # Reuse the concrete online class the factory produced so we do not have to
+        # guess its import path when spawning per-session processors.
+        return asr, type(template_online)
 
     def build_online(self):
-        """Create a fresh per-session online processor around the shared model."""
-        _asr_factory, simul_asr_factory, args = self._factory
-        _asr, online = simul_asr_factory(args, asr=self.asr) if _accepts_asr(simul_asr_factory) else simul_asr_factory(args)
+        """Create a fresh per-session online processor around the shared ASR.
+
+        The factory does NOT wrap VAC; we do it here (matching upstream
+        whisper_online_main.asr_factory: ``VACOnlineASRProcessor(min_chunk_size,
+        online)``) so the heavy model stays shared while incremental + VAC state is
+        per session."""
+        online = self._online_cls(self.asr)
+        if getattr(online, "init", None):
+            try:
+                online.init()
+            except TypeError:
+                pass
+        if self.config.use_vac:
+            from simulstreaming.whisper.whisper_streaming.vac_online_processor import (
+                VACOnlineASRProcessor,
+            )
+
+            online = VACOnlineASRProcessor(self.config.min_chunk_sec, online)
+            if getattr(online, "init", None):
+                try:
+                    online.init()
+                except TypeError:
+                    pass
         return online
 
     def warmup(self, seconds: float = 1.0):
@@ -532,15 +555,6 @@ class SharedSimulModel:
         session.push_float32(np.zeros(int(TARGET_RATE * seconds), dtype="float32"))
         session.flush()
         return True
-
-
-def _accepts_asr(factory) -> bool:
-    try:
-        import inspect
-
-        return "asr" in inspect.signature(factory).parameters
-    except (TypeError, ValueError):
-        return False
 
 
 def transcribe_offline_float32(shared_model: SharedSimulModel, audio, source_rate: int) -> list[dict]:
