@@ -535,6 +535,15 @@ class TranscriptAdapter:
             "partial_updates": self.updates,
             "finals_emitted": self.finals,
             "events_emitted": self.seq,
+            # Bench pipeline-reliability compatibility fields. SimulStreaming has no
+            # discardable "jobs"; every committed event is delivered, so jobs ==
+            # events emitted and nothing is dropped. Without these the bench reads
+            # jobs_submitted=0 and scores inference 0/0 = 0 despite a perfect run.
+            "jobs_submitted": self.seq,
+            "events_dropped": 0,
+            "partial_jobs_skipped": 0,
+            "final_jobs_dropped": 0,
+            "event_queue_drained": True,
         }
 
 
