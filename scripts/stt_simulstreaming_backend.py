@@ -285,6 +285,16 @@ def resample_to_16k(mono_float32, source_rate: int):
 # segment text is preserved as ``full_text`` for WER/offline reconstruction.
 VISIBLE_TEXT_MAX_CHARS = 120
 
+# Live-caption "roll-up" display (CEA-608/708 style, the broadcast standard for
+# live captions): stable confirmed words build the current line left-to-right;
+# when the line fills (~one firmware text line) or a sentence ends, it is
+# finalized and rolls up to the context line, and a fresh line starts below. This
+# gives the word-by-word streaming feel with a stable anchor ("what is new is at
+# the bottom"), instead of a tail that scrolls horizontally every token. AlignAtt
+# commits are already stable, so confirmed words are never rewritten (no flicker).
+DISPLAY_LINE_MAX_CHARS = 55
+SENTENCE_ENDINGS = (".", "?", "!", "…")
+
 
 def bounded_tail(text: str, max_chars: int = VISIBLE_TEXT_MAX_CHARS) -> str:
     """Longest whole-word suffix of ``text`` that fits in ``max_chars``."""
@@ -299,6 +309,16 @@ def bounded_tail(text: str, max_chars: int = VISIBLE_TEXT_MAX_CHARS) -> str:
         kept.insert(0, word)
         total += extra
     return " ".join(kept) if kept else text[-max_chars:]
+
+
+def split_at_width(text: str, max_chars: int) -> tuple[str, str]:
+    """Split ``text`` into (head <= max_chars at a word boundary, remainder)."""
+    if len(text) <= max_chars:
+        return text, ""
+    cut = text.rfind(" ", 0, max_chars + 1)
+    if cut <= 0:
+        cut = max_chars
+    return text[:cut].rstrip(), text[cut:].lstrip()
 
 
 def _coerce_float(value):
@@ -371,8 +391,9 @@ class TranscriptAdapter:
     def __init__(self, config: SimulStreamingConfig):
         self.config = config
         self.display_max_chars = getattr(config, "display_max_chars", VISIBLE_TEXT_MAX_CHARS)
+        self.line_max_chars = getattr(config, "display_line_max_chars", DISPLAY_LINE_MAX_CHARS)
         self.seq = 0
-        self._segment_text = ""
+        self._current_line = ""
         self._segment_start = None
         self._last_end = None
         # Analysis counters.
@@ -413,8 +434,33 @@ class TranscriptAdapter:
         self.seq += 1
         return event
 
+    def _finalize_line(self, line, normalized, infer_sec, vac_status, *, vac_endpoint):
+        """Emit a completed display line as is_final (rolls up to the context line).
+
+        ``full_text`` is the line itself, so the report concatenates line finals
+        into the full transcript without duplication."""
+        event = self._emit(line, self._segment_start, self._last_end, True, normalized, infer_sec)
+        if vac_status is not None:
+            event["vac_status"] = vac_status
+        if vac_endpoint:
+            event["vac_endpoint"] = True
+            self.vac_endpoints += 1
+        self.finals += 1
+        return event
+
+    def _emit_partial(self, line, normalized, infer_sec, vac_status):
+        event = self._emit(line, self._segment_start, self._last_end, False, normalized, infer_sec)
+        if vac_status is not None:
+            event["vac_status"] = vac_status
+        self.updates += 1
+        return event
+
     def ingest(self, raw_result, *, vac_status=None, infer_sec=None) -> list[dict]:
-        """Map one raw processor result to zero or one transcript event."""
+        """Map one committed result to roll-up transcript events.
+
+        Confirmed words append verbatim to the in-progress line (word-by-word
+        streaming). The line finalizes — and rolls up — when it fills one display
+        line, ends a sentence, or VAC closes the utterance."""
         normalized = normalize_iter_result(raw_result)
         if normalized is None:
             self.empty_decodes += 1
@@ -423,9 +469,8 @@ class TranscriptAdapter:
         delta = normalized["text"]
         if delta.strip():
             # Concatenate verbatim: the token's own leading space (Whisper word
-            # boundary) is preserved, so "polic" + "ía" -> "policía" and
-            # "planta" + " El" -> "planta El". Whitespace is collapsed for display.
-            self._segment_text = (self._segment_text + delta) if self._segment_text else delta.lstrip()
+            # boundary) is preserved, so "polic" + "ía" -> "policía".
+            self._current_line = (self._current_line + delta) if self._current_line else delta.lstrip()
         if self._segment_start is None and normalized["start"] is not None:
             self._segment_start = normalized["start"]
         if normalized["end"] is not None:
@@ -433,29 +478,40 @@ class TranscriptAdapter:
         if normalized["truncated_last_word"]:
             self.truncations += 1
 
-        is_final = normalized["is_final"]
-        visible = " ".join(self._segment_text.split())
-        start = self._segment_start
-        end = normalized["end"]
-        event = self._emit(visible, start, end, is_final, normalized, infer_sec)
-        if vac_status is not None:
-            event["vac_status"] = vac_status
-        if is_final:
-            self.finals += 1
-            self.vac_endpoints += 1
-            self._segment_text = ""
+        vac_final = normalized["is_final"]
+        events: list[dict] = []
+
+        # Roll up any filled line(s): promote the head, keep building the remainder.
+        while True:
+            collapsed = " ".join(self._current_line.split())
+            if len(collapsed) <= self.line_max_chars:
+                break
+            head, tail = split_at_width(collapsed, self.line_max_chars)
+            if not head:
+                break
+            events.append(self._finalize_line(head, normalized, infer_sec, vac_status, vac_endpoint=False))
+            self._current_line = tail
             self._segment_start = None
-        else:
-            self.updates += 1
-        return [event]
+
+        collapsed = " ".join(self._current_line.split())
+        ends_sentence = bool(collapsed) and collapsed[-1] in SENTENCE_ENDINGS
+        if collapsed and (vac_final or ends_sentence):
+            events.append(
+                self._finalize_line(collapsed, normalized, infer_sec, vac_status, vac_endpoint=vac_final)
+            )
+            self._current_line = ""
+            self._segment_start = None
+        elif collapsed:
+            events.append(self._emit_partial(collapsed, normalized, infer_sec, vac_status))
+        elif vac_final:
+            self.vac_endpoints += 1
+        return events
 
     def force_final(self, *, infer_sec=None) -> list[dict]:
-        """Emit the pending visible text as final without new decoder output.
-
-        Used on session close if the processor's ``finish`` did not already flush
-        an is_final event, so the last segment is never dropped."""
-        visible = " ".join(self._segment_text.split())
-        if not visible:
+        """Finalize the pending in-progress line on session close so the last words
+        are never lost. Timestamps are numeric (the bridge does float(end_sec))."""
+        collapsed = " ".join(self._current_line.split())
+        if not collapsed:
             return []
         normalized = {
             "text": "",
@@ -465,12 +521,9 @@ class TranscriptAdapter:
             "words": None,
             "truncated_last_word": False,
         }
-        # _emit coerces start/end to numeric (never None), so the bridge's
-        # float(end_sec) cannot crash on the flush event.
-        event = self._emit(visible, self._segment_start, self._last_end, True, normalized, infer_sec)
+        event = self._finalize_line(collapsed, normalized, infer_sec, None, vac_endpoint=False)
         event["forced_flush"] = True
-        self.finals += 1
-        self._segment_text = ""
+        self._current_line = ""
         self._segment_start = None
         return event and [event] or []
 

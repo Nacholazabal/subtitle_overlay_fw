@@ -227,20 +227,26 @@ class TranscriptAdapterTests(unittest.TestCase):
         self.assertIsInstance(flushed["end_sec"], (int, float))
         self.assertIsInstance(flushed["start_sec"], (int, float))
 
-    def test_long_segment_bounds_visible_text_but_keeps_full_text(self):
-        from scripts.stt_simulstreaming_backend import VISIBLE_TEXT_MAX_CHARS
+    def test_long_speech_rolls_up_into_short_lines(self):
+        from scripts.stt_simulstreaming_backend import DISPLAY_LINE_MAX_CHARS
 
         adapter = TranscriptAdapter(SimulStreamingConfig())
-        event = None
+        all_events = []
         for i in range(60):
-            event = adapter.ingest(
+            all_events += adapter.ingest(
                 {"text": f" palabra{i}", "start": float(i), "end": float(i) + 1, "is_final": False}
-            )[0]
-        # Firmware-visible text stays bounded (line/buffer safe); full_text complete.
-        self.assertLessEqual(len(event["text"]), VISIBLE_TEXT_MAX_CHARS)
-        self.assertTrue(event["full_text"].startswith("palabra0 palabra1"))
-        self.assertGreater(len(event["full_text"]), len(event["text"]))
-        self.assertTrue(event["text"] in event["full_text"] or event["text"].split()[-1] == "palabra59")
+            )
+        all_events += adapter.force_final()
+
+        # Every event fits one display line (no giant scrolling column / no overflow).
+        for event in all_events:
+            self.assertLessEqual(len(event["text"]), DISPLAY_LINE_MAX_CHARS)
+        # Continuous speech rolled up into several finalized lines...
+        finals = [e for e in all_events if e["is_final"]]
+        self.assertGreater(len(finals), 1)
+        # ...and concatenating the line finals reconstructs the full transcript.
+        reconstructed = " ".join(e["full_text"] for e in finals)
+        self.assertEqual(" ".join(f"palabra{i}" for i in range(60)), reconstructed)
 
     def test_bounded_tail_keeps_whole_words_from_the_end(self):
         from scripts.stt_simulstreaming_backend import bounded_tail
