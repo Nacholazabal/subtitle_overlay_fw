@@ -90,8 +90,10 @@ La primera ejecución es lenta porque instala NeMo y descarga aproximadamente
 2.4 GB. Las siguientes reutilizan los pesos desde Drive, aunque NeMo se vuelve a
 instalar en cada runtime efímero.
 
-Si la instalación pide reiniciar el runtime por reemplazo de paquetes, reiniciar
-y volver a ejecutar desde la primera celda. El cache de Drive no se pierde.
+La celda de instalación agrega el checkout editable de NeMo al `sys.path` del
+kernel actual y comprueba inmediatamente `import nemo.collections.asr`. Si esa
+comprobación falla, la notebook se detiene ahí con el error real de instalación,
+en lugar de avanzar hasta la carga del modelo.
 
 ## Qué debe demostrar esta etapa
 
