@@ -86,6 +86,11 @@ MyDrive/TESIS/nemotron/
 5. Autorizar el montaje de Google Drive.
 6. Esperar la descarga inicial del checkpoint y la instalación de NeMo.
 
+Antes de preparar los audios, la notebook comprueba físicamente que el checkout
+contenga `scripts/stt_nemotron_probe.py`, coloca el repo primero en `sys.path` y
+elimina cualquier módulo previo llamado `scripts` que Colab haya conservado en
+memoria. Esto evita importar por accidente un paquete homónimo o una copia vieja.
+
 La primera ejecución es lenta porque instala NeMo y descarga aproximadamente
 2.4 GB. Las siguientes reutilizan los pesos desde Drive, aunque NeMo se vuelve a
 instalar en cada runtime efímero.
