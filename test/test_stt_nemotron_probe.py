@@ -1,5 +1,7 @@
 import json
+import os
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -97,6 +99,27 @@ class DriveDiscoveryTests(unittest.TestCase):
             for name in EXPECTED_AUDIO_NAMES:
                 (complete / name).write_bytes(b"webm")
             self.assertEqual(complete.resolve(), select_drive_audio_dir([incomplete, complete]))
+
+
+class PackageResolutionTests(unittest.TestCase):
+    def test_repo_scripts_wins_over_foreign_regular_package(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        marker = repo_root / "scripts" / "__init__.py"
+        self.assertTrue(marker.is_file())
+        with tempfile.TemporaryDirectory() as temporary:
+            foreign = Path(temporary) / "scripts"
+            foreign.mkdir()
+            (foreign / "__init__.py").write_text("ORIGIN = 'foreign'\n", encoding="utf-8")
+            environment = os.environ.copy()
+            environment["PYTHONPATH"] = os.pathsep.join((str(repo_root), temporary))
+            process = subprocess.run(
+                [sys.executable, "-c", "import scripts; print(scripts.__file__)"],
+                capture_output=True,
+                text=True,
+                env=environment,
+                check=True,
+            )
+        self.assertEqual(str(marker), process.stdout.strip())
 
 
 class InputPreparationTests(unittest.TestCase):

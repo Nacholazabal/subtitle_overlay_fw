@@ -89,7 +89,9 @@ MyDrive/TESIS/nemotron/
 Antes de preparar los audios, la notebook comprueba físicamente que el checkout
 contenga `scripts/stt_nemotron_probe.py`, coloca el repo primero en `sys.path` y
 elimina cualquier módulo previo llamado `scripts` que Colab haya conservado en
-memoria. Esto evita importar por accidente un paquete homónimo o una copia vieja.
+memoria. El `scripts/__init__.py` del proyecto además lo convierte en un paquete
+explícito, evitando que un paquete homónimo instalado por NeMo tenga prioridad
+sobre el namespace del repositorio.
 
 La primera ejecución es lenta porque instala NeMo y descarga aproximadamente
 2.4 GB. Las siguientes reutilizan los pesos desde Drive, aunque NeMo se vuelve a
