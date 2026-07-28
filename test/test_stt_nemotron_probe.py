@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import wave
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -15,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.stt_nemotron_probe import (
     EXPECTED_AUDIO_NAMES,
     NemotronProbeConfig,
+    build_offline_transcribe_config,
     build_official_streaming_command,
     discover_short_audios,
     parse_streaming_debug_transcripts,
@@ -146,6 +148,25 @@ class InputPreparationTests(unittest.TestCase):
             parsed = [json.loads(line) for line in manifest.read_text(encoding="utf-8").splitlines()]
             self.assertEqual("es-ES", parsed[0]["target_lang"])
             self.assertEqual("texto aproximado", parsed[0]["text"])
+
+
+class OfflineTranscribeConfigTests(unittest.TestCase):
+    def test_forces_dynamic_spanish_prompt_without_lhotse_manifest(self):
+        class FakeModel:
+            @staticmethod
+            def get_transcribe_config():
+                return SimpleNamespace()
+
+        transcribe_config = build_offline_transcribe_config(
+            FakeModel(), NemotronProbeConfig(target_lang="es-ES")
+        )
+
+        self.assertFalse(transcribe_config.use_lhotse)
+        self.assertEqual("es-ES", transcribe_config.target_lang)
+        self.assertEqual(1, transcribe_config.batch_size)
+        self.assertTrue(transcribe_config.return_hypotheses)
+        self.assertEqual(0, transcribe_config.num_workers)
+        self.assertFalse(transcribe_config.verbose)
 
 
 class OfficialCommandTests(unittest.TestCase):

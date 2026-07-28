@@ -19,6 +19,12 @@ En esta etapa no intervienen la placa, el bridge, el firmware ni ngrok.
 - Salida: transcripción de archivo completo, simulación streaming oficial,
   provenance y logs bajo Google Drive.
 
+Para la transcripción de archivo completo se desactiva el dataloader Lhotse de
+esta revisión de NeMo. Con una lista simple de paths, ese dataloader genera
+supervisiones sin idioma (`prompt=None`) para el modelo prompt-aware. La ruta
+normal de NeMo usa el `target_lang=es-ES` del config para generar el prompt
+dinámicamente y evita esa pérdida de información.
+
 El modelo y la relación entre contexto y latencia están documentados en:
 
 - <https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b>

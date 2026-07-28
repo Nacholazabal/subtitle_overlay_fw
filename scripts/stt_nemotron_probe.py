@@ -203,6 +203,25 @@ def prepare_probe_inputs(
     return records, manifest
 
 
+def build_offline_transcribe_config(model, config: NemotronProbeConfig):
+    """Build the prompt-safe config for complete-file NeMo transcription.
+
+    The prompt-aware RNNT model's current Lhotse path writes temporary entries
+    without a supervision language when ``audio`` is a plain list of paths. The
+    prompt dataset then tries to resolve the literal key ``None``. The non-Lhotse
+    path intentionally leaves prompt indices out of the batch, which makes the
+    model use ``trcfg.target_lang`` in its documented dynamic-prompt fallback.
+    """
+    transcribe_config = model.get_transcribe_config()
+    transcribe_config.use_lhotse = False
+    transcribe_config.batch_size = 1
+    transcribe_config.return_hypotheses = True
+    transcribe_config.num_workers = 0
+    transcribe_config.verbose = False
+    transcribe_config.target_lang = config.target_lang
+    return transcribe_config
+
+
 def build_official_streaming_command(
     nemo_root: Path,
     manifest: Path,
