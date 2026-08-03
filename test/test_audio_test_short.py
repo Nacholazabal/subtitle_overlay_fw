@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts import audio_test_short
 from scripts.audio_test_short import (
     FASTER_WHISPER_PROFILE,
+    NEMOTRON_PROFILE,
     SIMULSTREAMING_PROFILE,
     backend_metrics,
     board_delivery_result,
@@ -388,6 +389,85 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual("simulstreaming_alignatt", simul["__profile__"])
 
 
+class NemotronProfileTests(unittest.TestCase):
+    def test_profile_is_selectable_by_name(self):
+        self.assertIs(NEMOTRON_PROFILE, select_profile("nemotron_3_5_nemo"))
+        self.assertEqual("run_stt_colab_nemotron.sh", NEMOTRON_PROFILE.launcher)
+
+    def test_profile_refuses_to_run_against_another_backend(self):
+        NEMOTRON_PROFILE.verify_health({"run_engine": "nemotron_3_5_nemo"})
+        NEMOTRON_PROFILE.verify_health({"run_config": {"run_engine": "nemotron_3_5_nemo"}})
+        for wrong in ("simulstreaming_alignatt", "stream_server", None):
+            with self.assertRaises(RuntimeError):
+                NEMOTRON_PROFILE.verify_health({"run_engine": wrong})
+
+    def test_session_config_travels_as_backend_config_json(self):
+        env = NEMOTRON_PROFILE.config_env({"latency_ms": 560, "stop_history_eou_ms": 400})
+        self.assertIn("STT_BACKEND_CONFIG_JSON", env)
+        self.assertEqual(
+            {"latency_ms": 560, "stop_history_eou_ms": 400},
+            json.loads(env["STT_BACKEND_CONFIG_JSON"]),
+        )
+
+    def test_validator_rejects_foreign_and_invalid_parameters(self):
+        self.assertEqual({"latency_ms": 320}, NEMOTRON_PROFILE.validator({"latency_ms": 320}))
+        with self.assertRaises(ValueError):
+            NEMOTRON_PROFILE.validator({"frame_threshold": 25})
+        with self.assertRaises(ValueError):
+            NEMOTRON_PROFILE.validator({"latency_ms": 250})
+
+    def test_offline_cache_signature_pins_engine_model_and_operating_point(self):
+        health = {
+            "run_config": {
+                "run_engine": "nemotron_3_5_nemo",
+                "nemo_commit": "2639d4bef8d1450782263a8f616242acfb6fecb9",
+                "config_model": "nvidia/nemotron-3.5-asr-streaming-0.6b",
+                "config_target_lang": "es-ES",
+                "config_decoder_type": "rnnt",
+                "config_latency_ms": 320,
+                "config_att_context_size": [56, 3],
+                "config_stop_history_eou_ms": 800,
+                "config_residue_tokens_at_end": 2,
+                "config_strip_lang_tags": True,
+            }
+        }
+        signature = offline_signature(health, None, NEMOTRON_PROFILE)
+        self.assertEqual("nemotron_3_5_nemo", signature["__profile__"])
+        for key in (
+            "run_engine",
+            "nemo_commit",
+            "config_model",
+            "config_target_lang",
+            "config_decoder_type",
+            "config_latency_ms",
+            "config_att_context_size",
+            "config_strip_lang_tags",
+        ):
+            self.assertIn(key, signature)
+        # A different operating point must not reuse the 320 ms cache entry.
+        other = offline_signature(health, {"latency_ms": 560}, NEMOTRON_PROFILE)
+        self.assertNotEqual(signature, other)
+
+    def test_offline_signature_differs_from_the_other_backends(self):
+        health = {"run_config": {"run_engine": "nemotron_3_5_nemo"}}
+        self.assertNotEqual(
+            offline_signature(health, None, NEMOTRON_PROFILE),
+            offline_signature(health, None, SIMULSTREAMING_PROFILE),
+        )
+
+    def test_sweep_is_gated_until_the_smoke_test_passes(self):
+        with self.assertRaises(RuntimeError) as raised:
+            load_sweep_cases(None, NEMOTRON_PROFILE)
+        self.assertIn("smoke", str(raised.exception))
+
+    def test_sweep_file_still_rejects_foreign_parameters(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "sweep.json"
+            path.write_text(json.dumps([{"name": "bad", "frame_threshold": 25}]), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_sweep_cases(path, NEMOTRON_PROFILE)
+
+
 class SimulStreamingSweepTests(unittest.TestCase):
     def test_initial_sweep_file_loads_four_alignatt_cases(self):
         cases = load_sweep_cases(None, SIMULSTREAMING_PROFILE)
@@ -422,6 +502,18 @@ class BackendMetricsTests(unittest.TestCase):
         self.assertEqual(2, metrics["empty_decodes"])
         self.assertEqual(1, metrics["last_word_truncations"])
         self.assertAlmostEqual(0.4, metrics["update_rate_hz"])
+
+    def test_nemotron_final_reasons_are_kept_separate(self):
+        events = [
+            {"seq": 0, "is_final": True, "text": "línea", "final_reason": "display_rollup"},
+            {"seq": 1, "is_final": True, "text": "frase", "final_reason": "model_eou"},
+            {"seq": 2, "is_final": True, "text": "cierre", "final_reason": "session_flush"},
+        ]
+        metrics = backend_metrics(events, {"eou_count": 2}, audio_duration_sec=3.0)
+        self.assertEqual(2, metrics["model_eou_count"])
+        self.assertEqual(1, metrics["model_eou_events"])
+        self.assertEqual(1, metrics["display_rollup_finals"])
+        self.assertEqual(1, metrics["session_flush_finals"])
 
 
 if __name__ == "__main__":

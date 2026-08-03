@@ -28,6 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 from scripts.stt_stream_protocol import validate_config_overrides
 from scripts import stt_simulstreaming_backend as simul_backend
+from scripts import stt_nemotron_backend as nemotron_backend
 
 
 DEFAULT_AUDIO_DIR = Path("/mnt/c/Users/nacho/Desktop/Postgrado/TESIS/audios")
@@ -80,6 +81,24 @@ def validate_simulstreaming_overrides(overrides: dict) -> dict:
     """Validate SimulStreaming session overrides via the backend's own schema and
     return the normalized subset that was requested."""
     config = simul_backend.SimulStreamingConfig.from_overrides(overrides)
+    return {name: getattr(config, name) for name in overrides}
+
+
+# Nemotron session tuning, same generic backend-config JSON transport as
+# SimulStreaming. ``latency_ms`` is the model's published operating point
+# (algorithmic lookahead), not an end-to-end latency budget.
+NEMOTRON_PARAMETER_MAP = {
+    "latency_ms": ("config_latency_ms", None),
+    "stop_history_eou_ms": ("config_stop_history_eou_ms", None),
+    "residue_tokens_at_end": ("config_residue_tokens_at_end", None),
+    "target_lang": ("config_target_lang", None),
+}
+
+
+def validate_nemotron_overrides(overrides: dict) -> dict:
+    """Validate Nemotron session overrides via the backend's own schema and
+    return the normalized subset that was requested."""
+    config = nemotron_backend.NemotronConfig.from_overrides(overrides)
     return {name: getattr(config, name) for name in overrides}
 
 
@@ -159,12 +178,14 @@ class Profile:
       param_map         name -> (run_config key, env var or None)
       validator         session-override validator returning a normalized dict
       sweep_file        default sweep JSON (None = built-in faster-whisper matrix)
+      sweep_disabled_reason  set to refuse --sweep with an explanation (no matrix yet)
       offline_header    HTTP header carrying offline overrides
       offline_keys      run_config keys forming the offline cache signature
     """
 
     def __init__(self, name, expected_engine, launcher, param_map, validator,
-                 sweep_file, offline_header, offline_keys, offline_override_keys):
+                 sweep_file, offline_header, offline_keys, offline_override_keys,
+                 sweep_disabled_reason=None):
         self.name = name
         self.expected_engine = expected_engine
         self.launcher = launcher
@@ -174,6 +195,9 @@ class Profile:
         self.offline_header = offline_header
         self.offline_keys = offline_keys
         self.offline_override_keys = offline_override_keys
+        # Set when a backend deliberately has no sweep matrix yet, so --sweep
+        # explains the gate instead of failing on a foreign parameter schema.
+        self.sweep_disabled_reason = sweep_disabled_reason
 
     def verify_health(self, health: dict) -> None:
         if self.expected_engine is None:
@@ -260,9 +284,45 @@ SIMULSTREAMING_PROFILE = Profile(
     ),
 )
 
+NEMOTRON_PROFILE = Profile(
+    name="nemotron_3_5_nemo",
+    expected_engine=nemotron_backend.RUN_ENGINE,
+    launcher="run_stt_colab_nemotron.sh",
+    param_map=NEMOTRON_PARAMETER_MAP,
+    validator=validate_nemotron_overrides,
+    # No sweep matrix yet on purpose: the 320 ms smoke test must pass end to end
+    # (stable /health, EOU finals, 100% firmware ACKs, no growing backlog) before
+    # an 80/320/560 sweep is worth running. See scripts/audiotestnemotron.sh.
+    sweep_file=None,
+    sweep_disabled_reason=(
+        "the nemotron_3_5_nemo profile has no sweep matrix yet; run the 320 ms smoke "
+        "test first, then add scripts/sweeps/nemotron_initial.json"
+    ),
+    offline_header="X-STT-Backend-Config",
+    offline_keys=(
+        "run_engine",
+        "nemo_commit",
+        "config_model",
+        "config_target_lang",
+        "config_decoder_type",
+        "config_latency_ms",
+        "config_att_context_size",
+        "config_stop_history_eou_ms",
+        "config_residue_tokens_at_end",
+        "config_strip_lang_tags",
+    ),
+    offline_override_keys=(
+        "latency_ms",
+        "stop_history_eou_ms",
+        "residue_tokens_at_end",
+        "target_lang",
+    ),
+)
+
 PROFILES = {
     FASTER_WHISPER_PROFILE.name: FASTER_WHISPER_PROFILE,
     SIMULSTREAMING_PROFILE.name: SIMULSTREAMING_PROFILE,
+    NEMOTRON_PROFILE.name: NEMOTRON_PROFILE,
 }
 
 
@@ -876,6 +936,10 @@ def backend_metrics(events: list[dict], done: dict, audio_duration_sec: float | 
     infer_values = event_values(events, "gpu_infer_sec")
     total_infer = sum(infer_values)
     truncations = sum(1 for event in events if event.get("truncated_last_word"))
+    final_reasons = {
+        reason: sum(1 for event in finals if event.get("final_reason") == reason)
+        for reason in ("model_eou", "display_rollup", "session_flush")
+    }
     return {
         "events": len(events),
         "finals": len(finals),
@@ -887,6 +951,13 @@ def backend_metrics(events: list[dict], done: dict, audio_duration_sec: float | 
         "partial_stability": (
             round(1.0 - replacements / len(partials), 4) if partials else None
         ),
+        # Nemotron uses ``is_final`` for the firmware roll-up contract. Keep
+        # acoustic EOU, display line promotion and connection flush separate.
+        # Other backends simply report zero for these engine-specific fields.
+        "model_eou_events": final_reasons["model_eou"],
+        "display_rollup_finals": final_reasons["display_rollup"],
+        "session_flush_finals": final_reasons["session_flush"],
+        "model_eou_count": int(done.get("eou_count", final_reasons["model_eou"]) or 0),
         "update_rate_hz": (
             round(len(events) / audio_duration_sec, 3)
             if audio_duration_sec and audio_duration_sec > 0
@@ -1250,6 +1321,20 @@ def render_markdown(report: dict) -> str:
             "",
         ]
     )
+    if report.get("run_engine") == nemotron_backend.RUN_ENGINE:
+        backend = report["global_metrics"]["backend"]
+        lines.extend(
+            [
+                "## Segmentación Nemotron",
+                "",
+                f"- EOU detectados por RNNTGreedyEndpointing: {backend['model_eou_count']}",
+                f"- Eventos finales `model_eou`: {backend['model_eou_events']}",
+                f"- Finales de presentación `display_rollup`: {backend['display_rollup_finals']}",
+                f"- Finales por cierre `session_flush`: {backend['session_flush_finals']}",
+                "- `display_rollup` mantiene legible el overlay; no constituye un EOU acústico.",
+                "",
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -1269,6 +1354,14 @@ def print_summary(report: dict) -> None:
     print(f"  p95/p99/max  : {fmt(report['global_metrics']['latency']['p95'])}/{fmt(report['global_metrics']['latency']['p99'])}/{fmt(report['global_metrics']['latency']['max'])}s")
     print(f"  partial skips: {reliability['partial_jobs_skipped']} (not final losses)")
     print(f"  real drops   : {reliability['board_dropped_chunks_during_session']} audio / {reliability['final_jobs_dropped']} finals")
+    if report.get("run_engine") == nemotron_backend.RUN_ENGINE:
+        backend = report["global_metrics"]["backend"]
+        print(
+            "  Nemotron EOU : "
+            f"{backend['model_eou_count']} EOU / "
+            f"{backend['display_rollup_finals']} display rollups / "
+            f"{backend['session_flush_finals']} flushes"
+        )
     print(f"  report       : logs/audio-tests/{report['run_id']}/report.md")
 
 
@@ -1543,6 +1636,8 @@ def load_sweep_cases(path: Path | None = None, profile: "Profile" = None) -> lis
     profile = profile or FASTER_WHISPER_PROFILE
     param_map = profile.param_map
     if path is None:
+        if profile.sweep_disabled_reason:
+            raise RuntimeError(profile.sweep_disabled_reason)
         if profile.sweep_file is not None:
             path = profile.sweep_file
         else:
@@ -1815,6 +1910,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-never-fire", dest="never_fire", action="store_const", const=False)
     parser.add_argument("--audio-max-len", type=float)
     parser.add_argument("--audio-min-len", type=float)
+    # nemotron_3_5_nemo session parameters (optional single-run overrides).
+    parser.add_argument("--latency-ms", type=int, help="Nemotron published operating point (algorithmic lookahead)")
+    parser.add_argument("--stop-history-eou-ms", type=int)
+    parser.add_argument("--residue-tokens-at-end", type=int)
+    parser.add_argument("--target-lang")
     parser.add_argument(
         "--refresh-offline", action="store_true", help="ignore and replace matching offline cache entries"
     )

@@ -1,12 +1,24 @@
 # Nemotron 3.5 + NeMo en Colab
 
-Esta es la primera etapa del experimento Nemotron. Valida instalación, modelo,
-audios y streaming cache-aware directamente en Colab antes de agregar otro
-servidor live al sistema.
+Este documento cubre las dos etapas del experimento Nemotron:
+
+1. **Probe** (`scripts/colab_nemotron_probe.ipynb`): valida instalación, modelo,
+   audios y streaming cache-aware en Colab, sin placa ni bridge. **Ya ejecutado
+   con éxito.**
+2. **Servidor live** (`scripts/colab_nemotron_server.ipynb`): tercer backend STT
+   conectado al bridge y al firmware existentes. Ver
+   [Etapa 2: servidor live](#etapa-2-servidor-live).
+
+---
+
+## Etapa 1: probe
+
+Valida instalación, modelo, audios y streaming cache-aware directamente en Colab
+antes de agregar otro servidor live al sistema.
 
 En esta etapa no intervienen la placa, el bridge, el firmware ni ngrok.
 
-## Qué está implementado
+### Qué está implementado
 
 - Notebook: `scripts/colab_nemotron_probe.ipynb`.
 - Modelo: `nvidia/nemotron-3.5-asr-streaming-0.6b`.
@@ -30,7 +42,7 @@ El modelo y la relación entre contexto y latencia están documentados en:
 - <https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b>
 - <https://docs.nvidia.com/nemo/speech/nightly/asr/inference.html>
 
-## Preparación de Google Drive
+### Preparación de Google Drive
 
 No es necesario subir manualmente el checkpoint. La notebook lo descarga y lo
 cachea en Drive.
@@ -78,7 +90,7 @@ MyDrive/TESIS/nemotron/
     └── streaming-summary.json
 ```
 
-## Cómo correrla
+### Cómo correrla
 
 1. Desde WSL, pushear la rama para que Colab pueda clonarla:
 
@@ -108,7 +120,7 @@ kernel actual y comprueba inmediatamente `import nemo.collections.asr`. Si esa
 comprobación falla, la notebook se detiene ahí con el error real de instalación,
 en lugar de avanzar hasta la carga del modelo.
 
-## Qué debe demostrar esta etapa
+### Qué debe demostrar esta etapa
 
 Se considera exitosa cuando:
 
@@ -125,14 +137,151 @@ Se considera exitosa cuando:
 el HDMI. La latencia end-to-end se medirá recién cuando el backend live use el
 bridge y los ACK del firmware.
 
-## Siguiente etapa, si pasa
+### Resultado del probe
 
-Con un resultado exitoso se fijará el SHA de NeMo que funcionó y se implementará:
+El probe pasó. El SHA de NeMo quedó fijado en
+`2639d4bef8d1450782263a8f616242acfb6fecb9` y con eso se construyó la etapa 2.
 
-1. `stt_nemotron_backend.py`, con una sesión cache-aware persistente;
-2. `stt_nemotron_server.py`, conservando `/health`, `/stt/offline` y
-   `/stt/stream`;
-3. el launcher y el perfil `audiotestnemotron.sh`;
-4. la medición end-to-end contra Faster-Whisper y SimulStreaming.
+---
 
-No se modificará el firmware para esa integración.
+## Etapa 2: servidor live
+
+Tercer backend STT, en paralelo a faster-whisper y SimulStreaming. Cambia
+**solamente** el motor de inferencia en Colab. La placa, el bridge
+(`stt_stream_bridge.py`), el protocolo de sesión (`stt_stream_protocol.py`), los
+ACK del firmware y el overlay HDMI se reutilizan sin ninguna modificación.
+
+```text
+placa → bridge actual → WebSocket Colab → Nemotron/NeMo
+      ← transcripts ← bridge ← ACK firmware ← overlay HDMI
+```
+
+### Archivos
+
+| Archivo | Rol |
+| --- | --- |
+| `scripts/stt_nemotron_backend.py` | Config, provenance, sesión cache-aware, adapter de transcripts, offline |
+| `scripts/stt_nemotron_server.py` | `GET /health`, `POST /stt/offline`, `WS /stt/stream` |
+| `scripts/colab_nemotron_server.ipynb` | Notebook live (GPU → Drive → repo → NeMo pin → carga → uvicorn → ngrok) |
+| `scripts/run_stt_colab_nemotron.sh` | Launcher del bridge (copia de `run_stt_colab_simulstream.sh`) |
+| `scripts/audiotestnemotron.sh` | Wrapper fino del banco de pruebas, perfil `nemotron_3_5_nemo` |
+| `test/test_stt_nemotron_backend.py`, `test/test_stt_nemotron_server.py` | Tests sin GPU |
+
+### Motor de inferencia
+
+Se usa la API oficial de inferencia streaming de NeMo del commit fijado, no un
+subprocess por sesión y no una reimplementación:
+
+| Pieza | API oficial usada |
+| --- | --- |
+| Construcción | `nemo.collections.asr.inference.factory.pipeline_builder.PipelineBuilder` → `CacheAwareRNNTPipeline` |
+| Config | Misma forma que `examples/asr/conf/asr_streaming_inference/cache_aware_rnnt.yaml` |
+| Sesión | `pipeline.open_session()` / `transcribe_step([Frame])` / `close_session()` |
+| Idioma | `ASRRequestOptions.language_code='es-ES'` (prompt oficial del checkpoint) |
+| Fin de frase | `RNNTGreedyEndpointing`, vía `endpointing.stop_history_eou` |
+
+Los caches del encoder y las hipótesis previas viven en el estado por stream del
+pipeline: no se recalcula audio pasado ni se lanza un proceso por sesión.
+
+**El EOU oficial existe y es compatible con este checkpoint.** El pipeline
+cache-aware es prompt-aware (`prompt_enabled`, `_build_prompt_vectors`), lo que
+cubre `EncDecRNNTBPEModelWithPrompt`. Un EOU se manifiesta como
+`TranscribeStepOutput.final_transcript` no vacío; el texto en curso llega como
+`partial_transcript`. No se agregó Silero, WebRTC VAD, LocalAgreement, AlignAtt ni
+ninguna heurística para decidir el EOU.
+
+**Ojo con el default de idioma:** si no se pasa `language_code`, el pipeline usa
+`en-US`. El backend siempre lo fija explícitamente en `es-ES`.
+
+### Configuración inicial fija
+
+- `target_lang=es-ES`
+- decoder RNNT (`greedy_batch`)
+- `att_context_size=[56,3]` (punto publicado de 320 ms)
+- `stop_history_eou=800 ms`, `residue_tokens_at_end=2` (defaults oficiales)
+- 16 kHz, tags `<es-ES>` eliminados
+- `compute_dtype=float32` + AMP, igual que el probe en T4
+
+Sin beam search, sin auto-language, sin context biasing, sin ITN y sin traducción.
+
+`320 ms` es el **lookahead algorítmico del modelo**, no la latencia end-to-end
+hasta el HDMI. En `/health`, en los eventos y en el summary aparece como
+`lookahead_ms` justamente por eso.
+
+### Display y partials
+
+El adapter reutiliza la política de display del backend SimulStreaming (mismo
+`bounded_tail` / `split_at_width` / límites de línea), adaptada a la salida
+append-only de Nemotron: NeMo entrega la utterance completa en cada paso, no un
+delta, así que el adapter lleva la cuenta de cuántas palabras ya se promovieron a
+líneas finalizadas y sólo muestra el resto. Así una utterance de 60 s nunca llega
+al firmware como una sola línea de 60 s.
+
+Además: suprime partials idénticos, elimina `<es-ES>`, normaliza whitespace,
+conserva puntuación y capitalización del modelo, y nunca reescribe texto ya
+mostrado (si NeMo revisara un partial, se resincroniza por prefijo común y lo
+cuenta en `partial_revisions`).
+
+El protocolo distingue explícitamente tres motivos que el firmware representa
+con `is_final=true`:
+
+- `final_reason=model_eou`: `RNNTGreedyEndpointing` cerró la utterance;
+- `final_reason=display_rollup`: el adapter promovió una línea por ancho o
+  puntuación para mantener legible el overlay;
+- `final_reason=session_flush`: cierre final al terminar la conexión.
+
+Sólo `model_eou` cuenta como EOU del modelo. El roll-up es una política de
+presentación copiada de los backends anteriores, no una decisión acústica.
+
+Los overrides de `latency_ms`, `stop_history_eou_ms` y
+`residue_tokens_at_end` reconfiguran el pipeline/endpointer entre sesiones. El
+servidor permite una única sesión GPU activa, evitando que esa reconfiguración
+comparta estado con otro stream.
+
+### Timestamps
+
+Siempre numéricos. Cada evento indica su origen en `timestamp_source`:
+
+- `nemo_segments`: vienen de los `TextSegment` del EOU;
+- `sample_clock`: derivados del conteo de muestras del stream.
+
+El endpoint offline nunca fabrica timestamps: si NeMo no los da, devuelve
+`segments: []` y `segments_source: "unavailable"`.
+
+### Cómo correrlo
+
+1. Desde WSL, pushear la rama:
+
+   ```bash
+   git push -u origin dev/nemotron
+   ```
+
+2. Abrir `scripts/colab_nemotron_server.ipynb` en Colab, GPU T4 o mejor,
+   `Runtime -> Run all`.
+3. Esperar a que imprima `HEALTH: ready` y las URLs. ngrok se levanta **después**
+   de la readiness real; usa el dominio reservado
+   `passage-capacity-wistful.ngrok-free.dev` (secret `NGROK_AUTHTOKEN`, opcional
+   `NGROK_DOMAIN`).
+4. Desde WSL:
+
+   ```bash
+   ./scripts/audiotestnemotron.sh
+   ```
+
+El banco aborta antes de reproducir audio si `/health` no reporta
+`run_engine=nemotron_3_5_nemo`, así que nunca se mide el backend equivocado.
+
+### Sweep
+
+`--sweep` está deliberadamente deshabilitado para este perfil. Primero tiene que
+pasar el smoke test de 320 ms: `/health` estable, una sesión completa, finales por
+EOU (no una única utterance de 60 s), 100 % de ACKs del firmware, sin eventos
+rechazados y sin backlog creciente. Recién ahí tiene sentido agregar
+`scripts/sweeps/nemotron_initial.json` con 80/320/560 reutilizando el mismo
+harness.
+
+### Qué NO se tocó
+
+Firmware, protocolo de la placa, `stt_stream_bridge.py`, los servidores
+faster-whisper y SimulStreaming, y los defaults existentes del banco de pruebas.
+No se agregaron endpoints, autenticación, Docker ni base de datos.
