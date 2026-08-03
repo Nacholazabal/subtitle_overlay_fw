@@ -829,7 +829,20 @@ def pipeline_config_dict(config: NemotronConfig) -> dict:
                 },
             },
         },
-        "itn": {},
+        # StreamingTextProcessor reads batch_size, n_jobs and
+        # left_padding_size during construction even when enable_itn is false.
+        # Keep the complete shape from NeMo's pinned
+        # cache_aware_rnnt.yaml; these values configure no active ITN model in
+        # this experiment because enable_itn remains false below.
+        "itn": {
+            "input_case": "lower_cased",
+            "whitelist": None,
+            "overwrite_cache": False,
+            "max_number_of_permutations_per_split": 729,
+            "left_padding_size": 4,
+            "batch_size": 32,
+            "n_jobs": 16,
+        },
         "confidence": {
             "exclude_blank": True,
             "aggregation": "mean",

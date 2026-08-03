@@ -505,6 +505,13 @@ class PipelineConfigTests(unittest.TestCase):
         self.assertFalse(cfg["enable_nmt"])
         self.assertFalse(cfg["asr"]["decoding"]["greedy"]["enable_per_stream_biasing"])
 
+    def test_disabled_itn_keeps_constructor_required_config_shape(self):
+        cfg = backend.pipeline_config_dict(NemotronConfig())
+        self.assertFalse(cfg["enable_itn"])
+        self.assertEqual(32, cfg["itn"]["batch_size"])
+        self.assertEqual(16, cfg["itn"]["n_jobs"])
+        self.assertEqual(4, cfg["itn"]["left_padding_size"])
+
     def test_latency_selects_the_attention_context(self):
         cfg = backend.pipeline_config_dict(NemotronConfig(latency_ms=560))
         self.assertEqual([56, 6], cfg["streaming"]["att_context_size"])
