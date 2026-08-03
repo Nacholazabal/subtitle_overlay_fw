@@ -25,6 +25,7 @@ from scripts.stt_nemotron_backend import (
     att_context_size_for,
     clean_text,
     common_word_prefix,
+    install_prompt_projection_compat,
     normalize_step_output,
     take_line_words,
 )
@@ -523,6 +524,60 @@ class PipelineConfigTests(unittest.TestCase):
 
 
 class SharedModelTests(unittest.TestCase):
+    def test_prompt_compat_projects_encoder_output_before_decoding(self):
+        class Decoding:
+            def __init__(self):
+                self.calls = []
+
+            def rnnt_decoder_predictions_tensor(self, encoded, encoded_len, **kwargs):
+                self.calls.append((encoded, encoded_len, kwargs))
+                return ["hypothesis"]
+
+        class Model:
+            def __init__(self):
+                self.decoding = Decoding()
+
+        class Wrapper:
+            def __init__(self):
+                self.asr_model = Model()
+
+            def execute_step(self, *args, **kwargs):
+                raise AssertionError("the unpatched NeMo implementation must not run")
+
+            def encoder_step(self, **kwargs):
+                self.encoder_kwargs = kwargs
+                return "raw-encoded", 7, "new-context"
+
+        class Pipeline:
+            prompt_enabled = True
+
+            def __init__(self):
+                self.asr_model = Wrapper()
+
+        pipeline = Pipeline()
+        projector_calls = []
+
+        def projector(model, encoded, prompt_vectors):
+            projector_calls.append((model, encoded, prompt_vectors))
+            return "prompted-encoded"
+
+        self.assertTrue(install_prompt_projection_compat(pipeline, projector=projector))
+        result = pipeline.asr_model.execute_step(
+            "signal", 123, "context", ["previous"], 2, False, prompt_vectors="es-ES-one-hot"
+        )
+        self.assertEqual((["hypothesis"], "new-context"), result)
+        self.assertEqual("raw-encoded", projector_calls[0][1])
+        self.assertEqual("es-ES-one-hot", projector_calls[0][2])
+        decoding_call = pipeline.asr_model.asr_model.decoding.calls[0]
+        self.assertEqual("prompted-encoded", decoding_call[0])
+        self.assertEqual(["previous"], decoding_call[2]["partial_hypotheses"])
+        # Installing twice must not wrap the wrapper twice.
+        self.assertTrue(install_prompt_projection_compat(pipeline, projector=projector))
+
+    def test_non_prompt_pipeline_does_not_install_compat(self):
+        pipeline = FakePipeline()
+        self.assertFalse(install_prompt_projection_compat(pipeline))
+
     def test_shared_pipeline_is_reused_across_sessions(self):
         pipeline = FakePipeline(chunk_size_in_secs=0.1)
         shared = SharedNemotronModel(NemotronConfig(), pipeline=pipeline)
@@ -584,6 +639,54 @@ class SharedModelTests(unittest.TestCase):
         self.assertIn("torch_version", provenance)
         self.assertIn("nemo_toolkit_version", provenance)
         self.assertIn("model_revision", provenance)
+
+    def test_speech_canary_requires_at_least_one_streaming_event(self):
+        class WarmupSession:
+            def __init__(self, events):
+                self.events = list(events)
+
+            def push_float32(self, _audio):
+                events, self.events = self.events, []
+                return events
+
+            def flush(self):
+                return []
+
+            def close(self):
+                pass
+
+            def stats_snapshot(self):
+                return {
+                    "events_emitted": 1,
+                    "partials_received": 1,
+                    "finals_emitted": 0,
+                }
+
+        shared = SharedNemotronModel(NemotronConfig(), pipeline=FakePipeline())
+        sessions = iter((WarmupSession([]), WarmupSession([{"text": "hola"}])))
+        shared.build_session = lambda **_kwargs: next(sessions)
+        summary = shared.warmup(0.1, speech_audio=np.ones(1600, dtype="float32"))
+        self.assertTrue(summary["speech_canary"])
+        self.assertEqual(1, summary["events_emitted"])
+
+    def test_speech_canary_rejects_an_all_blank_stream(self):
+        class EmptySession:
+            def push_float32(self, _audio):
+                return []
+
+            def flush(self):
+                return []
+
+            def close(self):
+                pass
+
+            def stats_snapshot(self):
+                return {"events_emitted": 0}
+
+        shared = SharedNemotronModel(NemotronConfig(), pipeline=FakePipeline())
+        shared.build_session = lambda **_kwargs: EmptySession()
+        with self.assertRaisesRegex(RuntimeError, "produced no transcript events"):
+            shared.warmup(0.1, speech_audio=np.ones(1600, dtype="float32"))
 
 
 class OfflineExtractionTests(unittest.TestCase):

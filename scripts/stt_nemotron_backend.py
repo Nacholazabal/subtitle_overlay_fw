@@ -48,6 +48,7 @@ import sys
 import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
+from types import MethodType
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -888,6 +889,101 @@ def build_pipeline_config(config: NemotronConfig):
     return OmegaConf.create(pipeline_config_dict(config))
 
 
+def _apply_prompt_projection(model, encoded, prompt_vectors):
+    """Apply Nemotron's language prompt to cache-aware encoder output.
+
+    NeMo at :data:`NEMO_COMMIT` creates the correct per-stream one-hot prompt
+    inside ``CacheAwareRNNTPipeline`` and passes it to
+    ``CacheAwareRNNTInferenceWrapper.execute_step``.  That wrapper accepts the
+    argument but currently ignores it before invoking the RNNT decoder.  The
+    prompt-conditioned checkpoint consequently decodes only blanks.
+
+    This is the same concatenate/project operation implemented by
+    ``PromptStreamingMixin._apply_prompt_to_encoded``; using the prompt tensor
+    supplied by the pipeline keeps the language selection per stream instead of
+    mutating model-global prompt state.
+    """
+    import torch
+
+    if prompt_vectors is None:
+        raise RuntimeError("prompt-enabled Nemotron stream did not provide prompt_vectors")
+    if not hasattr(model, "prompt_kernel"):
+        raise RuntimeError("prompt-enabled Nemotron model has no prompt_kernel")
+
+    encoded_time_major = encoded.transpose(1, 2)  # [B, D, T] -> [B, T, D]
+    prompt = prompt_vectors
+    if prompt.ndim == 2:
+        prompt = prompt.unsqueeze(1).expand(-1, encoded_time_major.shape[1], -1)
+    elif prompt.ndim == 3 and prompt.shape[1] == 1:
+        prompt = prompt.expand(-1, encoded_time_major.shape[1], -1)
+    elif prompt.ndim != 3 or prompt.shape[1] != encoded_time_major.shape[1]:
+        raise RuntimeError(
+            "invalid Nemotron prompt shape: "
+            f"prompt={tuple(prompt.shape)} encoded={tuple(encoded.shape)}"
+        )
+
+    prompt = prompt.to(device=encoded_time_major.device, dtype=encoded_time_major.dtype)
+    projected = model.prompt_kernel(torch.cat((encoded_time_major, prompt), dim=-1))
+    return projected.to(encoded_time_major.dtype).transpose(1, 2)
+
+
+def install_prompt_projection_compat(pipeline, *, projector=None) -> bool:
+    """Install the missing prompt projection in NeMo's cache-aware RNNT wrapper.
+
+    Returns ``True`` when the prompt-conditioned compatibility path is active
+    and ``False`` for a non-prompt pipeline.  The shim is instance-local,
+    idempotent, and can be removed once the pinned NeMo implementation applies
+    ``prompt_vectors`` itself.
+    """
+    if not bool(getattr(pipeline, "prompt_enabled", False)):
+        return False
+
+    wrapper = getattr(pipeline, "asr_model", None)
+    model = getattr(wrapper, "asr_model", None)
+    if wrapper is None or model is None:
+        raise RuntimeError("prompt-enabled Nemotron pipeline has no RNNT model wrapper")
+    if getattr(wrapper, "_subtitle_prompt_projection_compat", False):
+        return True
+
+    project = projector or _apply_prompt_projection
+    original_execute_step = wrapper.execute_step
+
+    def execute_step_with_prompt(
+        self,
+        processed_signal,
+        processed_signal_length,
+        context,
+        previous_hypotheses,
+        drop_extra_pre_encoded,
+        keep_all_outputs,
+        drop_left_context=None,
+        valid_out_len=None,
+        prompt_vectors=None,
+    ):
+        encoded, encoded_len, new_context = self.encoder_step(
+            processed_signal=processed_signal,
+            processed_signal_length=processed_signal_length,
+            context=context,
+            drop_extra_pre_encoded=drop_extra_pre_encoded,
+            keep_all_outputs=keep_all_outputs,
+            drop_left_context=drop_left_context,
+            valid_out_len=valid_out_len,
+        )
+        encoded = project(self.asr_model, encoded, prompt_vectors)
+        best_hyp = self.asr_model.decoding.rnnt_decoder_predictions_tensor(
+            encoded,
+            encoded_len,
+            return_hypotheses=True,
+            partial_hypotheses=previous_hypotheses,
+        )
+        return best_hyp, new_context
+
+    wrapper._subtitle_original_execute_step = original_execute_step
+    wrapper.execute_step = MethodType(execute_step_with_prompt, wrapper)
+    wrapper._subtitle_prompt_projection_compat = True
+    return True
+
+
 class NemotronPipelineStream:
     """Real :class:`NemotronSession` engine: one NeMo stream over the shared pipeline.
 
@@ -954,6 +1050,7 @@ class SharedNemotronModel:
     def __init__(self, config: NemotronConfig, *, pipeline=None):
         self.config = config
         self.pipeline = pipeline if pipeline is not None else self._build_pipeline(config)
+        self.prompt_projection_compat = install_prompt_projection_compat(self.pipeline)
         self.loaded_monotonic = time.monotonic()
 
     @staticmethod
@@ -1029,20 +1126,57 @@ class SharedNemotronModel:
             "chunk_size_in_secs": self.chunk_size_in_secs,
             "compute_dtype": self.config.compute_dtype,
             "use_amp": self.config.use_amp,
+            "prompt_projection_compat": self.prompt_projection_compat,
         }
         info.update(runtime_provenance())
         info["model_revision"] = resolve_model_revision(self.pipeline)
         return info
 
-    def warmup(self, seconds: float = 1.0) -> bool:
-        """Run a real streaming decode so /health only flips to ready once
-        inference actually works, not merely because uvicorn started."""
+    def warmup(self, seconds: float = 1.0, *, speech_audio=None) -> dict:
+        """Warm CUDA and optionally prove that live streaming emits speech.
+
+        Silence verifies allocations and cache lifecycle but cannot distinguish
+        a healthy decoder from one returning blanks.  When ``speech_audio`` is
+        supplied (the Colab notebook always supplies a Drive clip), readiness
+        additionally requires at least one transcript event from this exact
+        incremental path.
+        """
         import numpy as np
 
         session = self.build_session(source_rate=TARGET_RATE)
-        session.push_float32(np.zeros(int(TARGET_RATE * max(seconds, 0.1)), dtype="float32"))
-        session.flush()
-        return True
+        try:
+            session.push_float32(np.zeros(int(TARGET_RATE * max(seconds, 0.1)), dtype="float32"))
+            session.flush()
+        finally:
+            session.close()
+
+        result = {"silence_warmup": True, "speech_canary": False, "events_emitted": 0}
+        if speech_audio is None:
+            return result
+
+        audio = np.asarray(speech_audio, dtype="float32")
+        if audio.size == 0:
+            raise RuntimeError("Nemotron streaming speech canary is empty")
+        canary = self.build_session(source_rate=TARGET_RATE)
+        try:
+            events = canary.push_float32(audio)
+            events.extend(canary.flush())
+            stats = canary.stats_snapshot()
+        finally:
+            canary.close()
+        if not events:
+            raise RuntimeError(
+                "Nemotron streaming speech canary produced no transcript events; "
+                "refusing to report ready"
+            )
+        return {
+            "silence_warmup": True,
+            "speech_canary": True,
+            "audio_sec": round(audio.size / float(TARGET_RATE), 3),
+            "events_emitted": int(stats.get("events_emitted", len(events))),
+            "partials_received": int(stats.get("partials_received", 0)),
+            "finals_emitted": int(stats.get("finals_emitted", 0)),
+        }
 
 
 def runtime_provenance() -> dict:

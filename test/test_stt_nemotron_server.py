@@ -1,6 +1,8 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -136,6 +138,51 @@ class BackendStateTests(unittest.TestCase):
         payload = state.health_payload()
         self.assertTrue(payload["ready"])
         self.assertIn("provenance_error", payload["provenance"])
+
+    def test_default_loader_uses_spoken_canary_before_ready(self):
+        class LoadedModel(FakeShared):
+            def __init__(self):
+                super().__init__()
+                self.warmup_audio = None
+
+            def warmup(self, seconds=1.0, *, speech_audio=None):
+                self.warmup_audio = speech_audio
+                return {
+                    "silence_warmup": True,
+                    "speech_canary": True,
+                    "events_emitted": 1,
+                }
+
+        loaded = LoadedModel()
+        with tempfile.TemporaryDirectory() as root:
+            canary = Path(root) / "canary.webm"
+            canary.write_bytes(b"media")
+            decoded = np.ones(TARGET_RATE * 20, dtype="float32")
+            config = ServerConfig(
+                warmup_audio_path=str(canary),
+                warmup_speech_sec=2.0,
+            )
+            with (
+                mock.patch("scripts.stt_nemotron_server.SharedNemotronModel", return_value=loaded),
+                mock.patch(
+                    "scripts.stt_nemotron_server.decode_audio_bytes_to_float32",
+                    return_value=decoded,
+                ),
+            ):
+                state = BackendState(config)
+                state.run_loader()
+
+        self.assertTrue(state.is_ready())
+        self.assertEqual(TARGET_RATE * 2, loaded.warmup_audio.size)
+        self.assertTrue(state.health_payload()["streaming_canary"]["speech_canary"])
+
+    def test_missing_spoken_canary_fails_readiness(self):
+        config = ServerConfig(warmup_audio_path="/definitely/missing/canary.webm")
+        with mock.patch("scripts.stt_nemotron_server.SharedNemotronModel", return_value=FakeShared()):
+            state = BackendState(config)
+            state.run_loader()
+        self.assertEqual(STATE_FAILED, state.status)
+        self.assertIn("canary not found", state.health_payload()["error"])
 
 
 class SessionManagerTests(unittest.TestCase):

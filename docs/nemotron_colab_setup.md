@@ -193,6 +193,27 @@ ninguna heurística para decidir el EOU.
 **Ojo con el default de idioma:** si no se pasa `language_code`, el pipeline usa
 `en-US`. El backend siempre lo fija explícitamente en `es-ES`.
 
+### Compatibilidad del prompt en NeMo fijado
+
+El `CacheAwareRNNTPipeline` del commit fijado construye correctamente el vector
+one-hot de idioma, pero su `CacheAwareRNNTInferenceWrapper.execute_step()` recibe
+`prompt_vectors` y no lo aplica antes del decoder. En un checkpoint condicionado
+por idioma esto no genera una excepción: el decoder puede devolver únicamente
+blanks durante toda la sesión.
+
+`stt_nemotron_backend.py` instala una corrección local y acotada sobre la instancia
+del wrapper: concatena el prompt entregado por el propio pipeline al encoder output
+y lo proyecta con `model.prompt_kernel`, exactamente como
+`PromptStreamingMixin._apply_prompt_to_encoded`. El estado de `/health` y la
+provenance exponen `prompt_projection_compat=true` mientras este workaround sea
+necesario.
+
+El arranque de Colab ya no considera suficiente un warmup con silencio. Antes de
+abrir ngrok procesa los primeros 12 s de `desay-short.webm` desde Drive mediante la
+misma sesión incremental del servidor y exige al menos un evento. Si el pipeline
+vuelve a producir solamente blanks, queda en `failed` y no anuncia un falso
+`HEALTH: ready`.
+
 ### Configuración inicial fija
 
 - `target_lang=es-ES`

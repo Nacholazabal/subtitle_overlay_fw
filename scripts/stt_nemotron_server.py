@@ -79,6 +79,8 @@ class ServerConfig:
     port: int = 8765
     device: str = "cuda"
     warmup_sec: float = 1.0
+    warmup_audio_path: str | None = None
+    warmup_speech_sec: float = 12.0
     backend: NemotronConfig = field(default_factory=NemotronConfig)
 
 
@@ -113,12 +115,21 @@ class BackendState:
         self.started_monotonic = time.monotonic()
         self.ready_monotonic = None
         self.load_sec = None
+        self.warmup_summary = None
 
     def _default_loader(self):
         started = time.monotonic()
         model = SharedNemotronModel(self.config.backend)
         self._set_status(STATE_WARMING_UP)
-        model.warmup(self.config.warmup_sec)
+        speech_audio = None
+        if self.config.warmup_audio_path:
+            canary_path = Path(self.config.warmup_audio_path).expanduser()
+            if not canary_path.is_file():
+                raise FileNotFoundError(f"Nemotron streaming canary not found: {canary_path}")
+            speech_audio = decode_audio_bytes_to_float32(canary_path.read_bytes())
+            max_samples = int(TARGET_RATE * max(float(self.config.warmup_speech_sec), 0.1))
+            speech_audio = speech_audio[:max_samples]
+        self.warmup_summary = model.warmup(self.config.warmup_sec, speech_audio=speech_audio)
         # Readiness also means "a session can actually be created".
         model.build_session(source_rate=TARGET_RATE)
         self.load_sec = round(time.monotonic() - started, 2)
@@ -201,6 +212,8 @@ class BackendState:
         }
         if self.load_sec is not None:
             payload["model_load_sec"] = self.load_sec
+        if self.warmup_summary is not None:
+            payload["streaming_canary"] = self.warmup_summary
         if status == STATE_FAILED:
             payload["error"] = self._error
             payload["error_detail"] = (self._error_detail or "")[:4000]
@@ -466,6 +479,12 @@ def parse_args():
     parser.add_argument("--no-amp", dest="use_amp", action="store_false", default=True)
     parser.add_argument("--asr-output-granularity", default="segment", choices=["segment", "word"])
     parser.add_argument("--warmup-sec", type=float, default=1.0)
+    parser.add_argument(
+        "--warmup-audio",
+        default=None,
+        help="spoken audio used to prove the live pipeline emits text before readiness",
+    )
+    parser.add_argument("--warmup-speech-sec", type=float, default=12.0)
     args = parser.parse_args()
     backend = NemotronConfig(
         model_id=args.model_id,
@@ -484,6 +503,8 @@ def parse_args():
         port=args.port,
         device=args.device,
         warmup_sec=args.warmup_sec,
+        warmup_audio_path=args.warmup_audio,
+        warmup_speech_sec=args.warmup_speech_sec,
         backend=backend,
     )
 
