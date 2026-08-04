@@ -7,6 +7,7 @@ set -euo pipefail
 #
 #   ./scripts/audiotestnemotron.sh                 # one normal run + report (320 ms smoke)
 #   ./scripts/audiotestnemotron.sh --offline-only  # just build offline proxies
+#   ./scripts/audiotestnemotron.sh --sweep         # six-run interleaved latency sweep
 #
 # Override the Colab endpoint (defaults to the shared static ngrok tunnel):
 #   STT_STREAM_URL="wss://.../stt/stream" ./scripts/audiotestnemotron.sh
@@ -14,9 +15,9 @@ set -euo pipefail
 # The bench aborts before playing any audio if /health does not report
 # run_engine=nemotron_3_5_nemo, so you never measure the wrong backend.
 #
-# --sweep is deliberately NOT available yet: the 320 ms smoke test must pass end
-# to end (stable /health, EOU finals, 100% firmware ACKs, no growing backlog)
-# before an 80/320/560 sweep is worth running.
+# The default sweep keeps endpointing fixed and compares the published 80, 160,
+# 320 and 560 ms lookahead points. Three interleaved 320 ms controls expose
+# run-order drift without reloading the Colab model.
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

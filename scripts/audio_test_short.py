@@ -290,14 +290,9 @@ NEMOTRON_PROFILE = Profile(
     launcher="run_stt_colab_nemotron.sh",
     param_map=NEMOTRON_PARAMETER_MAP,
     validator=validate_nemotron_overrides,
-    # No sweep matrix yet on purpose: the 320 ms smoke test must pass end to end
-    # (stable /health, EOU finals, 100% firmware ACKs, no growing backlog) before
-    # an 80/320/560 sweep is worth running. See scripts/audiotestnemotron.sh.
-    sweep_file=None,
-    sweep_disabled_reason=(
-        "the nemotron_3_5_nemo profile has no sweep matrix yet; run the 320 ms smoke "
-        "test first, then add scripts/sweeps/nemotron_initial.json"
-    ),
+    # The initial matrix isolates the published algorithmic-lookahead points and
+    # interleaves three 320 ms controls to reveal run-order drift.
+    sweep_file=REPO_ROOT / "scripts" / "sweeps" / "nemotron_initial.json",
     offline_header="X-STT-Backend-Config",
     offline_keys=(
         "run_engine",
@@ -973,6 +968,44 @@ def backend_metrics(events: list[dict], done: dict, audio_duration_sec: float | 
     }
 
 
+def latency_progression(values: list[float]) -> dict:
+    """Compare ordered latency samples across the beginning, middle and end.
+
+    This is a drift indicator, not proof of GPU backlog: the thirds may contain
+    different source material. Repeated interleaved controls are what separate a
+    persistent run-order effect from content-dependent latency.
+    """
+    ordered = [
+        float(value)
+        for value in values
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+    ]
+    if len(ordered) < 3:
+        return {
+            "available": False,
+            "first_third": distribution([]),
+            "middle_third": distribution([]),
+            "last_third": distribution([]),
+            "p90_delta_last_minus_first_sec": None,
+            "attention": False,
+        }
+
+    first_cut = max(1, len(ordered) // 3)
+    second_cut = max(first_cut + 1, 2 * len(ordered) // 3)
+    first = distribution(ordered[:first_cut])
+    middle = distribution(ordered[first_cut:second_cut])
+    last = distribution(ordered[second_cut:])
+    delta = float(last["p90"]) - float(first["p90"])
+    return {
+        "available": True,
+        "first_third": first,
+        "middle_third": middle,
+        "last_third": last,
+        "p90_delta_last_minus_first_sec": round(delta, 3),
+        "attention": delta > 0.5,
+    }
+
+
 def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
     events = load_jsonl(run_dir / "live" / "events.jsonl")
     board_acks = load_jsonl(run_dir / "live" / "board_acks.jsonl")
@@ -1215,6 +1248,7 @@ def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
         },
         "global_metrics": {
             "latency": distribution(all_latencies),
+            "latency_progression": latency_progression(all_latencies),
             "visible_duration": distribution(all_visible),
             "events": len(events),
             "hallucination_candidates": sorted(
@@ -1299,6 +1333,17 @@ def render_markdown(report: dict) -> str:
             f"- CER: {fmt(100.0 * accuracy['cer']['rate'])}%",
             f"- Latencia p90: {fmt(report['global_metrics']['latency']['p90'])} s",
             f"- Latencia p95/p99/máxima: {fmt(report['global_metrics']['latency']['p95'])} / {fmt(report['global_metrics']['latency']['p99'])} / {fmt(report['global_metrics']['latency']['max'])} s",
+            (
+                "- Latencia p90 inicio/medio/final: "
+                f"{fmt(report['global_metrics']['latency_progression']['first_third']['p90'])} / "
+                f"{fmt(report['global_metrics']['latency_progression']['middle_third']['p90'])} / "
+                f"{fmt(report['global_metrics']['latency_progression']['last_third']['p90'])} s"
+            ),
+            (
+                "- Delta p90 final-inicio: "
+                f"{fmt(report['global_metrics']['latency_progression']['p90_delta_last_minus_first_sec'])} s "
+                "(indicador de deriva, no prueba por sí solo backlog)"
+            ),
             f"- Tiempo hasta el primer subtítulo: {fmt(report['global_metrics']['time_to_first_subtitle_sec'])} s",
             f"- Eventos: {report['global_metrics']['events']}",
             f"- Secuencia válida: {report['global_metrics']['sequence_valid']}",
@@ -1689,6 +1734,16 @@ def sweep_row(case: dict, report: dict, profile: "Profile" = None) -> dict:
     profile = profile or FASTER_WHISPER_PROFILE
     scores = report["scores"]
     reliability = scores["reliability"]
+    board_delivery = reliability["board_delivery"]
+    backend = report["global_metrics"]["backend"]
+    clip_metrics = {
+        clip["name"]: {
+            "wer_percent": round(100.0 * clip["accuracy"]["wer"]["rate"], 2),
+            "latency_p90_sec": clip["latency"]["p90"],
+            "time_to_first_subtitle_sec": clip["time_to_first_subtitle_sec"],
+        }
+        for clip in report.get("clips", [])
+    }
     return {
         "name": case["name"],
         "group": case.get("group"),
@@ -1698,19 +1753,48 @@ def sweep_row(case: dict, report: dict, profile: "Profile" = None) -> dict:
         },
         "run_id": report["run_id"],
         "status": report["status"],
+        "protocol_valid": reliability["protocol_ok"],
+        "reference_kind": scores["accuracy"]["reference_kind"],
+        "effective_config": {
+            "latency_ms": report.get("config", {}).get("config_latency_ms"),
+            "att_context_size": report.get("config", {}).get("config_att_context_size"),
+            "stop_history_eou_ms": report.get("config", {}).get(
+                "config_stop_history_eou_ms"
+            ),
+            "residue_tokens_at_end": report.get("config", {}).get(
+                "config_residue_tokens_at_end"
+            ),
+        },
         "accuracy": scores["accuracy"]["score"],
         "latency": scores["latency"],
         "readability": scores["readability"],
         "reliability": reliability["score"],
         "wer_percent": round(100.0 * scores["accuracy"]["wer"]["rate"], 2),
         "cer_percent": round(100.0 * scores["accuracy"]["cer"]["rate"], 2),
+        "latency_p50_sec": report["global_metrics"]["latency"]["p50"],
         "latency_p90_sec": report["global_metrics"]["latency"]["p90"],
+        "latency_p95_sec": report["global_metrics"]["latency"]["p95"],
+        "latency_p99_sec": report["global_metrics"]["latency"]["p99"],
+        "latency_max_sec": report["global_metrics"]["latency"]["max"],
+        "time_to_first_subtitle_sec": report["global_metrics"][
+            "time_to_first_subtitle_sec"
+        ],
+        "latency_progression": report["global_metrics"].get("latency_progression", {}),
+        "clip_metrics": clip_metrics,
         "partial_jobs_skipped": reliability["partial_jobs_skipped"],
         "real_audio_drops": reliability["board_dropped_chunks_during_session"],
         "final_jobs_dropped": reliability["final_jobs_dropped"],
         "hallucination_candidates": len(report["global_metrics"]["hallucination_candidates"]),
-        "board_acks_accepted": reliability["board_delivery"]["accepted"],
-        "board_events_generated": reliability["board_delivery"]["generated"],
+        "board_acks_accepted": board_delivery["accepted"],
+        "board_events_generated": board_delivery["generated"],
+        "board_acceptance_percent": board_delivery["score"],
+        "board_rejected": board_delivery["rejected"],
+        "board_delivery_unknown": board_delivery["delivery_unknown"],
+        "board_reconnections": board_delivery["reconnections"],
+        "model_eou_count": backend["model_eou_count"],
+        "display_rollup_finals": backend["display_rollup_finals"],
+        "session_flush_finals": backend["session_flush_finals"],
+        "update_rate_hz": backend["update_rate_hz"],
     }
 
 
@@ -1737,6 +1821,7 @@ def replicate_summaries(rows: list[dict]) -> list[dict]:
         summary = {
             "group": group,
             "count": len(members),
+            "valid_count": sum(bool(row.get("protocol_valid", True)) for row in members),
             "runs": [row["name"] for row in members],
             "metrics": {},
         }
@@ -1752,7 +1837,159 @@ def replicate_summaries(rows: list[dict]) -> list[dict]:
     return summaries
 
 
+def select_best_by_metric(rows: list[dict]) -> dict[str, list[str]]:
+    """Select metric leaders only from complete, protocol-valid runs."""
+    eligible = [
+        row
+        for row in rows
+        if row.get("status") != "error" and row.get("protocol_valid", True)
+    ]
+    selected: dict[str, list[str]] = {}
+    for metric in ("accuracy", "latency", "readability", "reliability"):
+        values = [row[metric] for row in eligible if row.get(metric) is not None]
+        if not values:
+            continue
+        best = max(values)
+        selected[metric] = [
+            row["name"] for row in eligible if row.get(metric) == best
+        ]
+    return selected
+
+
+def final_sweep_status(current: str, exit_code: int, rows: list[dict]) -> str:
+    """Summarize execution errors separately from protocol-invalid runs."""
+    if current == "interrupted":
+        return current
+    if exit_code != 0:
+        return "complete_with_errors"
+    completed = [row for row in rows if row.get("status") != "error"]
+    if any(not row.get("protocol_valid", True) for row in completed):
+        return "complete_with_invalid_runs"
+    return "complete"
+
+
+def render_nemotron_sweep_markdown(sweep: dict) -> str:
+    completed = [row for row in sweep["runs"] if row.get("status") != "error"]
+    valid_count = sum(bool(row.get("protocol_valid")) for row in completed)
+    lines = [
+        f"# Nemotron latency sweep — {sweep['sweep_id']}",
+        "",
+        f"- Estado: `{sweep.get('status', 'unknown')}`",
+        f"- Corridas válidas: {valid_count}/{len(completed)}",
+        "",
+        "Se aísla el lookahead algorítmico de Nemotron. `stop_history_eou_ms=800`, "
+        "`residue_tokens_at_end=2` y `target_lang=es-ES` permanecen fijos.",
+        "",
+        "> WER/CER usan `offline_proxy`, no una transcripción humana verificada. "
+        "No se calcula un puntaje global combinado y sólo las corridas válidas "
+        "participan en la selección de mejores casos.",
+        "> Cada lookahead usa la referencia offline generada con ese mismo punto "
+        "operativo. WER/CER miden degradación live contra su proxy correspondiente; "
+        "no son todavía una comparación absoluta contra una referencia humana común.",
+        "",
+    ]
+    errors = [row for row in sweep["runs"] if row.get("status") == "error"]
+    if errors:
+        lines.extend(["## Errores", ""])
+        lines.extend(f"- `{row['name']}`: {row['error']}" for row in errors)
+        lines.append("")
+
+    lines.extend(
+        [
+            "## Calidad y latencia",
+            "",
+            "| Caso | Lookahead | Contexto | Válida | Accuracy* | WER* | CER* | "
+            "≤1.5 s | p90 | p95 | TTFS | p90 desay | p90 noticias | p90 relato | "
+            "Δp90 final-inicio |",
+            "|---|---:|---|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for row in sweep["runs"]:
+        if row.get("status") == "error":
+            continue
+        effective = row.get("effective_config", {})
+        context = effective.get("att_context_size")
+        context_text = "n/a" if context is None else str(context).replace(" ", "")
+        clips = row.get("clip_metrics", {})
+        progression = row.get("latency_progression", {})
+        lines.append(
+            f"| [{row['name']}](../../{row['run_id']}/report.md) | "
+            f"{fmt(effective.get('latency_ms'), 0)} ms | `{context_text}` | "
+            f"{'sí' if row.get('protocol_valid') else '**NO**'} | "
+            f"{fmt(row['accuracy'])} | {fmt(row['wer_percent'])}% | "
+            f"{fmt(row['cer_percent'])}% | {fmt(row['latency'])}% | "
+            f"{fmt(row['latency_p90_sec'])} s | {fmt(row['latency_p95_sec'])} s | "
+            f"{fmt(row['time_to_first_subtitle_sec'])} s | "
+            f"{fmt(clips.get('desay-short', {}).get('latency_p90_sec'))} s | "
+            f"{fmt(clips.get('noticiero-short', {}).get('latency_p90_sec'))} s | "
+            f"{fmt(clips.get('rel-short', {}).get('latency_p90_sec'))} s | "
+            f"{fmt(progression.get('p90_delta_last_minus_first_sec'))} s |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Segmentación y entrega",
+            "",
+            "| Caso | EOU modelo | Rollups | Flushes | Updates/s | ACKs | Aceptación | "
+            "Rechazados | Desconocidos | Reconexiones | P skips | Pérdidas reales |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for row in sweep["runs"]:
+        if row.get("status") == "error":
+            continue
+        losses = row["real_audio_drops"] + row["final_jobs_dropped"]
+        lines.append(
+            f"| [{row['name']}](../../{row['run_id']}/report.md) | "
+            f"{row['model_eou_count']} | {row['display_rollup_finals']} | "
+            f"{row['session_flush_finals']} | {fmt(row['update_rate_hz'], 3)} | "
+            f"{row['board_acks_accepted']}/{row['board_events_generated']} | "
+            f"{fmt(row['board_acceptance_percent'])}% | {row['board_rejected']} | "
+            f"{row['board_delivery_unknown']} | {row['board_reconnections']} | "
+            f"{row['partial_jobs_skipped']} | {losses} |"
+        )
+
+    append_sweep_summary(lines, sweep)
+    return "\n".join(lines) + "\n"
+
+
+def append_sweep_summary(lines: list[str], sweep: dict) -> None:
+    if sweep.get("best_by_metric"):
+        lines.extend(["", "## Mejores casos válidos por métrica", ""])
+        for metric, names in sweep["best_by_metric"].items():
+            lines.append(f"- {metric}: {', '.join(names)}")
+    elif any(row.get("status") != "error" for row in sweep.get("runs", [])):
+        lines.extend(
+            [
+                "",
+                "## Mejores casos válidos por métrica",
+                "",
+                "Ninguna corrida cumplió el protocolo completo; no se selecciona ganador.",
+            ]
+        )
+    if sweep.get("replicate_summaries"):
+        lines.extend(["", "## Réplicas de control", ""])
+        for summary in sweep["replicate_summaries"]:
+            lines.extend(
+                [
+                    f"### {summary['group']} ({summary['valid_count']}/{summary['count']} válidas)",
+                    "",
+                    "| Métrica | Media | Mín | Máx | Rango |",
+                    "|---|---:|---:|---:|---:|",
+                ]
+            )
+            for metric, values in summary["metrics"].items():
+                lines.append(
+                    f"| {metric} | {fmt(values['mean'], 3)} | {fmt(values['min'], 3)} | "
+                    f"{fmt(values['max'], 3)} | {fmt(values['range'], 3)} |"
+                )
+
+
 def render_sweep_markdown(sweep: dict) -> str:
+    if sweep.get("profile") == NEMOTRON_PROFILE.name:
+        return render_nemotron_sweep_markdown(sweep)
+
     lines = [
         f"# STT parameter sweep — {sweep['sweep_id']}",
         "",
@@ -1781,26 +2018,7 @@ def render_sweep_markdown(sweep: dict) -> str:
             f"{row['real_audio_drops'] + row['final_jobs_dropped']} | "
             f"{row['hallucination_candidates']} |"
         )
-    if sweep.get("best_by_metric"):
-        lines.extend(["", "## Mejores casos por métrica", ""])
-        for metric, names in sweep["best_by_metric"].items():
-            lines.append(f"- {metric}: {', '.join(names)}")
-    if sweep.get("replicate_summaries"):
-        lines.extend(["", "## Réplicas de control", ""])
-        for summary in sweep["replicate_summaries"]:
-            lines.extend(
-                [
-                    f"### {summary['group']} ({summary['count']} corridas)",
-                    "",
-                    "| Métrica | Media | Mín | Máx | Rango |",
-                    "|---|---:|---:|---:|---:|",
-                ]
-            )
-            for metric, values in summary["metrics"].items():
-                lines.append(
-                    f"| {metric} | {fmt(values['mean'], 3)} | {fmt(values['min'], 3)} | "
-                    f"{fmt(values['max'], 3)} | {fmt(values['range'], 3)} |"
-                )
+    append_sweep_summary(lines, sweep)
     return "\n".join(lines) + "\n"
 
 
@@ -1861,16 +2079,9 @@ def run_sweep(args) -> int:
             time.sleep(float(os.environ.get("AUDIO_TEST_SWEEP_GAP_SEC", "3")))
 
     successful = [row for row in sweep["runs"] if row.get("status") != "error"]
-    best_by_metric = {}
-    for metric in ("accuracy", "latency", "readability", "reliability"):
-        if successful:
-            best = max(row[metric] for row in successful)
-            best_by_metric[metric] = [row["name"] for row in successful if row[metric] == best]
-    sweep["best_by_metric"] = best_by_metric
+    sweep["best_by_metric"] = select_best_by_metric(successful)
     sweep["replicate_summaries"] = replicate_summaries(successful)
-    sweep["status"] = sweep["status"] if sweep["status"] == "interrupted" else (
-        "complete" if exit_code == 0 else "complete_with_errors"
-    )
+    sweep["status"] = final_sweep_status(sweep["status"], exit_code, sweep["runs"])
     sweep["finished_wall_sec"] = time.time()
     write_json(sweep_dir / "manifest.json", sweep)
     write_json(sweep_dir / "report.json", sweep)

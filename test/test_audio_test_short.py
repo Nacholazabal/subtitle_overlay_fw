@@ -20,7 +20,9 @@ from scripts.audio_test_short import (
     assign_events,
     counter_delta_for_interval,
     error_rate,
+    final_sweep_status,
     load_sweep_cases,
+    latency_progression,
     make_report,
     normalize_text,
     offline_reference,
@@ -28,6 +30,8 @@ from scripts.audio_test_short import (
     overlay_timeline,
     replicate_summaries,
     reliability_result,
+    render_sweep_markdown,
+    select_best_by_metric,
     select_profile,
 )
 from scripts.stt_stream_server import ServerConfig, transcribe_offline_bytes
@@ -293,6 +297,63 @@ class SweepConfigTests(unittest.TestCase):
         self.assertEqual(80.0, summaries[0]["metrics"]["accuracy"]["mean"])
         self.assertEqual(20.0, summaries[0]["metrics"]["accuracy"]["range"])
 
+    def test_invalid_run_cannot_win_a_metric(self):
+        rows = [
+            {
+                "name": "invalid_but_accurate",
+                "status": "invalid",
+                "protocol_valid": False,
+                "accuracy": 99.0,
+                "latency": 99.0,
+                "readability": 99.0,
+                "reliability": 0.0,
+            },
+            {
+                "name": "valid",
+                "status": "complete",
+                "protocol_valid": True,
+                "accuracy": 80.0,
+                "latency": 90.0,
+                "readability": 10.0,
+                "reliability": 100.0,
+            },
+        ]
+
+        selected = select_best_by_metric(rows)
+
+        self.assertEqual(["valid"], selected["accuracy"])
+        self.assertEqual(["valid"], selected["latency"])
+
+    def test_completed_sweep_reports_invalid_runs_separately_from_errors(self):
+        invalid = [{"status": "invalid", "protocol_valid": False}]
+
+        self.assertEqual(
+            "complete_with_invalid_runs",
+            final_sweep_status("running", 0, invalid),
+        )
+        self.assertEqual(
+            "complete_with_errors",
+            final_sweep_status("running", 1, invalid),
+        )
+        self.assertEqual("interrupted", final_sweep_status("interrupted", 130, invalid))
+
+
+class LatencyProgressionTests(unittest.TestCase):
+    def test_reports_p90_growth_across_ordered_thirds(self):
+        result = latency_progression([0.1, 0.2, 0.3, 0.5, 0.6, 0.7, 1.0, 1.2, 1.4])
+
+        self.assertTrue(result["available"])
+        self.assertEqual(0.3, result["first_third"]["p90"])
+        self.assertEqual(1.4, result["last_third"]["p90"])
+        self.assertEqual(1.1, result["p90_delta_last_minus_first_sec"])
+        self.assertTrue(result["attention"])
+
+    def test_too_few_samples_are_not_called_drift(self):
+        result = latency_progression([0.2, 0.3])
+
+        self.assertFalse(result["available"])
+        self.assertIsNone(result["p90_delta_last_minus_first_sec"])
+
 
 class ReportTests(unittest.TestCase):
     def test_report_labels_offline_reference_as_proxy_without_human_text(self):
@@ -347,6 +408,7 @@ class ReportTests(unittest.TestCase):
 
             self.assertEqual("offline_proxy", report["scores"]["accuracy"]["reference_kind"])
             self.assertEqual(100.0, report["scores"]["accuracy"]["score"])
+            self.assertFalse(report["global_metrics"]["latency_progression"]["available"])
             self.assertTrue((root / "report.md").exists())
             self.assertTrue((root / "overlay_timeline.json").exists())
 
@@ -455,10 +517,84 @@ class NemotronProfileTests(unittest.TestCase):
             offline_signature(health, None, SIMULSTREAMING_PROFILE),
         )
 
-    def test_sweep_is_gated_until_the_smoke_test_passes(self):
-        with self.assertRaises(RuntimeError) as raised:
-            load_sweep_cases(None, NEMOTRON_PROFILE)
-        self.assertIn("smoke", str(raised.exception))
+    def test_initial_latency_sweep_is_interleaved_with_three_controls(self):
+        cases = load_sweep_cases(None, NEMOTRON_PROFILE)
+
+        self.assertEqual(6, len(cases))
+        self.assertEqual(
+            [
+                "control_320_r1",
+                "low_latency_80",
+                "control_320_r2",
+                "quality_560",
+                "balanced_160",
+                "control_320_r3",
+            ],
+            [case["name"] for case in cases],
+        )
+        controls = [case for case in cases if case.get("group") == "control_320"]
+        self.assertEqual([1, 2, 3], [case["replicate"] for case in controls])
+        self.assertEqual({80, 160, 320, 560}, {case["latency_ms"] for case in cases})
+        self.assertNotIn(1120, {case["latency_ms"] for case in cases})
+
+    def test_nemotron_sweep_report_uses_backend_specific_columns(self):
+        sweep = {
+            "sweep_id": "test-sweep",
+            "status": "complete_with_invalid_runs",
+            "profile": "nemotron_3_5_nemo",
+            "runs": [
+                {
+                    "name": "control_320_r1",
+                    "run_id": "test-run",
+                    "status": "invalid",
+                    "protocol_valid": False,
+                    "effective_config": {
+                        "latency_ms": 320,
+                        "att_context_size": [56, 3],
+                    },
+                    "accuracy": 82.54,
+                    "wer_percent": 17.46,
+                    "cer_percent": 12.58,
+                    "latency": 89.27,
+                    "latency_p90_sec": 1.56,
+                    "latency_p95_sec": 2.5,
+                    "time_to_first_subtitle_sec": 1.77,
+                    "clip_metrics": {
+                        "desay-short": {"latency_p90_sec": 0.56},
+                        "noticiero-short": {"latency_p90_sec": 1.4},
+                        "rel-short": {"latency_p90_sec": 3.33},
+                    },
+                    "latency_progression": {
+                        "p90_delta_last_minus_first_sec": 2.77
+                    },
+                    "model_eou_count": 14,
+                    "display_rollup_finals": 53,
+                    "session_flush_finals": 0,
+                    "update_rate_hz": 2.34,
+                    "board_acks_accepted": 493,
+                    "board_events_generated": 494,
+                    "board_acceptance_percent": 99.8,
+                    "board_rejected": 0,
+                    "board_delivery_unknown": 1,
+                    "board_reconnections": 1,
+                    "partial_jobs_skipped": 0,
+                    "real_audio_drops": 0,
+                    "final_jobs_dropped": 0,
+                }
+            ],
+            "best_by_metric": {},
+            "replicate_summaries": [],
+        }
+
+        markdown = render_sweep_markdown(sweep)
+
+        self.assertIn("Nemotron latency sweep", markdown)
+        self.assertIn("320 ms", markdown)
+        self.assertIn("p90 relato", markdown)
+        self.assertIn("493/494", markdown)
+        self.assertIn("**NO**", markdown)
+        self.assertIn("Corridas válidas: 0/1", markdown)
+        self.assertIn("Ninguna corrida", markdown)
 
     def test_sweep_file_still_rejects_foreign_parameters(self):
         with tempfile.TemporaryDirectory() as temporary:
