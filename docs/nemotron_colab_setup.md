@@ -294,23 +294,25 @@ El banco aborta antes de reproducir audio si `/health` no reporta
 
 ### Sweep
 
-El sweep de seguimiento default está en
-`scripts/sweeps/nemotron_followup.json` y se ejecuta con:
+El sweep confirmatorio default está en
+`scripts/sweeps/nemotron_confirmatory.json` y se ejecuta con:
 
 ```bash
 ./scripts/audiotestnemotron.sh --sweep
 ```
 
-Ejecuta diez casos intercalados: dos réplicas de 320 ms, tres réplicas del
-candidato de 560 ms, el punto soportado de 1120 ms y cuatro perturbaciones de a
-un parámetro alrededor de 560 ms. Para endpointing prueba
-`stop_history_eou_ms=400/800/1200`; para retención final prueba
-`residue_tokens_at_end=0/2/4`. El idioma permanece fijo en `es-ES`.
+Ejecuta doce casos intercalados: tres réplicas de cada una de estas cuatro
+configuraciones: `320/800/2`, `560/800/2`, `560/600/2` y `560/400/2`, donde los
+números representan lookahead, `stop_history_eou_ms` y
+`residue_tokens_at_end`. El idioma permanece fijo en `es-ES`. El punto de 600
+ms busca conservar el cierre rápido observado con 400 ms sin duplicar tanto la
+cantidad de finales acústicos.
 
 El punto de 160 ms del sweep inicial no se repite: el artefacto `.nemo` cargado
 avisó que `[56,1]` no pertenece a sus contextos soportados, aunque figure en
-documentación del modelo. El archivo `scripts/sweeps/nemotron_initial.json` se
-conserva para reproducir el experimento anterior, por ejemplo:
+documentación del modelo. Los archivos `scripts/sweeps/nemotron_initial.json` y
+`scripts/sweeps/nemotron_followup.json` se conservan para reproducir los
+experimentos anteriores, por ejemplo:
 
 ```bash
 ./scripts/audiotestnemotron.sh --sweep \
@@ -320,7 +322,8 @@ conserva para reproducir el experimento anterior, por ejemplo:
 El reporte agregado tiene tablas específicas de Nemotron: WER/CER proxy,
 porcentaje bajo 1,5 s, p90/p95, tiempo hasta el primer subtítulo, p90 por audio,
 deriva temporal, latencia p90 de finales y de EOU acústicos, EOU del modelo,
-rollups, frecuencia de parciales y entrega ACK a firmware. La confiabilidad
+EOU por minuto, duración de segmentos, estabilidad de parciales, rollups,
+frecuencia de parciales y entrega ACK a firmware. La confiabilidad
 sigue siendo estricta: cualquier ACK desconocido o
 rechazo invalida esa corrida, aunque también se muestra el porcentaje efectivo
 aceptado para explicar el resultado. El sweep continúa con los casos restantes y
@@ -336,8 +339,11 @@ archivo completo. Por eso WER/CER expresan degradación live contra el proxy
 correspondiente y no una comparación absoluta contra una única referencia
 humana común.
 
-### Qué NO se tocó
+### Alcance de los cambios
 
-Firmware, protocolo de la placa, `stt_stream_bridge.py`, los servidores
-faster-whisper y SimulStreaming, y los defaults existentes del banco de pruebas.
-No se agregaron endpoints, autenticación, Docker ni base de datos.
+El protocolo y sus estados no cambian. El firmware intenta enviar el ACK con
+I/O no bloqueante inmediatamente después de encolarlo, antes de que el AO de
+mayor prioridad renderice el subtítulo; si el socket aplica backpressure, la
+respuesta queda en la misma cola fija y el polling la reintenta. No se tocaron
+`stt_stream_bridge.py`, los servidores faster-whisper/SimulStreaming, endpoints,
+autenticación, Docker ni bases de datos.

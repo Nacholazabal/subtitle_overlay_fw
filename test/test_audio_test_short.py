@@ -528,33 +528,35 @@ class NemotronProfileTests(unittest.TestCase):
             offline_signature(health, None, SIMULSTREAMING_PROFILE),
         )
 
-    def test_followup_sweep_repeats_candidates_and_varies_one_factor(self):
+    def test_confirmatory_sweep_interleaves_four_groups_with_three_replicates(self):
         cases = load_sweep_cases(None, NEMOTRON_PROFILE)
 
-        self.assertEqual(10, len(cases))
+        self.assertEqual(12, len(cases))
         self.assertEqual(
             [
                 "control_320_r1",
                 "candidate_560_r1",
-                "eou_fast_560",
-                "lookahead_1120",
-                "candidate_560_r2",
-                "residue_0_560",
-                "eou_slow_560",
+                "mid_eou_600_r1",
+                "fast_eou_400_r1",
+                "mid_eou_600_r2",
+                "fast_eou_400_r2",
                 "control_320_r2",
-                "residue_4_560",
+                "candidate_560_r2",
+                "fast_eou_400_r3",
+                "mid_eou_600_r3",
                 "candidate_560_r3",
+                "control_320_r3",
             ],
             [case["name"] for case in cases],
         )
-        controls = [case for case in cases if case.get("group") == "control_320"]
-        candidates = [case for case in cases if case.get("group") == "candidate_560"]
-        self.assertEqual([1, 2], [case["replicate"] for case in controls])
-        self.assertEqual([1, 2, 3], [case["replicate"] for case in candidates])
-        self.assertEqual({320, 560, 1120}, {case["latency_ms"] for case in cases})
-        self.assertEqual({400, 800, 1200}, {case["stop_history_eou_ms"] for case in cases})
-        self.assertEqual({0, 2, 4}, {case["residue_tokens_at_end"] for case in cases})
+        for group in ("control_320", "candidate_560", "mid_eou_600", "fast_eou_400"):
+            members = [case for case in cases if case.get("group") == group]
+            self.assertEqual([1, 2, 3], [case["replicate"] for case in members])
+        self.assertEqual({320, 560}, {case["latency_ms"] for case in cases})
+        self.assertEqual({400, 600, 800}, {case["stop_history_eou_ms"] for case in cases})
+        self.assertEqual({2}, {case["residue_tokens_at_end"] for case in cases})
         self.assertNotIn(160, {case["latency_ms"] for case in cases})
+        self.assertNotIn(1120, {case["latency_ms"] for case in cases})
 
     def test_nemotron_sweep_report_uses_backend_specific_columns(self):
         sweep = {
@@ -591,9 +593,13 @@ class NemotronProfileTests(unittest.TestCase):
                         "p90_delta_last_minus_first_sec": 2.77
                     },
                     "model_eou_count": 14,
+                    "model_eou_per_min": 3.5,
+                    "model_eou_duration_p50_sec": 2.4,
                     "display_rollup_finals": 53,
                     "session_flush_finals": 0,
                     "update_rate_hz": 2.34,
+                    "partial_stability": 0.875,
+                    "partial_replacements": 7,
                     "board_acks_accepted": 493,
                     "board_events_generated": 494,
                     "board_acceptance_percent": 99.8,
@@ -614,6 +620,8 @@ class NemotronProfileTests(unittest.TestCase):
         self.assertIn("Nemotron parameter sweep", markdown)
         self.assertIn("320 ms", markdown)
         self.assertIn("EOU hist.", markdown)
+        self.assertIn("Fragmentación y estabilidad", markdown)
+        self.assertIn("87.50%", markdown)
         self.assertIn("1.20 s", markdown)
         self.assertIn("p90 relato", markdown)
         self.assertIn("493/494", markdown)
@@ -660,6 +668,7 @@ class BackendMetricsTests(unittest.TestCase):
         self.assertEqual(1, metrics["finals"])
         self.assertEqual(3, metrics["partials"])
         self.assertEqual(1, metrics["partial_replacements"])
+        self.assertAlmostEqual(0.6667, metrics["partial_stability"])
         self.assertEqual(2, metrics["empty_decodes"])
         self.assertEqual(1, metrics["last_word_truncations"])
         self.assertAlmostEqual(0.4, metrics["update_rate_hz"])
@@ -667,7 +676,14 @@ class BackendMetricsTests(unittest.TestCase):
     def test_nemotron_final_reasons_are_kept_separate(self):
         events = [
             {"seq": 0, "is_final": True, "text": "línea", "final_reason": "display_rollup"},
-            {"seq": 1, "is_final": True, "text": "frase", "final_reason": "model_eou"},
+            {
+                "seq": 1,
+                "is_final": True,
+                "text": "frase",
+                "final_reason": "model_eou",
+                "start_sec": 1.0,
+                "end_sec": 2.5,
+            },
             {"seq": 2, "is_final": True, "text": "cierre", "final_reason": "session_flush"},
         ]
         metrics = backend_metrics(events, {"eou_count": 2}, audio_duration_sec=3.0)
@@ -675,6 +691,8 @@ class BackendMetricsTests(unittest.TestCase):
         self.assertEqual(1, metrics["model_eou_events"])
         self.assertEqual(1, metrics["display_rollup_finals"])
         self.assertEqual(1, metrics["session_flush_finals"])
+        self.assertEqual(20.0, metrics["model_eou_per_min"])
+        self.assertEqual(1.5, metrics["model_eou_duration_sec"]["p50"])
 
 
 if __name__ == "__main__":

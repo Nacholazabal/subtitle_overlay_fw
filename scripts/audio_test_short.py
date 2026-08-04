@@ -290,9 +290,9 @@ NEMOTRON_PROFILE = Profile(
     launcher="run_stt_colab_nemotron.sh",
     param_map=NEMOTRON_PARAMETER_MAP,
     validator=validate_nemotron_overrides,
-    # The follow-up matrix repeats the 320/560 ms operating points, probes 1120 ms,
-    # and varies one live endpointing parameter at a time around 560 ms.
-    sweep_file=REPO_ROOT / "scripts" / "sweeps" / "nemotron_followup.json",
+    # The confirmatory matrix repeats four focused 320/560 ms endpointing
+    # configurations three times each in an interleaved order.
+    sweep_file=REPO_ROOT / "scripts" / "sweeps" / "nemotron_confirmatory.json",
     offline_header="X-STT-Backend-Config",
     offline_keys=(
         "run_engine",
@@ -916,6 +916,9 @@ def backend_metrics(events: list[dict], done: dict, audio_duration_sec: float | 
     shown text was withdrawn or replaced. These are internal partial revisions and
     are NOT counted as lost audio."""
     finals = [event for event in events if event.get("is_final")]
+    model_eou_finals = [
+        event for event in finals if event.get("final_reason") == "model_eou"
+    ]
     partials = [event for event in events if not event.get("is_final")]
     replacements = 0
     previous_text = ""
@@ -931,6 +934,13 @@ def backend_metrics(events: list[dict], done: dict, audio_duration_sec: float | 
         reason: sum(1 for event in finals if event.get("final_reason") == reason)
         for reason in ("model_eou", "display_rollup", "session_flush")
     }
+    model_eou_durations = [
+        float(event["end_sec"]) - float(event["start_sec"])
+        for event in model_eou_finals
+        if isinstance(event.get("start_sec"), (int, float))
+        and isinstance(event.get("end_sec"), (int, float))
+        and float(event["end_sec"]) >= float(event["start_sec"])
+    ]
     return {
         "events": len(events),
         "finals": len(finals),
@@ -949,6 +959,12 @@ def backend_metrics(events: list[dict], done: dict, audio_duration_sec: float | 
         "display_rollup_finals": final_reasons["display_rollup"],
         "session_flush_finals": final_reasons["session_flush"],
         "model_eou_count": int(done.get("eou_count", final_reasons["model_eou"]) or 0),
+        "model_eou_per_min": (
+            round(60.0 * len(model_eou_finals) / audio_duration_sec, 3)
+            if audio_duration_sec and audio_duration_sec > 0
+            else None
+        ),
+        "model_eou_duration_sec": distribution(model_eou_durations),
         "update_rate_hz": (
             round(len(events) / audio_duration_sec, 3)
             if audio_duration_sec and audio_duration_sec > 0
@@ -1387,8 +1403,11 @@ def render_markdown(report: dict) -> str:
                 f"- Latencia p90 de finales `model_eou`: {fmt(report['global_metrics']['model_eou_latency']['p90'])} s",
                 f"- EOU detectados por RNNTGreedyEndpointing: {backend['model_eou_count']}",
                 f"- Eventos finales `model_eou`: {backend['model_eou_events']}",
+                f"- EOU por minuto: {fmt(backend['model_eou_per_min'], 3)}",
+                f"- Duración p50 de segmentos EOU: {fmt(backend['model_eou_duration_sec']['p50'])} s",
                 f"- Finales de presentación `display_rollup`: {backend['display_rollup_finals']}",
                 f"- Finales por cierre `session_flush`: {backend['session_flush_finals']}",
+                f"- Estabilidad de parciales: {fmt(100.0 * backend['partial_stability'] if backend['partial_stability'] is not None else None)}% ({backend['partial_replacements']} reemplazos)",
                 "- `display_rollup` mantiene legible el overlay; no constituye un EOU acústico.",
                 "",
             ]
@@ -1816,9 +1835,13 @@ def sweep_row(case: dict, report: dict, profile: "Profile" = None) -> dict:
         "board_delivery_unknown": board_delivery["delivery_unknown"],
         "board_reconnections": board_delivery["reconnections"],
         "model_eou_count": backend["model_eou_count"],
+        "model_eou_per_min": backend["model_eou_per_min"],
+        "model_eou_duration_p50_sec": backend["model_eou_duration_sec"]["p50"],
         "display_rollup_finals": backend["display_rollup_finals"],
         "session_flush_finals": backend["session_flush_finals"],
         "update_rate_hz": backend["update_rate_hz"],
+        "partial_stability": backend["partial_stability"],
+        "partial_replacements": backend["partial_replacements"],
     }
 
 
@@ -1842,8 +1865,12 @@ def replicate_summaries(rows: list[dict]) -> list[dict]:
         "final_latency_p90_sec",
         "model_eou_latency_p90_sec",
         "model_eou_count",
+        "model_eou_per_min",
+        "model_eou_duration_p50_sec",
         "display_rollup_finals",
         "update_rate_hz",
+        "partial_stability",
+        "partial_replacements",
         "board_acceptance_percent",
     )
     for group, members in groups.items():
@@ -1912,8 +1939,8 @@ def render_nemotron_sweep_markdown(sweep: dict) -> str:
         f"- Estado: `{sweep.get('status', 'unknown')}`",
         f"- Corridas válidas: {valid_count}/{len(completed)}",
         "",
-        "Sweep de seguimiento: replica los puntos de 320/560 ms, prueba 1120 ms y "
-        "varía de a un parámetro de endpointing alrededor del candidato de 560 ms. "
+        "Sweep confirmatorio: tres réplicas intercaladas de `320/800/2`, "
+        "`560/800/2`, `560/600/2` y `560/400/2` (lookahead/EOU history/residuo). "
         "`target_lang=es-ES` permanece fijo.",
         "",
         "> WER/CER usan `offline_proxy`, no una transcripción humana verificada. "
@@ -1990,6 +2017,29 @@ def render_nemotron_sweep_markdown(sweep: dict) -> str:
             f"{fmt(row['board_acceptance_percent'])}% | {row['board_rejected']} | "
             f"{row['board_delivery_unknown']} | {row['board_reconnections']} | "
             f"{row['partial_jobs_skipped']} | {losses} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Fragmentación y estabilidad",
+            "",
+            "| Caso | EOU/min | Segmento EOU p50 | Updates/s | Estabilidad parcial | "
+            "Reemplazos parciales |",
+            "|---|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for row in sweep["runs"]:
+        if row.get("status") == "error":
+            continue
+        stability = row.get("partial_stability")
+        stability_percent = 100.0 * stability if stability is not None else None
+        lines.append(
+            f"| [{row['name']}](../../{row['run_id']}/report.md) | "
+            f"{fmt(row.get('model_eou_per_min'), 3)} | "
+            f"{fmt(row.get('model_eou_duration_p50_sec'))} s | "
+            f"{fmt(row.get('update_rate_hz'), 3)} | "
+            f"{fmt(stability_percent)}% | {row.get('partial_replacements', 0)} |"
         )
 
     append_sweep_summary(lines, sweep)

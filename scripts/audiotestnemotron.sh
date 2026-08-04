@@ -7,7 +7,7 @@ set -euo pipefail
 #
 #   ./scripts/audiotestnemotron.sh                 # one normal run + report (320 ms smoke)
 #   ./scripts/audiotestnemotron.sh --offline-only  # just build offline proxies
-#   ./scripts/audiotestnemotron.sh --sweep         # ten-run follow-up parameter sweep
+#   ./scripts/audiotestnemotron.sh --sweep         # 12-run confirmatory parameter sweep
 #
 # Override the Colab endpoint (defaults to the shared static ngrok tunnel):
 #   STT_STREAM_URL="wss://.../stt/stream" ./scripts/audiotestnemotron.sh
@@ -15,8 +15,8 @@ set -euo pipefail
 # The bench aborts before playing any audio if /health does not report
 # run_engine=nemotron_3_5_nemo, so you never measure the wrong backend.
 #
-# The default sweep repeats 320/560 ms, probes 1120 ms and changes one live
-# endpointing parameter at a time around 560 ms. It does not reload the Colab model.
+# The default sweep repeats four focused 320/560 ms endpointing configurations
+# three times each. It does not reload the Colab model.
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

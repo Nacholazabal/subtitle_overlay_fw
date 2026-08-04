@@ -851,6 +851,7 @@ int stt_event_rx_report_delivery(stt_event_rx_t* const rx,
                                  stt_event_rx_delivery_status_t status)
 {
     char const* status_text;
+    int queue_status;
 
     if ((rx == NULL) || (rx->initialized == 0U) || (rx->client_fd < 0))
     {
@@ -872,7 +873,16 @@ int stt_event_rx_report_delivery(stt_event_rx_t* const rx,
         return -EINVAL;
     }
 
-    return queue_transcript_ack(rx, seq, status_text);
+    queue_status = queue_transcript_ack(rx, seq, status_text);
+    if (queue_status == 0)
+    {
+        // The subtitle AO has higher priority than SttAO and rendering can be
+        // expensive. Attempt the ACK now, before yielding to that AO; send() is
+        // nonblocking and any EAGAIN response remains queued for the next poll.
+        flush_responses(rx);
+    }
+
+    return queue_status;
 }
 
 /**
