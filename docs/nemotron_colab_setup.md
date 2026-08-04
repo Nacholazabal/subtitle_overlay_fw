@@ -294,32 +294,47 @@ El banco aborta antes de reproducir audio si `/health` no reporta
 
 ### Sweep
 
-El sweep inicial está en `scripts/sweeps/nemotron_initial.json` y se ejecuta con:
+El sweep de seguimiento default está en
+`scripts/sweeps/nemotron_followup.json` y se ejecuta con:
 
 ```bash
 ./scripts/audiotestnemotron.sh --sweep
 ```
 
-Compara los puntos publicados de lookahead 80, 160, 320 y 560 ms, manteniendo
-fijos `stop_history_eou_ms=800`, `residue_tokens_at_end=2` y `target_lang=es-ES`.
-El punto de 320 ms se intercala tres veces para medir variabilidad y detectar
-deriva por orden de ejecución. Se excluye inicialmente 1120 ms porque su
-lookahead consume por sí solo casi todo el objetivo end-to-end de 1,5 s.
+Ejecuta diez casos intercalados: dos réplicas de 320 ms, tres réplicas del
+candidato de 560 ms, el punto soportado de 1120 ms y cuatro perturbaciones de a
+un parámetro alrededor de 560 ms. Para endpointing prueba
+`stop_history_eou_ms=400/800/1200`; para retención final prueba
+`residue_tokens_at_end=0/2/4`. El idioma permanece fijo en `es-ES`.
+
+El punto de 160 ms del sweep inicial no se repite: el artefacto `.nemo` cargado
+avisó que `[56,1]` no pertenece a sus contextos soportados, aunque figure en
+documentación del modelo. El archivo `scripts/sweeps/nemotron_initial.json` se
+conserva para reproducir el experimento anterior, por ejemplo:
+
+```bash
+./scripts/audiotestnemotron.sh --sweep \
+  --sweep-file scripts/sweeps/nemotron_initial.json
+```
 
 El reporte agregado tiene tablas específicas de Nemotron: WER/CER proxy,
 porcentaje bajo 1,5 s, p90/p95, tiempo hasta el primer subtítulo, p90 por audio,
-deriva temporal, EOU del modelo, rollups, frecuencia de parciales y entrega ACK
-a firmware. La confiabilidad sigue siendo estricta: cualquier ACK desconocido o
+deriva temporal, latencia p90 de finales y de EOU acústicos, EOU del modelo,
+rollups, frecuencia de parciales y entrega ACK a firmware. La confiabilidad
+sigue siendo estricta: cualquier ACK desconocido o
 rechazo invalida esa corrida, aunque también se muestra el porcentaje efectivo
 aceptado para explicar el resultado. El sweep continúa con los casos restantes y
-termina como `complete_with_invalid_runs`; una corrida inválida nunca participa
-en la selección de mejores casos.
+si encuentra alguna corrida inválida termina como `complete_with_invalid_runs`;
+una corrida inválida nunca participa en la selección de mejores casos.
 
 Las referencias siguen siendo `offline_proxy`; el sweep sirve para seleccionar
 una región prometedora, no para afirmar error real contra transcripción humana.
-Cada lookahead genera/reutiliza su proxy offline con ese mismo punto operativo,
-por lo que WER/CER expresan degradación live contra el proxy correspondiente y
-no una comparación absoluta contra una única referencia humana común.
+Cada lookahead genera/reutiliza su proxy offline con ese mismo punto operativo.
+Los cambios de `stop_history_eou_ms` y `residue_tokens_at_end` reutilizan el
+proxy de 560 ms porque sólo afectan la sesión live y no `model.transcribe()` de
+archivo completo. Por eso WER/CER expresan degradación live contra el proxy
+correspondiente y no una comparación absoluta contra una única referencia
+humana común.
 
 ### Qué NO se tocó
 

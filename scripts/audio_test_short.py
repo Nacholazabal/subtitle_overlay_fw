@@ -290,9 +290,9 @@ NEMOTRON_PROFILE = Profile(
     launcher="run_stt_colab_nemotron.sh",
     param_map=NEMOTRON_PARAMETER_MAP,
     validator=validate_nemotron_overrides,
-    # The initial matrix isolates the published algorithmic-lookahead points and
-    # interleaves three 320 ms controls to reveal run-order drift.
-    sweep_file=REPO_ROOT / "scripts" / "sweeps" / "nemotron_initial.json",
+    # The follow-up matrix repeats the 320/560 ms operating points, probes 1120 ms,
+    # and varies one live endpointing parameter at a time around 560 ms.
+    sweep_file=REPO_ROOT / "scripts" / "sweeps" / "nemotron_followup.json",
     offline_header="X-STT-Backend-Config",
     offline_keys=(
         "run_engine",
@@ -302,14 +302,10 @@ NEMOTRON_PROFILE = Profile(
         "config_decoder_type",
         "config_latency_ms",
         "config_att_context_size",
-        "config_stop_history_eou_ms",
-        "config_residue_tokens_at_end",
         "config_strip_lang_tags",
     ),
     offline_override_keys=(
         "latency_ms",
-        "stop_history_eou_ms",
-        "residue_tokens_at_end",
         "target_lang",
     ),
 )
@@ -1044,6 +1040,11 @@ def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
         overlay_records[name] = timeline
         visible_durations = [float(record["visible_duration_sec"]) for record in timeline]
         latencies = event_values(clip_events, "bridge_receive_lag_sec")
+        final_latencies = event_values(finals, "bridge_receive_lag_sec")
+        model_eou_latencies = event_values(
+            [event for event in finals if event.get("final_reason") == "model_eou"],
+            "bridge_receive_lag_sec",
+        )
         latency_score = (
             100.0 * sum(value <= LATENCY_TARGET_SEC for value in latencies) / len(latencies)
             if latencies
@@ -1110,6 +1111,8 @@ def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
                 accuracy_result(human_text, offline_text, "human") if human_text is not None else None
             ),
             "latency": distribution(latencies),
+            "final_latency": distribution(final_latencies),
+            "model_eou_latency": distribution(model_eou_latencies),
             "latency_score": round(latency_score, 2),
             "time_to_first_subtitle_sec": (
                 round(min(receive_times) - float(clip["play_start_wall_sec"]), 3)
@@ -1183,6 +1186,12 @@ def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
         )
 
     all_latencies = event_values(events, "bridge_receive_lag_sec")
+    all_finals = [event for event in events if event.get("is_final")]
+    all_final_latencies = event_values(all_finals, "bridge_receive_lag_sec")
+    all_model_eou_latencies = event_values(
+        [event for event in all_finals if event.get("final_reason") == "model_eou"],
+        "bridge_receive_lag_sec",
+    )
     all_visible = [
         float(record["visible_duration_sec"])
         for records in overlay_records.values()
@@ -1248,6 +1257,8 @@ def make_report(run_dir: Path, manifest: dict, ready: dict, done: dict) -> dict:
         },
         "global_metrics": {
             "latency": distribution(all_latencies),
+            "final_latency": distribution(all_final_latencies),
+            "model_eou_latency": distribution(all_model_eou_latencies),
             "latency_progression": latency_progression(all_latencies),
             "visible_duration": distribution(all_visible),
             "events": len(events),
@@ -1372,6 +1383,8 @@ def render_markdown(report: dict) -> str:
             [
                 "## Segmentación Nemotron",
                 "",
+                f"- Latencia p90 de todos los finales: {fmt(report['global_metrics']['final_latency']['p90'])} s",
+                f"- Latencia p90 de finales `model_eou`: {fmt(report['global_metrics']['model_eou_latency']['p90'])} s",
                 f"- EOU detectados por RNNTGreedyEndpointing: {backend['model_eou_count']}",
                 f"- Eventos finales `model_eou`: {backend['model_eou_events']}",
                 f"- Finales de presentación `display_rollup`: {backend['display_rollup_finals']}",
@@ -1401,6 +1414,11 @@ def print_summary(report: dict) -> None:
     print(f"  real drops   : {reliability['board_dropped_chunks_during_session']} audio / {reliability['final_jobs_dropped']} finals")
     if report.get("run_engine") == nemotron_backend.RUN_ENGINE:
         backend = report["global_metrics"]["backend"]
+        print(
+            "  final/EOU p90 : "
+            f"{fmt(report['global_metrics']['final_latency']['p90'])}/"
+            f"{fmt(report['global_metrics']['model_eou_latency']['p90'])}s"
+        )
         print(
             "  Nemotron EOU : "
             f"{backend['model_eou_count']} EOU / "
@@ -1776,6 +1794,12 @@ def sweep_row(case: dict, report: dict, profile: "Profile" = None) -> dict:
         "latency_p95_sec": report["global_metrics"]["latency"]["p95"],
         "latency_p99_sec": report["global_metrics"]["latency"]["p99"],
         "latency_max_sec": report["global_metrics"]["latency"]["max"],
+        "final_latency_p90_sec": report["global_metrics"].get(
+            "final_latency", {}
+        ).get("p90"),
+        "model_eou_latency_p90_sec": report["global_metrics"].get(
+            "model_eou_latency", {}
+        ).get("p90"),
         "time_to_first_subtitle_sec": report["global_metrics"][
             "time_to_first_subtitle_sec"
         ],
@@ -1814,6 +1838,13 @@ def replicate_summaries(rows: list[dict]) -> list[dict]:
         "wer_percent",
         "cer_percent",
         "latency_p90_sec",
+        "time_to_first_subtitle_sec",
+        "final_latency_p90_sec",
+        "model_eou_latency_p90_sec",
+        "model_eou_count",
+        "display_rollup_finals",
+        "update_rate_hz",
+        "board_acceptance_percent",
     )
     for group, members in groups.items():
         if len(members) < 2:
@@ -1826,7 +1857,11 @@ def replicate_summaries(rows: list[dict]) -> list[dict]:
             "metrics": {},
         }
         for metric in metrics:
-            values = [float(row[metric]) for row in members if row.get(metric) is not None]
+            values = [
+                float(row[metric])
+                for row in members
+                if row.get("protocol_valid", True) and row.get(metric) is not None
+            ]
             summary["metrics"][metric] = {
                 "mean": round(sum(values) / len(values), 3) if values else None,
                 "min": round(min(values), 3) if values else None,
@@ -1872,13 +1907,14 @@ def render_nemotron_sweep_markdown(sweep: dict) -> str:
     completed = [row for row in sweep["runs"] if row.get("status") != "error"]
     valid_count = sum(bool(row.get("protocol_valid")) for row in completed)
     lines = [
-        f"# Nemotron latency sweep — {sweep['sweep_id']}",
+        f"# Nemotron parameter sweep — {sweep['sweep_id']}",
         "",
         f"- Estado: `{sweep.get('status', 'unknown')}`",
         f"- Corridas válidas: {valid_count}/{len(completed)}",
         "",
-        "Se aísla el lookahead algorítmico de Nemotron. `stop_history_eou_ms=800`, "
-        "`residue_tokens_at_end=2` y `target_lang=es-ES` permanecen fijos.",
+        "Sweep de seguimiento: replica los puntos de 320/560 ms, prueba 1120 ms y "
+        "varía de a un parámetro de endpointing alrededor del candidato de 560 ms. "
+        "`target_lang=es-ES` permanece fijo.",
         "",
         "> WER/CER usan `offline_proxy`, no una transcripción humana verificada. "
         "No se calcula un puntaje global combinado y sólo las corridas válidas "
@@ -1931,17 +1967,23 @@ def render_nemotron_sweep_markdown(sweep: dict) -> str:
             "",
             "## Segmentación y entrega",
             "",
-            "| Caso | EOU modelo | Rollups | Flushes | Updates/s | ACKs | Aceptación | "
-            "Rechazados | Desconocidos | Reconexiones | P skips | Pérdidas reales |",
-            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+            "| Caso | EOU hist. | Residuo | Final p90 | EOU p90 | EOU modelo | Rollups | "
+            "Flushes | Updates/s | ACKs | Aceptación | Rechazados | Desconocidos | "
+            "Reconexiones | P skips | Pérdidas reales |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     for row in sweep["runs"]:
         if row.get("status") == "error":
             continue
+        effective = row.get("effective_config", {})
         losses = row["real_audio_drops"] + row["final_jobs_dropped"]
         lines.append(
             f"| [{row['name']}](../../{row['run_id']}/report.md) | "
+            f"{fmt(effective.get('stop_history_eou_ms'), 0)} ms | "
+            f"{fmt(effective.get('residue_tokens_at_end'), 0)} | "
+            f"{fmt(row.get('final_latency_p90_sec'))} s | "
+            f"{fmt(row.get('model_eou_latency_p90_sec'))} s | "
             f"{row['model_eou_count']} | {row['display_rollup_finals']} | "
             f"{row['session_flush_finals']} | {fmt(row['update_rate_hz'], 3)} | "
             f"{row['board_acks_accepted']}/{row['board_events_generated']} | "

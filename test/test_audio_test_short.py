@@ -374,6 +374,7 @@ class ReportTests(unittest.TestCase):
                         "bridge_received_wall_sec": 111.2,
                         "bridge_receive_lag_sec": 0.2,
                         "segment_reason": "silence",
+                        "final_reason": "model_eou",
                     }
                 )
                 + "\n",
@@ -384,6 +385,7 @@ class ReportTests(unittest.TestCase):
             )
             manifest = {
                 "run_id": "test-run",
+                "run_engine": "nemotron_3_5_nemo",
                 "clips": [
                     {
                         "name": "sample",
@@ -408,6 +410,8 @@ class ReportTests(unittest.TestCase):
 
             self.assertEqual("offline_proxy", report["scores"]["accuracy"]["reference_kind"])
             self.assertEqual(100.0, report["scores"]["accuracy"]["score"])
+            self.assertEqual(0.2, report["global_metrics"]["final_latency"]["p90"])
+            self.assertEqual(0.2, report["global_metrics"]["model_eou_latency"]["p90"])
             self.assertFalse(report["global_metrics"]["latency_progression"]["available"])
             self.assertTrue((root / "report.md").exists())
             self.assertTrue((root / "overlay_timeline.json").exists())
@@ -509,6 +513,13 @@ class NemotronProfileTests(unittest.TestCase):
         # A different operating point must not reuse the 320 ms cache entry.
         other = offline_signature(health, {"latency_ms": 560}, NEMOTRON_PROFILE)
         self.assertNotEqual(signature, other)
+        # Live endpointing does not change full-file model.transcribe().
+        endpoint_only = offline_signature(
+            health,
+            {"stop_history_eou_ms": 400, "residue_tokens_at_end": 4},
+            NEMOTRON_PROFILE,
+        )
+        self.assertEqual(signature, endpoint_only)
 
     def test_offline_signature_differs_from_the_other_backends(self):
         health = {"run_config": {"run_engine": "nemotron_3_5_nemo"}}
@@ -517,25 +528,33 @@ class NemotronProfileTests(unittest.TestCase):
             offline_signature(health, None, SIMULSTREAMING_PROFILE),
         )
 
-    def test_initial_latency_sweep_is_interleaved_with_three_controls(self):
+    def test_followup_sweep_repeats_candidates_and_varies_one_factor(self):
         cases = load_sweep_cases(None, NEMOTRON_PROFILE)
 
-        self.assertEqual(6, len(cases))
+        self.assertEqual(10, len(cases))
         self.assertEqual(
             [
                 "control_320_r1",
-                "low_latency_80",
+                "candidate_560_r1",
+                "eou_fast_560",
+                "lookahead_1120",
+                "candidate_560_r2",
+                "residue_0_560",
+                "eou_slow_560",
                 "control_320_r2",
-                "quality_560",
-                "balanced_160",
-                "control_320_r3",
+                "residue_4_560",
+                "candidate_560_r3",
             ],
             [case["name"] for case in cases],
         )
         controls = [case for case in cases if case.get("group") == "control_320"]
-        self.assertEqual([1, 2, 3], [case["replicate"] for case in controls])
-        self.assertEqual({80, 160, 320, 560}, {case["latency_ms"] for case in cases})
-        self.assertNotIn(1120, {case["latency_ms"] for case in cases})
+        candidates = [case for case in cases if case.get("group") == "candidate_560"]
+        self.assertEqual([1, 2], [case["replicate"] for case in controls])
+        self.assertEqual([1, 2, 3], [case["replicate"] for case in candidates])
+        self.assertEqual({320, 560, 1120}, {case["latency_ms"] for case in cases})
+        self.assertEqual({400, 800, 1200}, {case["stop_history_eou_ms"] for case in cases})
+        self.assertEqual({0, 2, 4}, {case["residue_tokens_at_end"] for case in cases})
+        self.assertNotIn(160, {case["latency_ms"] for case in cases})
 
     def test_nemotron_sweep_report_uses_backend_specific_columns(self):
         sweep = {
@@ -551,6 +570,8 @@ class NemotronProfileTests(unittest.TestCase):
                     "effective_config": {
                         "latency_ms": 320,
                         "att_context_size": [56, 3],
+                        "stop_history_eou_ms": 800,
+                        "residue_tokens_at_end": 2,
                     },
                     "accuracy": 82.54,
                     "wer_percent": 17.46,
@@ -558,6 +579,8 @@ class NemotronProfileTests(unittest.TestCase):
                     "latency": 89.27,
                     "latency_p90_sec": 1.56,
                     "latency_p95_sec": 2.5,
+                    "final_latency_p90_sec": 1.1,
+                    "model_eou_latency_p90_sec": 1.2,
                     "time_to_first_subtitle_sec": 1.77,
                     "clip_metrics": {
                         "desay-short": {"latency_p90_sec": 0.56},
@@ -588,8 +611,10 @@ class NemotronProfileTests(unittest.TestCase):
 
         markdown = render_sweep_markdown(sweep)
 
-        self.assertIn("Nemotron latency sweep", markdown)
+        self.assertIn("Nemotron parameter sweep", markdown)
         self.assertIn("320 ms", markdown)
+        self.assertIn("EOU hist.", markdown)
+        self.assertIn("1.20 s", markdown)
         self.assertIn("p90 relato", markdown)
         self.assertIn("493/494", markdown)
         self.assertIn("**NO**", markdown)
