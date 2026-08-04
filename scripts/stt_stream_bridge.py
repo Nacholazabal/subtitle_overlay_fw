@@ -3,6 +3,8 @@
 
 import argparse
 import asyncio
+import base64
+import binascii
 import contextlib
 import json
 import struct
@@ -72,6 +74,25 @@ def parse_backend_config(raw):
         return None
     parsed = json.loads(raw) if isinstance(raw, str) else raw
     return validate_backend_config(parsed)
+
+
+def decode_backend_config_base64(raw):
+    """Decode JSON transported safely through WSL and Windows PowerShell.
+
+    Windows PowerShell removes the quotes embedded in a JSON argument when it
+    serializes native-process argv. URL-safe Base64 contains no quote characters,
+    so the launcher can cross that boundary losslessly and the bridge still owns
+    JSON/schema validation.
+    """
+    if not raw:
+        return None
+    if not isinstance(raw, str):
+        raise ValueError("backend config Base64 must be text")
+    try:
+        payload = base64.b64decode(raw.encode("ascii"), altchars=b"-_", validate=True)
+        return payload.decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError, binascii.Error) as exc:
+        raise ValueError("backend config is not valid URL-safe Base64 UTF-8") from exc
 
 
 def write_json_file(path, payload):
@@ -458,16 +479,30 @@ def parse_args():
     parser.add_argument("--gain", type=float)
     parser.add_argument("--vad-threshold", type=float)
     parser.add_argument("--vad-neg-threshold", type=float)
-    parser.add_argument(
+    backend_config = parser.add_mutually_exclusive_group()
+    backend_config.add_argument(
         "--backend-config-json",
         help="generic backend-specific session config as a JSON object (e.g. SimulStreaming AlignAtt tuning)",
     )
+    backend_config.add_argument(
+        "--backend-config-base64",
+        help="URL-safe Base64 encoding of --backend-config-json for WSL/PowerShell transport",
+    )
     args = parser.parse_args()
+    backend_option = "--backend-config-json"
+    if args.backend_config_base64 is not None:
+        backend_option = "--backend-config-base64"
+        try:
+            args.backend_config_json = decode_backend_config_base64(
+                args.backend_config_base64
+            )
+        except ValueError as exc:
+            parser.error(f"{backend_option} is invalid: {exc}")
     if args.backend_config_json is not None:
         try:
             parse_backend_config(args.backend_config_json)
         except (json.JSONDecodeError, ValueError) as exc:
-            parser.error(f"--backend-config-json is not a valid JSON object: {exc}")
+            parser.error(f"{backend_option} is not a valid JSON object: {exc}")
     if args.max_window_sec is not None and args.max_window_sec <= 0:
         parser.error("--max-window-sec must be positive")
     if args.min_silence_sec is not None and args.min_silence_sec < 0:

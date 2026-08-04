@@ -1,8 +1,10 @@
+import base64
 import unittest
 import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -11,6 +13,8 @@ from scripts.stt_stream_bridge import (
     BridgeTranscriptSink,
     StreamingBridge,
     board_drop_delta,
+    decode_backend_config_base64,
+    parse_args,
     session_config_overrides,
 )
 from scripts.stt_stream_server import ServerConfig, effective_session_config
@@ -174,6 +178,30 @@ class BackendConfigTests(unittest.TestCase):
         self.assertEqual({"beams": 1}, parse_backend_config('{"beams": 1}'))
         self.assertIsNone(parse_backend_config(None))
         self.assertIsNone(parse_backend_config(""))
+
+    def test_bridge_decodes_backend_config_transport_losslessly(self):
+        raw = '{"latency_ms":320,"target_lang":"es-ES"}'
+        encoded = base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
+
+        self.assertEqual(raw, decode_backend_config_base64(encoded))
+        with self.assertRaisesRegex(ValueError, "Base64"):
+            decode_backend_config_base64("%%%")
+
+    def test_cli_normalizes_base64_transport_back_to_json(self):
+        raw = '{"latency_ms":80,"target_lang":"es-ES"}'
+        encoded = base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
+        argv = [
+            "stt_stream_bridge.py",
+            "--stream-url",
+            "ws://example.test/stt/stream",
+            "--backend-config-base64",
+            encoded,
+        ]
+
+        with mock.patch.object(sys, "argv", argv):
+            args = parse_args()
+
+        self.assertEqual(raw, args.backend_config_json)
 
 
 class RecordingSink:

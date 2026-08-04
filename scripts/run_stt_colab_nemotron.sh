@@ -84,7 +84,19 @@ if [[ "${SINGLE_SESSION}" == "1" ]]; then
     AUTOMATION_ARGS+=" --single-session"
 fi
 if [[ -n "${BACKEND_CONFIG_JSON}" && "${BACKEND_CONFIG_JSON}" != "{}" ]]; then
-    AUTOMATION_ARGS+=" --backend-config-json '${BACKEND_CONFIG_JSON}'"
+    # Windows PowerShell strips embedded JSON quotes while constructing argv for
+    # native Python. URL-safe Base64 crosses WSL -> PowerShell without quoting
+    # loss; stt_stream_bridge.py decodes and validates the original JSON.
+    BACKEND_CONFIG_BASE64="$(
+        BACKEND_CONFIG_JSON="${BACKEND_CONFIG_JSON}" python3 - <<'PY'
+import base64
+import os
+
+payload = os.environ["BACKEND_CONFIG_JSON"].encode("utf-8")
+print(base64.urlsafe_b64encode(payload).decode("ascii"))
+PY
+    )"
+    AUTOMATION_ARGS+=" --backend-config-base64 '${BACKEND_CONFIG_BASE64}'"
 fi
 
 BRIDGE_COMMAND="Set-Location -LiteralPath '${REPO_WIN_PATH}'; python scripts/stt_stream_bridge.py --stream-url '${STT_STREAM_URL}' --host 0.0.0.0 --port ${AUDIO_PORT} --jsonl '${JSONL}'${SAVE_WAV:+ --save-wav '${SAVE_WAV}'} --send-subtitles --subtitle-host ${SUBTITLE_HOST} --subtitle-port ${SUBTITLE_PORT}${AUTOMATION_ARGS}"
