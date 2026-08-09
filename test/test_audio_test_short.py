@@ -685,12 +685,14 @@ class BackendMetricsTests(unittest.TestCase):
                 "end_sec": 2.5,
             },
             {"seq": 2, "is_final": True, "text": "cierre", "final_reason": "session_flush"},
+            {"seq": 3, "is_final": True, "text": "último frame", "final_reason": "session_end_final"},
         ]
         metrics = backend_metrics(events, {"eou_count": 2}, audio_duration_sec=3.0)
         self.assertEqual(2, metrics["model_eou_count"])
         self.assertEqual(1, metrics["model_eou_events"])
         self.assertEqual(1, metrics["display_rollup_finals"])
         self.assertEqual(1, metrics["session_flush_finals"])
+        self.assertEqual(1, metrics["session_end_finals"])
         self.assertEqual(20.0, metrics["model_eou_per_min"])
         self.assertEqual(1.5, metrics["model_eou_duration_sec"]["p50"])
 

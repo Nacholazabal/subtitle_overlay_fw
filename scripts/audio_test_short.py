@@ -932,7 +932,7 @@ def backend_metrics(events: list[dict], done: dict, audio_duration_sec: float | 
     truncations = sum(1 for event in events if event.get("truncated_last_word"))
     final_reasons = {
         reason: sum(1 for event in finals if event.get("final_reason") == reason)
-        for reason in ("model_eou", "display_rollup", "session_flush")
+        for reason in ("model_eou", "display_rollup", "session_end_final", "session_flush")
     }
     model_eou_durations = [
         float(event["end_sec"]) - float(event["start_sec"])
@@ -957,6 +957,7 @@ def backend_metrics(events: list[dict], done: dict, audio_duration_sec: float | 
         # Other backends simply report zero for these engine-specific fields.
         "model_eou_events": final_reasons["model_eou"],
         "display_rollup_finals": final_reasons["display_rollup"],
+        "session_end_finals": final_reasons["session_end_final"],
         "session_flush_finals": final_reasons["session_flush"],
         "model_eou_count": int(done.get("eou_count", final_reasons["model_eou"]) or 0),
         "model_eou_per_min": (
@@ -1406,6 +1407,7 @@ def render_markdown(report: dict) -> str:
                 f"- EOU por minuto: {fmt(backend['model_eou_per_min'], 3)}",
                 f"- Duración p50 de segmentos EOU: {fmt(backend['model_eou_duration_sec']['p50'])} s",
                 f"- Finales de presentación `display_rollup`: {backend['display_rollup_finals']}",
+                f"- Finales producidos por el último frame `session_end_final`: {backend['session_end_finals']}",
                 f"- Finales por cierre `session_flush`: {backend['session_flush_finals']}",
                 f"- Estabilidad de parciales: {fmt(100.0 * backend['partial_stability'] if backend['partial_stability'] is not None else None)}% ({backend['partial_replacements']} reemplazos)",
                 "- `display_rollup` mantiene legible el overlay; no constituye un EOU acústico.",
@@ -1442,6 +1444,7 @@ def print_summary(report: dict) -> None:
             "  Nemotron EOU : "
             f"{backend['model_eou_count']} EOU / "
             f"{backend['display_rollup_finals']} display rollups / "
+            f"{backend['session_end_finals']} session-end / "
             f"{backend['session_flush_finals']} flushes"
         )
     print(f"  report       : logs/audio-tests/{report['run_id']}/report.md")

@@ -26,6 +26,7 @@ from scripts.stt_nemotron_backend import (
     clean_text,
     common_word_prefix,
     install_prompt_projection_compat,
+    map_committed_word_boundary,
     normalize_step_output,
     take_line_words,
 )
@@ -205,9 +206,22 @@ class TextCleaningTests(unittest.TestCase):
     def test_tags_are_kept_when_stripping_is_disabled(self):
         self.assertEqual("<es-ES> hola", clean_text("<es-ES> hola", strip_lang_tags=False))
 
+    def test_internal_unknown_tokens_never_reach_visible_text(self):
+        self.assertEqual("hola mundo", clean_text("hola <unk> ⁇ mundo"))
+        self.assertEqual("texto", clean_text("<blank> <pad> <s> texto </s>"))
+
     def test_common_word_prefix(self):
         self.assertEqual(2, common_word_prefix(["a", "b"], ["a", "b", "c"]))
         self.assertEqual(0, common_word_prefix(["a"], ["b"]))
+
+    def test_committed_boundary_survives_a_revised_first_word(self):
+        previous = "La noticia importante sigue todavía pendiente".split()
+        revised = "Esta noticia importante sigue todavía pendiente hoy".split()
+        self.assertEqual(6, map_committed_word_boundary(previous, revised, 6))
+
+    def test_committed_boundary_tracks_insertions_and_deletions(self):
+        self.assertEqual(4, map_committed_word_boundary("uno dos tres".split(), "uno y dos tres".split(), 3))
+        self.assertEqual(2, map_committed_word_boundary("uno y dos tres".split(), "uno dos tres".split(), 3))
 
     def test_take_line_words_cuts_on_word_boundaries(self):
         self.assertEqual(0, take_line_words([], 10))
@@ -290,6 +304,25 @@ class TranscriptAdapterTests(unittest.TestCase):
         emitted = " ".join(event["full_text"] for event in finals_before + events if event["is_final"])
         self.assertEqual(long_partial, emitted)
 
+    def test_revised_final_does_not_repeat_already_displayed_history(self):
+        old_words = ["vieja"] + [f"palabra{index}" for index in range(18)] + ["cola"]
+        first = self.adapter.ingest(
+            FakeStepOutput(partial_transcript=" ".join(old_words)), audio_end_sec=2.0
+        )
+        committed = " ".join(event["full_text"] for event in first if event["is_final"]).split()
+        self.assertTrue(committed)
+
+        revised_words = ["nueva"] + old_words[1:] + ["final"]
+        second = self.adapter.ingest(
+            FakeStepOutput(final_transcript=" ".join(revised_words)), audio_end_sec=2.5
+        )
+        newly_finalized = " ".join(
+            event["full_text"] for event in second if event["is_final"]
+        ).split()
+        self.assertNotIn("nueva", newly_finalized)
+        self.assertEqual(revised_words[len(committed):], newly_finalized)
+        self.assertEqual(1, self.adapter.final_prefix_mismatches)
+
     def test_after_eou_the_next_utterance_starts_clean(self):
         self.adapter.ingest(FakeStepOutput(final_transcript="primera frase."), audio_end_sec=1.0)
         events = self.adapter.ingest(FakeStepOutput(partial_transcript="segunda"), audio_end_sec=1.5)
@@ -348,6 +381,19 @@ class TranscriptAdapterTests(unittest.TestCase):
         self.adapter.ingest(FakeStepOutput(final_transcript="todo listo."), audio_end_sec=1.0)
         self.assertEqual([], self.adapter.force_final(audio_end_sec=1.0))
 
+    def test_last_frame_final_is_session_end_not_acoustic_eou(self):
+        events = self.adapter.ingest(
+            FakeStepOutput(final_transcript="cierre de sesión"),
+            audio_end_sec=1.0,
+            session_end=True,
+        )
+        self.assertEqual("session_end_final", events[-1]["final_reason"])
+        self.assertTrue(events[-1]["session_end"])
+        self.assertNotIn("eou", events[-1])
+        self.assertEqual(0, self.adapter.eou_count)
+        self.assertEqual(1, self.adapter.session_end_count)
+        self.assertEqual(1, self.adapter.session_end_finals)
+
     def test_events_carry_engine_and_lookahead_provenance(self):
         events = self.adapter.ingest(FakeStepOutput(partial_transcript="hola"), audio_end_sec=0.5)
         event = events[0]
@@ -368,7 +414,9 @@ class TranscriptAdapterTests(unittest.TestCase):
             "finals_emitted",
             "display_rollup_finals",
             "model_eou_finals",
+            "session_end_finals",
             "eou_count",
+            "session_end_count",
             "flush_finals",
             "events_emitted",
             "first_partial_audio_sec",
@@ -437,6 +485,17 @@ class SessionTests(unittest.TestCase):
         frames_after_first = len(engine.frames)
         self.assertEqual([], session.flush())
         self.assertEqual(frames_after_first, len(engine.frames))
+
+    def test_final_from_last_engine_step_is_classified_as_session_end(self):
+        engine = FakeEngine(frame_samples=160)
+        engine.script()
+        engine.script(FakeStepOutput(final_transcript="texto final"))
+        session = NemotronSession(engine, NemotronConfig(), source_rate=TARGET_RATE)
+        session.push_float32(np.zeros(160, dtype="float32"))
+        events = session.flush()
+        self.assertEqual("session_end_final", events[-1]["final_reason"])
+        self.assertEqual(0, session.adapter.eou_count)
+        self.assertEqual(1, session.adapter.session_end_count)
 
     def test_events_flow_from_engine_steps(self):
         engine = FakeEngine(frame_samples=160)

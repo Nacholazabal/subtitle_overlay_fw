@@ -1,0 +1,724 @@
+{
+  "execution_history": {
+    "historical_errors": 0,
+    "offline_attempt_records": 2507,
+    "offline_retried_records": 0,
+    "streaming_attempt_records": 2507,
+    "streaming_retried_records": 0
+  },
+  "generated_at": "2026-08-07T14:25:20.163523+00:00",
+  "identity": {
+    "chunk_size_in_secs": 0.56,
+    "config": {
+      "asr_output_granularity": "segment",
+      "att_context_size": [
+        56,
+        6
+      ],
+      "compute_dtype": "float32",
+      "decoder_type": "rnnt",
+      "device": "cuda",
+      "device_id": 0,
+      "latency_ms": 560,
+      "lookahead_ms": 560,
+      "model_id": "nvidia/nemotron-3.5-asr-streaming-0.6b",
+      "residue_tokens_at_end": 2,
+      "run_engine": "nemotron_3_5_nemo",
+      "stop_history_eou_ms": 600,
+      "strip_lang_tags": true,
+      "target_lang": "es-ES",
+      "target_sample_rate_hz": 16000,
+      "use_amp": true
+    },
+    "dataset_archive_sha256": "07917baf12467f1467dd525d1f4747a807ba938e36156382ae5229a89d76bf52",
+    "dataset_id": "mediaspeech_es",
+    "dataset_manifest_sha256": "d217c755007a2661fc7d68ac68f3ff1bc9425586f5a37313a3895f7e1f3cc279",
+    "dataset_version": "1.1",
+    "evaluation_id": "mediaspeech-es-v1.1__nemotron-560-600-2__v1",
+    "expected_clips": 2507,
+    "fingerprint": "693c734e2067adf5133d374e4c6b8b830b9bf986c7853d904cc08ad8aef3083a",
+    "model_provenance": {
+      "att_context_size": [
+        56,
+        6
+      ],
+      "chunk_size_in_secs": 0.56,
+      "compute_dtype": "float32",
+      "cuda_available": true,
+      "cuda_version": "12.8",
+      "decoder_type": "rnnt",
+      "gpu_name": "Tesla T4",
+      "lookahead_ms": 560,
+      "model_id": "nvidia/nemotron-3.5-asr-streaming-0.6b",
+      "model_revision": null,
+      "nemo_commit": "2639d4bef8d1450782263a8f616242acfb6fecb9",
+      "nemo_repo": "https://github.com/NVIDIA-NeMo/NeMo.git",
+      "nemo_toolkit_version": "3.1.0+2639d4bef",
+      "prompt_projection_compat": true,
+      "run_engine": "nemotron_3_5_nemo",
+      "sample_rate_hz": 16000,
+      "target_lang": "es-ES",
+      "torch_version": "2.11.0+cu128",
+      "use_amp": true
+    },
+    "model_revision": null,
+    "nemo_commit": "2639d4bef8d1450782263a8f616242acfb6fecb9",
+    "project_commit": "b2eb5942c689d665054e2d86843966653195fb54",
+    "reference_kind": "human_mediaspeech_double_annotated",
+    "run_engine": "nemotron_3_5_nemo",
+    "schema_version": 1,
+    "streaming_mode": "accelerated_production_session_no_sleep"
+  },
+  "measurement_scope": {
+    "file_boundary_warning": "MediaSpeech clips often end mid-sentence; session_flush is an artificial file boundary and is not counted as a natural model EOU.",
+    "latency_warning": "Accelerated streaming measures model audio-clock emission points and RTF, not board-to-HDMI wall-clock latency.",
+    "offline": "complete-file model quality against human references",
+    "physical_replay": "deferred to phase 3 and absent from this report",
+    "streaming": "accelerated production NemotronSession; no real-time sleep"
+  },
+  "offline": {
+    "audio_hours": 10.003333,
+    "completed_clips": 2507,
+    "expected_clips": 2507,
+    "failed_clips": 0,
+    "inference_rtf": {
+      "count": 2507,
+      "max": 0.149232,
+      "mean": 0.021604,
+      "min": 0.014623,
+      "p50": 0.021011,
+      "p90": 0.02521,
+      "p95": 0.026325,
+      "p99": 0.028193
+    },
+    "inference_sec_total": 777.57,
+    "macro_cer_vs_human": {
+      "count": 2507,
+      "max": 0.582474,
+      "mean": 0.067937,
+      "min": 0.0,
+      "p50": 0.057143,
+      "p90": 0.133333,
+      "p95": 0.164773,
+      "p99": 0.253012
+    },
+    "macro_wer_vs_human": {
+      "count": 2507,
+      "max": 0.617647,
+      "mean": 0.1216,
+      "min": 0.0,
+      "p50": 0.108108,
+      "p90": 0.22449,
+      "p95": 0.27027,
+      "p99": 0.371429
+    },
+    "micro_cer_vs_human": {
+      "edits": 29797,
+      "hypothesis_units": 431669,
+      "rate": 0.06757609,
+      "reference_units": 440940
+    },
+    "micro_wer_vs_human": {
+      "edits": 11567,
+      "hypothesis_units": 91881,
+      "rate": 0.12190161,
+      "reference_units": 94888
+    },
+    "perfect_word_clip_percent": 3.3905,
+    "perfect_word_clips": 85,
+    "status": "complete",
+    "wer_by_duration_sec": [
+      {
+        "clips": 37,
+        "macro_wer_vs_human": {
+          "count": 37,
+          "max": 0.40625,
+          "mean": 0.160858,
+          "min": 0.0,
+          "p50": 0.136364,
+          "p90": 0.3,
+          "p95": 0.344828,
+          "p99": 0.40625
+        },
+        "micro_wer_vs_human": {
+          "edits": 139,
+          "hypothesis_units": 827,
+          "rate": 0.15977011,
+          "reference_units": 870
+        },
+        "range": "<10"
+      },
+      {
+        "clips": 290,
+        "macro_wer_vs_human": {
+          "count": 290,
+          "max": 0.407407,
+          "mean": 0.129078,
+          "min": 0.0,
+          "p50": 0.117647,
+          "p90": 0.25641,
+          "p95": 0.290323,
+          "p99": 0.392157
+        },
+        "micro_wer_vs_human": {
+          "edits": 1302,
+          "hypothesis_units": 9630,
+          "rate": 0.13057868,
+          "reference_units": 9971
+        },
+        "range": "10..<14"
+      },
+      {
+        "clips": 2180,
+        "macro_wer_vs_human": {
+          "count": 2180,
+          "max": 0.617647,
+          "mean": 0.119939,
+          "min": 0.0,
+          "p50": 0.105263,
+          "p90": 0.222222,
+          "p95": 0.268293,
+          "p99": 0.358974
+        },
+        "micro_wer_vs_human": {
+          "edits": 10126,
+          "hypothesis_units": 81424,
+          "rate": 0.12048021,
+          "reference_units": 84047
+        },
+        "range": ">=14"
+      }
+    ],
+    "wer_by_reference_speech_rate_wps": [
+      {
+        "clips": 414,
+        "macro_wer_vs_human": {
+          "count": 414,
+          "max": 0.617647,
+          "mean": 0.11833,
+          "min": 0.0,
+          "p50": 0.096774,
+          "p90": 0.225806,
+          "p95": 0.275862,
+          "p99": 0.407407
+        },
+        "micro_wer_vs_human": {
+          "edits": 1519,
+          "hypothesis_units": 12691,
+          "rate": 0.1181182,
+          "reference_units": 12860
+        },
+        "range": "<2.3"
+      },
+      {
+        "clips": 1572,
+        "macro_wer_vs_human": {
+          "count": 1572,
+          "max": 0.55,
+          "mean": 0.118741,
+          "min": 0.0,
+          "p50": 0.107143,
+          "p90": 0.222222,
+          "p95": 0.268293,
+          "p99": 0.357143
+        },
+        "micro_wer_vs_human": {
+          "edits": 6964,
+          "hypothesis_units": 56968,
+          "rate": 0.11847567,
+          "reference_units": 58780
+        },
+        "range": "2.3..<2.9"
+      },
+      {
+        "clips": 521,
+        "macro_wer_vs_human": {
+          "count": 521,
+          "max": 0.479167,
+          "mean": 0.132824,
+          "min": 0.0,
+          "p50": 0.119048,
+          "p90": 0.234043,
+          "p95": 0.282051,
+          "p99": 0.392157
+        },
+        "micro_wer_vs_human": {
+          "edits": 3084,
+          "hypothesis_units": 22222,
+          "rate": 0.13265657,
+          "reference_units": 23248
+        },
+        "range": ">=2.9"
+      }
+    ],
+    "worst_wer_clips": [
+      {
+        "clip_id": "be1c8a6c-ce1f-4c3c-9f0a-c600d5935af0",
+        "hypothesis": "carino se la menciona de tres veces a Clotilde. Hay muchos videos de psicoterapia, meditación e inteligencia emocional en YouTube. La mente también necesita ejercicio de ese mano definió tierra,¿no? Dobri Suribe dice,¿por qué no dicen que",
+        "reference": "cariñosamente y otra vez aquí hay muchos vídeos de psicoterapia medicación meditación inteligencia emocional en youtube la mente también necesita ejercicio dice maní definió tiene razón no doris uribe dice porque no dicen que",
+        "wer": 0.61764706
+      },
+      {
+        "clip_id": "66bc0a55-ccdf-4124-9bf5-cab2e67e2978",
+        "hypothesis": "entender un poco como esperamos este año importante entender compreendernos un poco como estábamos a dir porque la avión civil para",
+        "reference": "así muy interesante ahora mira para entendernos un poco como es esperamos estar este año es muy importante entendernos comprendernos un poco cómo estábamos ayer porque cuando hablamos de la aviación civil para",
+        "wer": 0.60606061
+      },
+      {
+        "clip_id": "d4e156f0-97f1-42a9-bf3f-3ac41367bb8d",
+        "hypothesis": "Fíjense qué es importante que no me puse el audífono para comenzar esta transmisión. Así que la voy a hacer mientras...",
+        "reference": "como les va guillermo albino estoy en mi casa  como siempre comenzamos a esta hora me acabo de dar cuenta fíjense qué importante que no me puse el audífono para comenzar está transmisión así que la voy a hacer mientras",
+        "wer": 0.55
+      },
+      {
+        "clip_id": "195525f1-5475-454b-a468-ad61aab68ac6",
+        "hypothesis": "A pesar de que tenemos un tibio Estado de bienestar, sobre todo comparándolo con el norte de Europa,",
+        "reference": "ceso de de socialización del supuesto social  socialismo o la socialdemocracia clásica ojalá españa fuera un país socialista porque a pesar de que tenemos un tibio estado del bienestar sobre todo comparándolo con el norte de europa",
+        "wer": 0.54054054
+      },
+      {
+        "clip_id": "33769387-e19a-4e33-9282-16b1212605f2",
+        "hypothesis": "Sobre todo de proteger las clases obreras, de hablar un poco sobre el proletariado, si lo quieren ver así, es esa como la raíz de dónde te salió.",
+        "reference": "dos mil cinco esa se podría decir que es un poco la raíz de tu motivación para hablar sobre sobre todo de proteger las clases obreras de hablar un poco sobre el proletariado si lo quieres ver ver así es esa como la raíz desde donde te salió",
+        "wer": 0.47916667
+      },
+      {
+        "clip_id": "5d8ec306-c88b-4611-bbed-c5eaf75124ad",
+        "hypothesis": "Muchísimas, muchísimas gracias. Al contrario, gracias a ti, gracias a todos por que la cuarentena de la encierros desean creativos no leves, sino creativos y bueno, y a los que no están viendo los invitamos a",
+        "reference": "muchísimas muchísimas gracias  contrario gracias a ti y gracias a todos porque el águila que el que la cuarentena denunciaros de sean creativos no no le ves sino sino creativos y bueno y ahí ahí están viendo los invitamos a",
+        "wer": 0.475
+      },
+      {
+        "clip_id": "a709606f-c53b-45f8-81c5-1c6a19cd78cf",
+        "hypothesis": "El sistema inmunológico lo vuelvo a recalcar. Bien aclarado eso. Recién, cuando estábamos charlando, al principio mencionaste el REM de civir y yo quería preguntarte por la hidrocloricina, en no sé.",
+        "reference": "inmunológico luego lo recalcar ok bien bien aclarado eso  recién a en cuando estábamos charlando al principio mencionaste el  recibir y yo quería preguntarte por la hidroclórico quina esa y no sé",
+        "wer": 0.46875
+      },
+      {
+        "clip_id": "59890e1e-ff3f-409b-a762-b865b635091c",
+        "hypothesis": "Como es el que todo el mundo habla de ti en las redes sociales, cuando sacas el disco. Y también fuimos trendic, creo que en Estados Unidos nunca había sido correcto.",
+        "reference": "ese ese punch ese puñetazo nada más empezar como como es él el que todo el mundo hable de ti en las redes sociales cuando sacas el disco no esta vez fue tener un topic creo que en estados unidos nunca había sido uhum correcto sí estados unidos",
+        "wer": 0.45833333
+      },
+      {
+        "clip_id": "5215bab3-da59-4020-9ca2-d4b13137c15b",
+        "hypothesis": "El PP no lo olvidemos, un partido que viene de la dictadura Franqueza fundado por un exministro de Franco. Entonces, el PP no es un partido liberal.",
+        "reference": "opción verbalizada de lo que ha sido el pepe de toda la vida el pepe no lo olvidemos un partido que viene de la dictadura francesa fundado por un ex ministro de franco entonces el pepe no es un partido liberal",
+        "wer": 0.43902439
+      },
+      {
+        "clip_id": "e15358d0-39ef-4a38-b923-de7820f85f7e",
+        "hypothesis": "que no es tan sexy, por lo cual no se habla, pero puede cambiar la fase la cara de la salud pública. Nuestro sistema inmunológico Guillermo también.",
+        "reference": "es el punto de vista médico y científico ese es uno de los grandes descubrimientos del siglo que no es tan sexy por lo cual no se habla pero puede cambiar la fase la la la cara de la salud pública nuestro sistema inmunológico guillermo también en",
+        "wer": 0.42553191
+      },
+      {
+        "clip_id": "0d4f4afa-af68-46f2-a0b8-372e9029fc0d",
+        "hypothesis": "Jedia, ajeno al peligro, White King es todo mimos y caricias, aunque no sean de su madre. Hasta aquí llega esta edición de Euronio Soy gracias por acompañar.",
+        "reference": "jediah ajeno al peligro with king es todo mimos y caricias aunque no sean de su madre pero el pueblo ha venido de marbella he pensado que yo siempre hasta aquí llega esta edición de euronews hoy gracias por acomp",
+        "wer": 0.425
+      },
+      {
+        "clip_id": "7831a70e-d51e-48cb-81f6-aafee2648b7d",
+        "hypothesis": "Pueden tocarse la meditación y yoga. Excelente. Bueno, pasó casi una hora, la verdad que habíamos planeado.",
+        "reference": "porque no tuvimos tanto tiempo de explicar pero sí algunos puntos pueden tocarse la meditación y el yoga excelente bueno  pasó casi una hora  la verdad que habíamos planeado",
+        "wer": 0.4137931
+      },
+      {
+        "clip_id": "22a944dd-3635-471c-9332-7aec4ae46023",
+        "hypothesis": "Emergencias hasta el domingo. El presidente ruso Vladimir Putin expresó su malestar al gobernador de la región de Krasw Yark Alexander Us.",
+        "reference": "lenodio cuenta del derrame al ministerio de emergencias hasta el domingo el presidente ruso vladimir putin expresó su malestar al gobernador de la región de krasnoyarsk aleksander",
+        "wer": 0.40740741
+      },
+      {
+        "clip_id": "5cff0188-192e-441e-aded-16ecb728b6d0",
+        "hypothesis": "Sí, ya está, ya sano ese corazón también vi por allá la pregunta, que ya estaba, ya estaba basado en el corazón que había inspirado todas esas canciones",
+        "reference": "si ya está ya no sé corazón también vi por ahí la pregunta que si ya estaba ya estabas dando el corazón que había inspirado todas las canciones si si si si",
+        "wer": 0.40625
+      },
+      {
+        "clip_id": "a745c663-4452-4d5f-a87a-6b8648405f7d",
+        "hypothesis": "Eso nunca ha pasado. Supongo que es mejor conocer a la gente. Hay alguien que tú dices, me encantaría hacer una colaboración con esta persona del todo el panorama.",
+        "reference": "y si existe eso eso nunca ha pasado supongo que es mejor conocer a la gente no si no a mi me encanta más del filin hay alguien que que tú dices me encantaría hacer una colaboración con esta persona vamos a ir de todo el panorama",
+        "wer": 0.40425532
+      },
+      {
+        "clip_id": "66195151-c8b8-4b57-8c63-9158d4aedf75",
+        "hypothesis": "Entonces se demostró también lo mejor del pueblo paraguayo. Acá hubo muchas ollas populares, gente solidaria que repartía lo poco que",
+        "reference": "la cama  verdad de no terapia intensiva que les pueda asistir a nuestros compatriotas entonces se demostró también lo mejor del pueblo paraguayo acá hubo muchas ollas populares gente solidaria que repartía lo poco que",
+        "wer": 0.4
+      },
+      {
+        "clip_id": "68224d31-242b-49e9-bdd7-d415fc41785f",
+        "hypothesis": "Sí me gustaría saber o que ustedes era un llamado porque estamos en roja.",
+        "reference": "sentidos y si me gustaría saber o que usted hiciera un llamado porque estamos en",
+        "wer": 0.4
+      },
+      {
+        "clip_id": "7070dba9-1fd6-4d83-b11c-c6f41ed44f2f",
+        "hypothesis": "Definitivamente el gobierno ha hecho esto por fácil. Las fases han sido diferentes. La primera fase estaban dando un bono que muchas voluntad",
+        "reference": "consolidar definitivamente el gobierno ha tenido ha hecho esto con fases las fases espacio diferente la primera fase este estaban dando un bono que muchas",
+        "wer": 0.4
+      },
+      {
+        "clip_id": "61ea4538-10d5-4f34-b80d-d61585e2a07a",
+        "hypothesis": "Nosotros no somos policía anti narcóticos, pero aunque eso se de verdad genera millones y millones de dólares, eso no es cierto, qué millones y millones va a generar un impuesto a un campesino.",
+        "reference": "nosotros no somos policía antinarcóticos pero aunque ese sea verdad generan millones y millones no es cierto eso no es cierto que millones viene va a generar un un impuesto a un campesino",
+        "wer": 0.39393939
+      },
+      {
+        "clip_id": "54a1ec72-8659-4a2f-974c-001cb0a4286c",
+        "hypothesis": "A las siete a ocho de la mañana, usted dice que dijo eso antes de irse de Bolivia. Esto ha sido el domingo en la mañana de me reúne a la ciudad a las cinco o seis de la tarde. Me renuncia y el señor me viene el día lunes por sicasos. Y esa idea...",
+        "reference": "a las siete u ocho de la mañana usted dice que dijo eso antes de irse de bolivia esto es el domingo también veremos han sido a las cinco o seis de la tarde me ya anuncia se me viene el día lunes por si acaso y esta esa esa idea",
+        "wer": 0.39215686
+      }
+    ]
+  },
+  "schema_version": 1,
+  "status": "complete",
+  "streaming": {
+    "audio_hours": 10.003333,
+    "completed_clips": 2507,
+    "display_rollup_total": 9054,
+    "events_total": 62284,
+    "expected_clips": 2507,
+    "failed_clips": 0,
+    "first_subtitle_audio_sec": {
+      "count": 2507,
+      "max": 14.56,
+      "mean": 1.876953,
+      "min": 0.8,
+      "p50": 1.68,
+      "p90": 2.8,
+      "p95": 3.36,
+      "p99": 6.16
+    },
+    "human_wer_delta_vs_offline": {
+      "count": 2507,
+      "max": 1.090909,
+      "mean": 0.068721,
+      "min": -0.425,
+      "p50": 0.045455,
+      "p90": 0.176471,
+      "p95": 0.243902,
+      "p99": 0.552632
+    },
+    "inference_rtf": {
+      "count": 2507,
+      "max": 0.168571,
+      "mean": 0.119931,
+      "min": 0.101392,
+      "p50": 0.112922,
+      "p90": 0.145978,
+      "p95": 0.149793,
+      "p99": 0.156063
+    },
+    "inference_sec_total": 4318.099,
+    "macro_cer_vs_human": {
+      "count": 2507,
+      "max": 0.972376,
+      "mean": 0.121182,
+      "min": 0.0,
+      "p50": 0.091892,
+      "p90": 0.234694,
+      "p95": 0.334951,
+      "p99": 0.619632
+    },
+    "macro_wer_vs_human": {
+      "count": 2507,
+      "max": 1.121212,
+      "mean": 0.190321,
+      "min": 0.0,
+      "p50": 0.162791,
+      "p90": 0.340909,
+      "p95": 0.421053,
+      "p99": 0.692308
+    },
+    "macro_wer_vs_offline": {
+      "count": 2507,
+      "max": 1.076923,
+      "mean": 0.136937,
+      "min": 0.0,
+      "p50": 0.104167,
+      "p90": 0.27027,
+      "p95": 0.378378,
+      "p99": 0.682927
+    },
+    "micro_cer_vs_human": {
+      "edits": 53117,
+      "hypothesis_units": 431300,
+      "rate": 0.1204631,
+      "reference_units": 440940
+    },
+    "micro_cer_vs_offline": {
+      "edits": 40031,
+      "hypothesis_units": 431300,
+      "rate": 0.09273541,
+      "reference_units": 431669
+    },
+    "micro_wer_vs_human": {
+      "edits": 18063,
+      "hypothesis_units": 92591,
+      "rate": 0.19036127,
+      "reference_units": 94888
+    },
+    "micro_wer_vs_offline": {
+      "edits": 12378,
+      "hypothesis_units": 92591,
+      "rate": 0.13471773,
+      "reference_units": 91881
+    },
+    "model_eou_total": 4491,
+    "partial_revisions_total": 40,
+    "perfect_word_clip_percent": 1.1966,
+    "perfect_word_clips": 30,
+    "session_flush_total": 0,
+    "status": "complete",
+    "wer_by_duration_sec": [
+      {
+        "clips": 37,
+        "macro_wer_vs_human": {
+          "count": 37,
+          "max": 0.428571,
+          "mean": 0.21412,
+          "min": 0.0,
+          "p50": 0.2,
+          "p90": 0.344828,
+          "p95": 0.4,
+          "p99": 0.428571
+        },
+        "micro_wer_vs_human": {
+          "edits": 184,
+          "hypothesis_units": 830,
+          "rate": 0.21149425,
+          "reference_units": 870
+        },
+        "range": "<10"
+      },
+      {
+        "clips": 290,
+        "macro_wer_vs_human": {
+          "count": 290,
+          "max": 1.032258,
+          "mean": 0.202895,
+          "min": 0.0,
+          "p50": 0.179487,
+          "p90": 0.371429,
+          "p95": 0.48,
+          "p99": 0.658537
+        },
+        "micro_wer_vs_human": {
+          "edits": 2027,
+          "hypothesis_units": 9692,
+          "rate": 0.20328954,
+          "reference_units": 9971
+        },
+        "range": "10..<14"
+      },
+      {
+        "clips": 2180,
+        "macro_wer_vs_human": {
+          "count": 2180,
+          "max": 1.121212,
+          "mean": 0.188245,
+          "min": 0.0,
+          "p50": 0.162162,
+          "p90": 0.333333,
+          "p95": 0.416667,
+          "p99": 0.714286
+        },
+        "micro_wer_vs_human": {
+          "edits": 15852,
+          "hypothesis_units": 82069,
+          "rate": 0.18860875,
+          "reference_units": 84047
+        },
+        "range": ">=14"
+      }
+    ],
+    "wer_by_reference_speech_rate_wps": [
+      {
+        "clips": 414,
+        "macro_wer_vs_human": {
+          "count": 414,
+          "max": 1.121212,
+          "mean": 0.194798,
+          "min": 0.0,
+          "p50": 0.16129,
+          "p90": 0.363636,
+          "p95": 0.444444,
+          "p99": 0.692308
+        },
+        "micro_wer_vs_human": {
+          "edits": 2496,
+          "hypothesis_units": 12684,
+          "rate": 0.1940902,
+          "reference_units": 12860
+        },
+        "range": "<2.3"
+      },
+      {
+        "clips": 1572,
+        "macro_wer_vs_human": {
+          "count": 1572,
+          "max": 1.032258,
+          "mean": 0.185821,
+          "min": 0.0,
+          "p50": 0.162162,
+          "p90": 0.333333,
+          "p95": 0.405405,
+          "p99": 0.666667
+        },
+        "micro_wer_vs_human": {
+          "edits": 10902,
+          "hypothesis_units": 57305,
+          "rate": 0.18547125,
+          "reference_units": 58780
+        },
+        "range": "2.3..<2.9"
+      },
+      {
+        "clips": 521,
+        "macro_wer_vs_human": {
+          "count": 521,
+          "max": 0.869565,
+          "mean": 0.200343,
+          "min": 0.0,
+          "p50": 0.173913,
+          "p90": 0.333333,
+          "p95": 0.431818,
+          "p99": 0.782609
+        },
+        "micro_wer_vs_human": {
+          "edits": 4665,
+          "hypothesis_units": 22602,
+          "rate": 0.20066242,
+          "reference_units": 23248
+        },
+        "range": ">=2.9"
+      }
+    ],
+    "worst_wer_clips": [
+      {
+        "clip_id": "475cd75a-037e-4f90-a202-d2e8dddd83df",
+        "hypothesis": "La participación,¿la que me fiero? Son ciudadanos estadounidenses, al menos dos de ellos, una empresa estadounidense, la que habría participado y por el otro lado hubiera ocurrido todo desde territorio colombiano. participación¿la que me fiero? Son ciudadanos estadounidenses, al menos dos de ellos, una empresa estadounidense, la que habría participado y por el otro lado hubiera ocurrido todo desde territorio colombiano. Es to no.",
+        "reference": "participación a qué me refiero son  ciudadanos estadounidenses al menos dos de ellos  una empresa estadounidense la que habría participado y por el otro lado hubiera ocurrido todo desde territorio colombiano esto no",
+        "wer": 1.12121212
+      },
+      {
+        "clip_id": "2a77b872-bfbb-42fd-abfa-b08fca27e1e5",
+        "hypothesis": "cada año más o menos 60<unk> de la población de la población tendría que ser vacunada. Entonces, estamos hablando de unos cuantos cinco mil millones de personas. 60⁇ de la población de la población tendría que ser vacunada. Entonces, estamos hablando de unos cuantos cinco mil millones de personas.",
+        "reference": "unas son miles de personas cada año más o menos sesenta por ciento de la población tendría que ser vacunado entonces estamos hablando de unos cuantos cinco mil millones de personas",
+        "wer": 1.03225806
+      },
+      {
+        "clip_id": "ab41d770-c38a-440d-a751-9f5e26319cc3",
+        "hypothesis": "lleve a",
+        "reference": "de madres tengo una educación tengo una ética tenga tengo valores mi su de este niño mis padres me enseñaron no robar no mentir ni ser flojo y es esa herencia familiar esa herencia comunal llevé a",
+        "wer": 0.97297297
+      },
+      {
+        "clip_id": "632cea45-9724-466e-9ee9-4271a0a62ce0",
+        "hypothesis": "Él tiene un mensaje optimista,¿no es cierto? El no es pesimista, él piensa que nosotros estamos, bueno, como popper,¿no? Es decir, diciendo nunca hemos estado mejor, eso es una realidad, aunque haya muchos cosas, mal. optimista¿no es cierto? El no es pesimista, él piensa que nosotros estamos, bueno, como popper¿no? Es decir, diciendo nunca hemos estado mejor, eso es una realidad, aunque haya muchos cosas, mal.",
+        "reference": "él tiene un mensaje optimista no es cierto él no es pesimista él piensa que nosotros estamos bueno como popper no decir diciendo nunca hemos estado mejor eso es una realidad aunque haya muchas cosas mal",
+        "wer": 0.97222222
+      },
+      {
+        "clip_id": "953ca665-f991-4c1c-b1cf-66aaa548e33f",
+        "hypothesis": "Cinco<unk> lo cual es alentador,¿no? Porque nos da un poquito más de tranquilidad. Catalina Quiros dice saludos desde Lima, Claudia Cantor pregunta del COVID-19. Puede ocasionar problemas neurológicos. Cinco⁇ lo cual es alentador¿no? Porque nos da un poquito más de tranquilidad. Catalina Quiros dice saludos desde Lima, Claudia Cantor pregunta del COVID-19. Puede ocasionar problemas neurológicos. Por ejemplo, pacientes con",
+        "reference": "cinco por ciento lo cual es alentador no porque nos da un poquito más de tranquilidad catalina quirós dices saludos desde lima  claudia cantor pregunta el covid diecinueve puede ocasionar problemas neurológicos por ejemplo pacientes con",
+        "wer": 0.97222222
+      },
+      {
+        "clip_id": "f495d68f-ec5b-42cd-a450-a55addf4c007",
+        "hypothesis": "Está en línea,¿qué está pasando? Entonces, estar conscientes de lo que nos está afectando y así como lo hacemos cuando estamos en el día a día hacerlo. Ahora, no dejar que las cosas salgan de nuestras manos línea¿qué está pasando? Entonces, estar conscientes de lo que nos está afectando y así como lo hacemos cuando estamos en el día a día hacerlo. Ahora, no dejar que las cosas salgan de nuestras manos porque...",
+        "reference": "está en línea qué está pasando entonces estar conscientes de lo que nos está afectando y así como lo hacemos cuando estamos en el día a día hacerlo ahora no dejar que las cosas salgan de nuestras manos porque",
+        "wer": 0.92307692
+      },
+      {
+        "clip_id": "e6a9d788-77b2-4216-9e47-e8412c201c2b",
+        "hypothesis": "Y se dieron cuenta que se el 62<unk> de los tweets más influyentes fueron generados por robots. Robots, que lo único que buscamos que buscamos es meter fake news que 62⁇ de los tweets más influyentes fueron generados por robots. Robots, que lo único que buscamos que buscamos es meter fake news que sí buscan el terrorismo social.",
+        "reference": "pierda si y se dieron cuenta que el sesenta y dos por ciento los tweets más influyentes fueron generados por robos robots que lo único que buscan es meter fake news que si buscan el terrorismo social",
+        "wer": 0.89189189
+      },
+      {
+        "clip_id": "57b11e35-34e2-40f2-bdc5-6aa722059478",
+        "hypothesis": "Más o menos como cuando uno va al supermercado,¿no? Muchas veces te cruza con alguien que te pasa muy cerca, en este caso, si tengo sentado un extraño al lado, a pesar de que a través de las medidas de control supermercado¿no? Muchas veces te cruza con alguien que te pasa muy cerca, en este caso, si tengo sentado un extraño al lado, a pesar de que a través de las medidas de control de temperatura, no hay sintomatología, etc.",
+        "reference": "más o menos como cuando uno va al supermercado no muchas veces te cruzas con alguien que te pasa muy cerca en este caso sí tengo sentado un extraño al lado a pesar de que atraviesa las medidas de control de temperatura no hay sintomatología etcétera",
+        "wer": 0.86956522
+      },
+      {
+        "clip_id": "647129e7-58ff-4f21-95f3-4568287df959",
+        "hypothesis": "La medida afectará al 8<unk>. de la plantilla y la peor parada será Francia, donde desaparecerán cuatro mil seiscientos empleos casi un tercio del total. Renault, sin embargo, no quiso precisar en qué medida afectará a los otros países 8. de la plantilla y la peor parada será Francia, donde desaparecerán cuatro mil seiscientos empleos casi un tercio del total. Renault, sin embargo, no quiso precisar en qué medida afectará a los otros países donde tiene.",
+        "reference": "en la medida afectará al ocho por ciento de la plantilla y la peor parada será francia donde desaparecerán cuatro mil seiscientos empleos casi un tercio del total renault sin embargo no quiso precisar en qué medida afectará a los otros países donde tiene aquí",
+        "wer": 0.86666667
+      },
+      {
+        "clip_id": "cd5012a3-bb4d-4a5e-a72c-57bcc978889b",
+        "hypothesis": "Mília otros problemas con tu trabajo. etcétera, etcétera,¿no? Es decir, casca escribió una de las grandes novelas del siglo XX, que es la metamorfosis que trata de un hombre, el tema es un hombre que se levanta por la etcétera¿no? Es decir, casca escribió una de las grandes novelas del siglo XX, que es la metamorfosis que trata de un hombre, el tema es un hombre que se levanta por la mañana convertido en escandalos.",
+        "reference": "familia o tus problemas con tu trabajo etcétera etcétera no es decir kafka sueño kafka escribió una de las grandes novelas del siglo veinte no es la metamorfosis que trata de un hombre el tema es un hombre que se levanta por la mañana convertido en es",
+        "wer": 0.85106383
+      },
+      {
+        "clip_id": "fd546feb-b22b-4609-8776-39363b273962",
+        "hypothesis": "riqueza de país se concentra en 20<unk> de la población, lo que es bastante no el famoso que una vez hablando con Majín Correa nos decía las cinco o diez familias que son dueñas de Panamá. 20⁇ de la población, lo que es bastante no el famoso que una vez hablando con Majín Correa nos decía las cinco o diez familias que son dueñas de Panamá.¿Cómo se hace en un país?",
+        "reference": "riqueza de panamá se concentra en veinte por ciento de la población lo que es bastante no el famoso que una vez hablando con mayín correa nos decía a las cinco diez familias que son dueñas de panamá como se hace en un país",
+        "wer": 0.84090909
+      },
+      {
+        "clip_id": "0609b7d5-236b-4c27-9bc3-a88086db5b0d",
+        "hypothesis": "El grupo no respeta en el voto indígena. También es algo histórico, muchas gracias. Le vuelvo a preguntar,¿qué error cree que cometió usted en este proceso? Este proceso para nada, qué error puede cometer yo y preguntar¿qué error cree que cometió usted en este proceso? Este proceso para nada, qué error puede cometer yo y ese campaña limpiamente el ripedo ganamos",
+        "reference": "los grupos no respetan el voto indígena también algo histórico muchas gracias  le vuelvo a preguntar qué error que cometió usted en este proceso este proceso para nada que error puedo cometer yo hice campaña limpiamente libre de ganamos",
+        "wer": 0.79487179
+      },
+      {
+        "clip_id": "4167f10d-2771-4225-98b2-508e3ad31544",
+        "hypothesis": "17<unk> de las ventas realizadas en todos los países del viejo continente, más del doble de la cuota de mercado registrada un año antes. Los datos confirman el interés de los compradores en 17⁇ de las ventas realizadas en todos los países del viejo continente, más del doble de la cuota de mercado registrada un año antes. Los datos confirman el interés de los compradores en este tipo de automóviles en un momento drástico para",
+        "reference": "y siete por ciento de las ventas realizadas en todos los países del viejo continente más del doble de la cuota de mercado registrada un año antes los datos confirman el interés de los compradores en este tipo de automóviles en un momento drástico para la",
+        "wer": 0.7826087
+      },
+      {
+        "clip_id": "6f9b842c-5c1f-4be6-8313-668d9d4c63ac",
+        "hypothesis": "Ese cambio de actitud, yo se lo torgo a eso, 100<unk>, a mi actitud cambió, de no pueden hacer nada por ti, bueno, más vale que tú hagas algo para estar mejor y empecé a hacer eso. 100, a mi actitud cambió, de no pueden hacer nada por ti, bueno, más vale que tú hagas algo para estar mejor y empecé a hacer eso. En práctica, intuitiva, en ese momento no tenía.",
+        "reference": "ese cambió actitud yo se lo otorgo a esos cien por cien a mi actitud cambió del no pueden hacer nada por ti bueno más vale que tú hagas algo para estar mejor y empecé a hacer eso con práctica intuitiva en este punto no tenía",
+        "wer": 0.7826087
+      },
+      {
+        "clip_id": "df325f25-1af0-4f4a-b3e0-30195216b3a8",
+        "hypothesis": "Que cerra de ahí en ese espacio pequeño, sin luz, sin internet. Me vuelvo loca,¿no? Me se me amiga y yo no, pues hice una canción. Bueno, hoy traje una guitarra también. Tenemos a Tache también loca¿no? Me se me amiga y yo no, pues hice una canción. Bueno, hoy traje una guitarra también. Tenemos a Tache también preparado para tocar .",
+        "reference": "cerrada ahí ahí en ese espacio pequeño sin luz sin internet me vuelvo  loca no me hice mi amiga y yo no hice una canción bueno hoy trajiste una guitarra también tenemos a tache también preparado para tocar a",
+        "wer": 0.76923077
+      },
+      {
+        "clip_id": "bef2726a-ba31-4332-962e-436f85b715c4",
+        "hypothesis": "Desde Panamá,¿cómo está Sauria? Carmen Cecilia Guerrero Cervantes nos dice buenas tardes, Miguel Calcal Panamá¿cómo está Sauria? Carmen Cecilia Guerrero Cervantes nos dice buenas tardes, Miguel Calcal Calcastillo desde el Bronx. Como ven bastante di versificado , buen día desde Quitos tardes, nos dice Sony",
+        "reference": "desde panamá como estas  carmen cecilia guerrero cervantes nos dice buenas tardes miguel castillo desde el bronx como ven bastante  diversificado   buen día desde quitos buenas tardes nos dice sonia",
+        "wer": 0.76666667
+      },
+      {
+        "clip_id": "5b36897f-cfe8-42e4-a4c5-26a87bbfa24d",
+        "hypothesis": "Hay algunos comentarios que quería citar Twitter, Twitter, la pregunta era,¿viajarían en avión estos días? Sin duda, dice Eduardo Grasso. Mi problema más urgente es que me dé un turno para era¿viajarían en avión estos días? Sin duda, dice Eduardo Grasso. Mi problema más urgente es que me dé un turno para viajar en el Sarmiento, Pichi.",
+        "reference": "pues  hay algunos comentarios que quería citar en twitter la pregunta era viajaría en avión estos días sin duda dice eduardo brazo mi problema más urgente es que me den turno para viajar en el sarmiento dice pichi",
+        "wer": 0.76315789
+      },
+      {
+        "clip_id": "66bc0a55-ccdf-4124-9bf5-cab2e67e2978",
+        "hypothesis": "É muy importante entender compreendemos un poco como estábamos a dir, porque vamos de avión civil para",
+        "reference": "así muy interesante ahora mira para entendernos un poco como es esperamos estar este año es muy importante entendernos comprendernos un poco cómo estábamos ayer porque cuando hablamos de la aviación civil para",
+        "wer": 0.75757576
+      },
+      {
+        "clip_id": "b39d512e-49d4-47ca-b6ad-e1d1b7f51ea2",
+        "hypothesis": "Pues, ya eres así a su vez hasta última esperanza y los valientes eran ellos,¿no? Que tenían el terror encima, el miedo en el rostro, ellos estaban confiando en nosotros en denunciar, en ellos¿no? Que tenían el terror encima, el miedo en el rostro, ellos estaban confiando en nosotros en denunciar, en contarnos historias.",
+        "reference": "saben que ya eres así a veces hasta su última esperanza y los valientes eran ellos no que tenían el terror encima el miedo en el rostro están confiando en nosotros en denunciar en contarnos historias",
+        "wer": 0.75
+      },
+      {
+        "clip_id": "25fe9195-a20f-4003-a968-f7874312506f",
+        "hypothesis": "Han dicho y la dignidad,¿no? La conciencia y la dignidad tan grande de gente que incluso revoluciona revolución con dificultades porque el hecho de estar en revolución no significa que cae el dignidad¿no? La conciencia y la dignidad tan grande de gente que incluso revoluciona revolución con dificultades porque el hecho de estar en revolución no significa que cae el maná del cielo, todo lo contrario.",
+        "reference": "han dicho y y la dignidad no la conciencia y las la dignidad tan grande de gente que que incluso en revolución con dificultades porque el hecho de estar en revolución no significa que cae el maná de del cielo todo lo contrario",
+        "wer": 0.74418605
+      }
+    ]
+  }
+}

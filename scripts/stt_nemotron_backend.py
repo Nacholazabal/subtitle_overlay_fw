@@ -46,6 +46,7 @@ from __future__ import annotations
 import re
 import sys
 import time
+from difflib import SequenceMatcher
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from types import MethodType
@@ -98,6 +99,13 @@ LATENCY_TO_ATT_CONTEXT = {
 # ``asr.decoding.strip_lang_tags=true``. We therefore apply the *same* official
 # pattern once more on the way out instead of inventing a new one.
 LANG_TAG_PATTERN = re.compile(r"\s*<[a-z]{2}-[A-Z]{2}>")
+
+# Tokens used internally by the RNNT/tokenizer must never become visible HDMI
+# subtitle text.  In particular, the large corpus evaluation observed both the
+# literal unknown-token marker and NeMo's U+2047 replacement glyph.  Removing
+# the marker is safer than inventing a spoken word that the model did not
+# recognize; surrounding whitespace is normalized below.
+INTERNAL_TOKEN_PATTERN = re.compile(r"(?:<unk>|<blank>|<pad>|<s>|</s>|\u2047)", re.IGNORECASE)
 
 # Official defaults from examples/asr/conf/asr_streaming_inference/cache_aware_rnnt.yaml.
 DEFAULT_STOP_HISTORY_EOU_MS = 800
@@ -249,7 +257,7 @@ class NemotronConfig:
 
 
 def clean_text(text, *, strip_lang_tags: bool = True) -> str:
-    """Strip ``<es-ES>``-style language tags and normalize whitespace.
+    """Strip non-display model tokens and normalize whitespace.
 
     Punctuation and capitalization produced by the model are preserved."""
     if not text:
@@ -257,6 +265,7 @@ def clean_text(text, *, strip_lang_tags: bool = True) -> str:
     text = str(text)
     if strip_lang_tags:
         text = LANG_TAG_PATTERN.sub("", text)
+    text = INTERNAL_TOKEN_PATTERN.sub("", text)
     return " ".join(text.split())
 
 
@@ -332,6 +341,61 @@ def common_word_prefix(left: list[str], right: list[str]) -> int:
     return index
 
 
+def map_committed_word_boundary(
+    previous_words: list[str], revised_words: list[str], committed_words: int
+) -> int:
+    """Map an already-displayed word boundary into a revised hypothesis.
+
+    NeMo is allowed to revise words that precede the live tail.  Those words
+    may already have been promoted to the firmware's roll-up history and cannot
+    be edited in place.  A longest-common-prefix mapping is therefore wrong: a
+    correction to the first word would map the boundary to zero and resend the
+    complete paragraph.  Sequence alignment preserves the corresponding
+    boundary across replacements, insertions and deletions, so only text that
+    was not previously displayed can be emitted.
+    """
+    boundary = max(0, min(int(committed_words), len(previous_words)))
+    if boundary == 0 or not previous_words:
+        return 0
+
+    matcher = SequenceMatcher(a=previous_words, b=revised_words, autojunk=False)
+    mapped = 0
+    for tag, source_start, source_end, target_start, target_end in matcher.get_opcodes():
+        # Insertions at or before the committed boundary are revisions of
+        # already displayed history.  Consume them rather than showing them at
+        # the current tail, where they would be chronologically incorrect.
+        if tag == "insert":
+            if source_start <= boundary:
+                mapped = target_end
+                continue
+            break
+
+        if boundary < source_start:
+            break
+        if boundary == source_start:
+            return max(mapped, target_start)
+
+        if boundary <= source_end:
+            consumed = boundary - source_start
+            if tag == "equal":
+                return target_start + consumed
+            if tag == "delete":
+                return target_start
+            # ``replace`` has no exact word-to-word correspondence.  Map the
+            # consumed fraction conservatively toward the end of the target
+            # block; all of it maps when the source block was fully consumed.
+            source_size = source_end - source_start
+            target_size = target_end - target_start
+            if boundary == source_end or source_size <= 0:
+                return target_end
+            mapped_inside = (consumed * target_size + source_size - 1) // source_size
+            return min(target_end, target_start + mapped_inside)
+
+        mapped = target_end
+
+    return min(max(mapped, 0), len(revised_words))
+
+
 class TranscriptAdapter:
     """Turn NeMo streaming step outputs into firmware-visible transcript events.
 
@@ -372,7 +436,9 @@ class TranscriptAdapter:
         self.finals_emitted = 0
         self.display_rollup_finals = 0
         self.model_eou_finals = 0
+        self.session_end_finals = 0
         self.eou_count = 0
+        self.session_end_count = 0
         self.flush_finals = 0
         self.partial_revisions = 0
         self.final_prefix_mismatches = 0
@@ -383,7 +449,7 @@ class TranscriptAdapter:
 
     def _emit(self, visible: str, *, is_final: bool, start_sec, end_sec, timestamp_source: str,
               infer_sec=None, eou: bool = False, forced_flush: bool = False,
-              final_reason: str | None = None) -> dict:
+              session_end: bool = False, final_reason: str | None = None) -> dict:
         if not isinstance(start_sec, (int, float)) or isinstance(start_sec, bool):
             start_sec = self._last_end_sec
         if not isinstance(end_sec, (int, float)) or isinstance(end_sec, bool):
@@ -409,6 +475,8 @@ class TranscriptAdapter:
             event["eou"] = True
         if forced_flush:
             event["forced_flush"] = True
+        if session_end:
+            event["session_end"] = True
         if is_final:
             # ``is_final`` is the firmware/display contract: it promotes a line
             # in the roll-up overlay. It is deliberately broader than a model
@@ -422,7 +490,8 @@ class TranscriptAdapter:
         return event
 
     def _rollup(self, *, close_utterance: bool, start_sec, end_sec, timestamp_source: str,
-                infer_sec=None, eou: bool = False, forced_flush: bool = False) -> list[dict]:
+                infer_sec=None, eou: bool = False, forced_flush: bool = False,
+                session_end: bool = False) -> list[dict]:
         """Promote filled/sentence-ending lines, then emit the remainder.
 
         When ``close_utterance`` the remainder is emitted as a final too (the
@@ -480,12 +549,17 @@ class TranscriptAdapter:
                     infer_sec=infer_sec,
                     eou=eou,
                     forced_flush=forced_flush,
-                    final_reason="model_eou" if eou else "session_flush",
+                    session_end=session_end,
+                    final_reason=(
+                        "model_eou" if eou else "session_end_final" if session_end else "session_flush"
+                    ),
                 )
             )
             self.finals_emitted += 1
             if eou:
                 self.model_eou_finals += 1
+            elif session_end:
+                self.session_end_finals += 1
             self._promoted_words = len(self._utterance_words)
             self._last_partial_visible = None
             return events
@@ -515,7 +589,15 @@ class TranscriptAdapter:
 
     # -- public API ---------------------------------------------------------
 
-    def ingest(self, step_output, *, audio_start_sec=None, audio_end_sec=None, infer_sec=None) -> list[dict]:
+    def ingest(
+        self,
+        step_output,
+        *,
+        audio_start_sec=None,
+        audio_end_sec=None,
+        infer_sec=None,
+        session_end: bool = False,
+    ) -> list[dict]:
         """Map one ``transcribe_step`` output to transcript events."""
         normalized = normalize_step_output(step_output)
         final_text = clean_text(normalized["final_text"], strip_lang_tags=self.config.strip_lang_tags)
@@ -533,11 +615,15 @@ class TranscriptAdapter:
             words = final_text.split()
             shared = common_word_prefix(self._utterance_words[: self._promoted_words], words)
             if shared < self._promoted_words:
-                # Text processing rewrote already-displayed words. Never re-show
-                # them; resume from the longest common prefix instead.
+                # Text processing rewrote already-displayed words.  Preserve
+                # the committed boundary through alignment; falling back to
+                # the common prefix would resend the whole paragraph.
                 self.final_prefix_mismatches += 1
+            mapped_boundary = map_committed_word_boundary(
+                self._utterance_words, words, self._promoted_words
+            )
             self._utterance_words = words
-            self._promoted_words = min(self._promoted_words, shared, len(words))
+            self._promoted_words = mapped_boundary
             if self._utterance_start_sec is None:
                 self._utterance_start_sec = segment_start if segment_start is not None else audio_start_sec
             timestamp_source = "nemo_segments" if segment_end is not None else "sample_clock"
@@ -548,10 +634,14 @@ class TranscriptAdapter:
                     end_sec=segment_end if segment_end is not None else self._last_end_sec,
                     timestamp_source=timestamp_source,
                     infer_sec=infer_sec,
-                    eou=True,
+                    eou=not session_end,
+                    session_end=session_end,
                 )
             )
-            self.eou_count += 1
+            if session_end:
+                self.session_end_count += 1
+            else:
+                self.eou_count += 1
             self._reset_utterance()
 
         if partial_text:
@@ -565,8 +655,11 @@ class TranscriptAdapter:
                 # each step, so it can in principle be revised. The probe saw
                 # append-only growth; if it ever is not, resync without re-showing.
                 self.partial_revisions += 1
+            mapped_boundary = map_committed_word_boundary(
+                self._utterance_words, words, self._promoted_words
+            )
             self._utterance_words = words
-            self._promoted_words = min(self._promoted_words, shared, len(words))
+            self._promoted_words = mapped_boundary
             if self._utterance_start_sec is None:
                 self._utterance_start_sec = audio_start_sec if audio_start_sec is not None else self._last_end_sec
             events.extend(
@@ -614,7 +707,9 @@ class TranscriptAdapter:
             "finals_emitted": self.finals_emitted,
             "display_rollup_finals": self.display_rollup_finals,
             "model_eou_finals": self.model_eou_finals,
+            "session_end_finals": self.session_end_finals,
             "eou_count": self.eou_count,
+            "session_end_count": self.session_end_count,
             "flush_finals": self.flush_finals,
             "empty_steps": self.empty_steps,
             "events_emitted": self.seq,
@@ -764,6 +859,7 @@ class NemotronSession:
                     audio_start_sec=start_sec,
                     audio_end_sec=end_sec,
                     infer_sec=infer_sec,
+                    session_end=is_last,
                 )
             )
         return events
