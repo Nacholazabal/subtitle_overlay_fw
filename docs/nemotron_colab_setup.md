@@ -2,11 +2,11 @@
 
 Este documento cubre las dos etapas del experimento Nemotron:
 
-1. **Probe** (`scripts/colab_nemotron_probe.ipynb`): valida instalación, modelo,
+1. **Probe** (`server/notebooks/nemotron_probe.ipynb`): valida instalación, modelo,
    audios y streaming cache-aware en Colab, sin placa ni bridge. **Ya ejecutado
    con éxito.**
-2. **Servidor live** (`scripts/colab_nemotron_server.ipynb`): tercer backend STT
-   conectado al bridge y al firmware existentes. Ver
+2. **Servidor live** (`server/notebooks/nemotron_server.ipynb`): backend STT final
+   conectado al bridge y al firmware. Ver
    [Etapa 2: servidor live](#etapa-2-servidor-live).
 
 ---
@@ -20,7 +20,7 @@ En esta etapa no intervienen la placa, el bridge, el firmware ni ngrok.
 
 ### Qué está implementado
 
-- Notebook: `scripts/colab_nemotron_probe.ipynb`.
+- Notebook: `server/notebooks/nemotron_probe.ipynb`.
 - Modelo: `nvidia/nemotron-3.5-asr-streaming-0.6b`.
 - Runtime: NVIDIA NeMo Speech desde el repositorio oficial.
 - Idioma fijo: `es-ES`.
@@ -51,10 +51,10 @@ El checkpoint es público. De todos modos, si existe un secret de Colab llamado
 `HF_TOKEN`, la notebook lo usa para evitar límites de descarga sin imprimirlo ni
 guardarlo en los resultados.
 
-Los audios pueden continuar en la ubicación de SimulStreaming:
+Los audios se guardan en una ubicación neutral del proyecto:
 
 ```text
-MyDrive/TESIS/simulstreaming/audio/
+MyDrive/TESIS/stt_audio/
 ├── desay-short.webm
 ├── noticiero-short.webm
 └── rel-short.webm
@@ -65,7 +65,7 @@ La notebook también busca automáticamente:
 ```text
 MyDrive/TESIS/stt-bench/audio/
 MyDrive/TESIS/nemotron/audio/
-MyDrive/Tesis-subtitles/simulstreaming/audio/
+MyDrive/Tesis-subtitles/stt_audio/
 ```
 
 Si los archivos están en otra ubicación, editar solamente `AUDIO_DIR` en la
@@ -98,18 +98,17 @@ MyDrive/TESIS/nemotron/
    git push -u origin dev/nemotron
    ```
 
-2. Abrir `scripts/colab_nemotron_probe.ipynb` en Colab.
+2. Abrir `server/notebooks/nemotron_probe.ipynb` en Colab.
 3. Seleccionar una GPU T4 o mejor.
 4. Ejecutar `Runtime -> Run all`.
 5. Autorizar el montaje de Google Drive.
 6. Esperar la descarga inicial del checkpoint y la instalación de NeMo.
 
 Antes de preparar los audios, la notebook comprueba físicamente que el checkout
-contenga `scripts/stt_nemotron_probe.py`, coloca el repo primero en `sys.path` y
-elimina cualquier módulo previo llamado `scripts` que Colab haya conservado en
-memoria. El `scripts/__init__.py` del proyecto además lo convierte en un paquete
-explícito, evitando que un paquete homónimo instalado por NeMo tenga prioridad
-sobre el namespace del repositorio.
+contenga `server/evaluation/probe.py`, coloca el repo primero en `sys.path` y
+elimina cualquier módulo previo llamado `server` que Colab haya conservado en
+memoria. El `server/__init__.py` del proyecto lo convierte en un paquete
+explícito y evita colisiones con paquetes instalados.
 
 La primera ejecución es lenta porque instala NeMo y descarga aproximadamente
 2.4 GB. Las siguientes reutilizan los pesos desde Drive, aunque NeMo se vuelve a
@@ -146,10 +145,9 @@ El probe pasó. El SHA de NeMo quedó fijado en
 
 ## Etapa 2: servidor live
 
-Tercer backend STT, en paralelo a faster-whisper y SimulStreaming. Cambia
-**solamente** el motor de inferencia en Colab. La placa, el bridge
-(`stt_stream_bridge.py`), el protocolo de sesión (`stt_stream_protocol.py`), los
-ACK del firmware y el overlay HDMI se reutilizan sin ninguna modificación.
+Nemotron es el backend STT final. La placa, el bridge
+(`server/runtime/bridge.py`), el protocolo (`server/runtime/protocol.py`), los
+ACK del firmware y el overlay HDMI forman el camino de producción.
 
 ```text
 placa → bridge actual → WebSocket Colab → Nemotron/NeMo
@@ -160,12 +158,12 @@ placa → bridge actual → WebSocket Colab → Nemotron/NeMo
 
 | Archivo | Rol |
 | --- | --- |
-| `scripts/stt_nemotron_backend.py` | Config, provenance, sesión cache-aware, adapter de transcripts, offline |
-| `scripts/stt_nemotron_server.py` | `GET /health`, `POST /stt/offline`, `WS /stt/stream` |
-| `scripts/colab_nemotron_server.ipynb` | Notebook live (GPU → Drive → repo → NeMo pin → carga → uvicorn → ngrok) |
-| `scripts/run_stt_colab_nemotron.sh` | Launcher del bridge (copia de `run_stt_colab_simulstream.sh`) |
-| `scripts/audiotestnemotron.sh` | Wrapper fino del banco de pruebas, perfil `nemotron_3_5_nemo` |
-| `test/test_stt_nemotron_backend.py`, `test/test_stt_nemotron_server.py` | Tests sin GPU |
+| `server/runtime/nemotron.py` | Config, provenance, sesión cache-aware, adapter de transcripts, offline |
+| `server/runtime/app.py` | `GET /health`, `POST /stt/offline`, `WS /stt/stream` |
+| `server/notebooks/nemotron_server.ipynb` | Notebook live (GPU → Drive → repo → NeMo pin → carga → uvicorn → ngrok) |
+| `server/run.sh` | Launcher de producción del bridge |
+| `server/audio-test.sh` | Wrapper fino del banco de pruebas, perfil `nemotron_3_5_nemo` |
+| `server/tests/` | Tests del servidor sin GPU |
 
 ### Motor de inferencia
 
@@ -201,7 +199,7 @@ one-hot de idioma, pero su `CacheAwareRNNTInferenceWrapper.execute_step()` recib
 por idioma esto no genera una excepción: el decoder puede devolver únicamente
 blanks durante toda la sesión.
 
-`stt_nemotron_backend.py` instala una corrección local y acotada sobre la instancia
+`server/runtime/nemotron.py` instala una corrección local y acotada sobre la instancia
 del wrapper: concatena el prompt entregado por el propio pipeline al encoder output
 y lo proyecta con `model.prompt_kernel`, exactamente como
 `PromptStreamingMixin._apply_prompt_to_encoded`. El estado de `/health` y la
@@ -231,9 +229,8 @@ hasta el HDMI. En `/health`, en los eventos y en el summary aparece como
 
 ### Display y partials
 
-El adapter reutiliza la política de display del backend SimulStreaming (mismo
-`bounded_tail` / `split_at_width` / límites de línea), adaptada a la salida
-append-only de Nemotron: NeMo entrega la utterance completa en cada paso, no un
+El adapter aplica una política común de límites de texto y corte por palabras,
+adaptada a la salida append-only de Nemotron: NeMo entrega la utterance completa en cada paso, no un
 delta, así que el adapter lleva la cuenta de cuántas palabras ya se promovieron a
 líneas finalizadas y sólo muestra el resto. Así una utterance de 60 s nunca llega
 al firmware como una sola línea de 60 s.
@@ -277,7 +274,7 @@ El endpoint offline nunca fabrica timestamps: si NeMo no los da, devuelve
    git push -u origin dev/nemotron
    ```
 
-2. Abrir `scripts/colab_nemotron_server.ipynb` en Colab, GPU T4 o mejor,
+2. Abrir `server/notebooks/nemotron_server.ipynb` en Colab, GPU T4 o mejor,
    `Runtime -> Run all`.
 3. Esperar a que imprima `HEALTH: ready` y las URLs. ngrok se levanta **después**
    de la readiness real; usa el dominio reservado
@@ -286,7 +283,7 @@ El endpoint offline nunca fabrica timestamps: si NeMo no los da, devuelve
 4. Desde WSL:
 
    ```bash
-   ./scripts/audiotestnemotron.sh
+   ./server/audio-test.sh
    ```
 
 El banco aborta antes de reproducir audio si `/health` no reporta
@@ -295,10 +292,10 @@ El banco aborta antes de reproducir audio si `/health` no reporta
 ### Sweep
 
 El sweep confirmatorio default está en
-`scripts/sweeps/nemotron_confirmatory.json` y se ejecuta con:
+`server/audio_tests/sweeps/nemotron_confirmatory.json` y se ejecuta con:
 
 ```bash
-./scripts/audiotestnemotron.sh --sweep
+./server/audio-test.sh --sweep
 ```
 
 Ejecuta doce casos intercalados: tres réplicas de cada una de estas cuatro
@@ -310,13 +307,13 @@ cantidad de finales acústicos.
 
 El punto de 160 ms del sweep inicial no se repite: el artefacto `.nemo` cargado
 avisó que `[56,1]` no pertenece a sus contextos soportados, aunque figure en
-documentación del modelo. Los archivos `scripts/sweeps/nemotron_initial.json` y
-`scripts/sweeps/nemotron_followup.json` se conservan para reproducir los
+documentación del modelo. Los archivos `server/audio_tests/sweeps/nemotron_initial.json` y
+`server/audio_tests/sweeps/nemotron_followup.json` se conservan para reproducir los
 experimentos anteriores, por ejemplo:
 
 ```bash
-./scripts/audiotestnemotron.sh --sweep \
-  --sweep-file scripts/sweeps/nemotron_initial.json
+./server/audio-test.sh --sweep \
+  --sweep-file server/audio_tests/sweeps/nemotron_initial.json
 ```
 
 El reporte agregado tiene tablas específicas de Nemotron: WER/CER proxy,
@@ -341,9 +338,9 @@ humana común.
 
 ### Alcance de los cambios
 
-El protocolo y sus estados no cambian. El firmware intenta enviar el ACK con
+El firmware intenta enviar el ACK con
 I/O no bloqueante inmediatamente después de encolarlo, antes de que el AO de
 mayor prioridad renderice el subtítulo; si el socket aplica backpressure, la
 respuesta queda en la misma cola fija y el polling la reintenta. No se tocaron
-`stt_stream_bridge.py`, los servidores faster-whisper/SimulStreaming, endpoints,
-autenticación, Docker ni bases de datos.
+El servidor y el bridge viven ahora bajo `server/runtime/`; el firmware conserva
+el mismo contrato TCP de sesiones y ACK.

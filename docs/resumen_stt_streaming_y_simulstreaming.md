@@ -1,5 +1,9 @@
 # Resumen del trabajo de STT streaming
 
+> Registro histórico de las etapas Faster-Whisper y SimulStreaming. El runtime
+> activo fue retirado al adoptarse Nemotron; la decisión final está en
+> `docs/stt_backend_decision.md`.
+
 ## Objetivo y arquitectura común
 
 El proyecto captura el audio de una fuente HDMI, lo transcribe fuera de la FPGA y muestra subtítulos sobre el video de salida. El objetivo de diseño es aproximarse a una latencia perceptual de **1,5 s**.
@@ -117,4 +121,3 @@ El firmware **no** ejecuta Whisper, CTranslate2, PyTorch, VAD, VAC ni AlignAtt; 
 - Investigar los picos de inferencia y conseguir `RTF < 1` de forma sostenida.
 - Repetir una corrida normal y recién entonces ejecutar el sweep AlignAtt.
 - Comparar ambos backends con el mismo audio, modelo, referencias humanas y métricas end-to-end.
-

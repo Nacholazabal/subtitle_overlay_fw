@@ -1,4 +1,8 @@
-# SimulStreaming / AlignAtt experimental STT backend
+# SimulStreaming / AlignAtt — archivo histórico
+
+> Este backend fue retirado del código activo al seleccionarse Nemotron como
+> motor final. Los comandos y rutas de este documento ya no existen; se conserva
+> como precedente experimental para la memoria de la tesis.
 
 > Experimental alternative STT engine for the live-subtitle thesis. It swaps
 > **only** the speech-to-text engine running in Colab. Everything else — board

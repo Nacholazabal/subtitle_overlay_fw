@@ -7,7 +7,7 @@ presentar el mismo corpus como test no visto.
 
 ## Qué ejecuta ahora
 
-La notebook `scripts/colab_nemotron_dataset_eval.ipynb` hace, en orden:
+La notebook `server/notebooks/nemotron_dataset_eval.ipynb` hace, en orden:
 
 1. **Offline completo:** transcribe los 2.507 FLAC con el checkpoint completo y
    compara cada salida contra su TXT humano.
@@ -21,8 +21,9 @@ firmware. La segunda fase llama directamente a
 caches, prompt español, endpointer y adaptación de transcripts que utiliza el
 servidor real.
 
-El replay físico de una hora es una **tercera fase futura**. No está implementado
-ni se mezcla en estos resultados.
+El replay físico constituye la tercera fase y conserva su propio reporte, sin
+recalcular ni mezclar las métricas de estas dos fases. Sus resultados finales se
+documentan en `docs/nemotron_physical_evaluation.md`.
 
 ## Configuración congelada
 
@@ -72,7 +73,7 @@ resultados persistentes.
 ## Ejecución
 
 1. Pushear esta implementación a `dev/nemotron`.
-2. Abrir `scripts/colab_nemotron_dataset_eval.ipynb` en Colab.
+2. Abrir `server/notebooks/nemotron_dataset_eval.ipynb` en Colab.
 3. Seleccionar un runtime con GPU.
 4. Ejecutar `Runtime -> Run all`.
 5. Dejar que termine offline y luego streaming.
@@ -135,10 +136,10 @@ MediaSpeech suele cortar los clips en mitad de una oración. Por eso el runner
 distingue siempre `model_eou` de `session_flush`: el segundo es sólo el final
 artificial del archivo y no se presenta como detección acústica de fin de frase.
 
-## Fase 3, dejada para después
+## Fase 3: replay físico
 
-La etapa física deberá fijar una selección reproducible que totalice una hora,
-crear un cue-sheet con orden y silencios, reproducirla en tiempo real hacia la
-placa y guardar audio, eventos, ACK y evidencia del display. No debe recalcular
-ni reemplazar las métricas offline/streaming ya obtenidas aquí; las complementa
-con transporte y presentación end-to-end.
+La etapa física fijó una selección reproducible, creó un cue-sheet con orden y
+silencios, reprodujo el conjunto en tiempo real hacia la placa y guardó audio,
+eventos y ACK. Alcanzó 209 clips completos y 49,71 minutos de habla, con WER
+25,95% y CER 19,31%. No reemplaza las métricas offline/streaming anteriores: las
+complementa con el recorrido físico end-to-end.
