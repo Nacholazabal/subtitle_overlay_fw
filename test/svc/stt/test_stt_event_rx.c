@@ -216,26 +216,39 @@ void test_stt_event_rx_reports_each_delivery_status(void)
 
 void test_stt_event_rx_response_queue_full_is_nonblocking(void)
 {
+    uint32_t count;
+    int client;
+
+    init_live_receiver();
+    client = connect_live_client();
+    poll_live_receiver(&count);
+    live_rx.response_count = STT_EVENT_RX_TX_QUEUE_DEPTH;
+    TEST_ASSERT_EQUAL_INT(
+        -EAGAIN,
+        stt_event_rx_report_delivery(
+            &live_rx, STT_EVENT_RX_TX_QUEUE_DEPTH, STT_EVENT_RX_DELIVERY_ACCEPTED));
+    TEST_ASSERT_EQUAL_UINT8(1U, live_rx.client_connected);
+    close(client);
+}
+
+void test_stt_event_rx_delivery_ack_is_flushed_without_another_poll(void)
+{
     char response[STT_EVENT_RX_RESPONSE_MAX];
     uint32_t count;
-    uint32_t i;
     int client;
 
     init_live_receiver();
     client = connect_live_client();
     poll_live_receiver(&count);
     receive_line(client, response, sizeof(response));
-    for (i = 0U; i < STT_EVENT_RX_TX_QUEUE_DEPTH; i++)
-    {
-        TEST_ASSERT_EQUAL_INT(
-            0, stt_event_rx_report_delivery(&live_rx, i, STT_EVENT_RX_DELIVERY_ACCEPTED));
-    }
+
     TEST_ASSERT_EQUAL_INT(
-        -EAGAIN,
-        stt_event_rx_report_delivery(
-            &live_rx, STT_EVENT_RX_TX_QUEUE_DEPTH, STT_EVENT_RX_DELIVERY_ACCEPTED));
-    poll_live_receiver(&count);
-    TEST_ASSERT_EQUAL_UINT8(1U, live_rx.client_connected);
+        0, stt_event_rx_report_delivery(&live_rx, 42U, STT_EVENT_RX_DELIVERY_ACCEPTED));
+
+    receive_line(client, response, sizeof(response));
+    TEST_ASSERT_NOT_NULL(strstr(response, "\"seq\":42"));
+    TEST_ASSERT_NOT_NULL(strstr(response, "\"status\":\"accepted\""));
+    TEST_ASSERT_EQUAL_UINT8(0U, live_rx.response_count);
     close(client);
 }
 
@@ -265,10 +278,9 @@ void test_stt_event_rx_resumes_partially_sent_response(void)
     close(sockets[1]);
 }
 
-void test_stt_event_rx_send_disconnect_does_not_fail_poll(void)
+void test_stt_event_rx_immediate_send_disconnects_client_without_failing_report(void)
 {
     int sockets[2];
-    uint32_t count;
 
     TEST_ASSERT_EQUAL_INT(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sockets));
     memset(&live_rx, 0, sizeof(live_rx));
@@ -280,8 +292,6 @@ void test_stt_event_rx_send_disconnect_does_not_fail_poll(void)
     close(sockets[1]);
     TEST_ASSERT_EQUAL_INT(
         0, stt_event_rx_report_delivery(&live_rx, 1U, STT_EVENT_RX_DELIVERY_ACCEPTED));
-
-    poll_live_receiver(&count);
 
     TEST_ASSERT_EQUAL_INT(-1, live_rx.client_fd);
     TEST_ASSERT_EQUAL_UINT8(0U, live_rx.client_connected);

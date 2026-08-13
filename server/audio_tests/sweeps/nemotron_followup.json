@@ -1,0 +1,85 @@
+{
+  "_comment": "Nemotron follow-up sweep. It repeats the valid 320 ms control twice and the promising 560 ms candidate three times, probes the supported 1120 ms lookahead, and changes one endpointing parameter at a time around the 560 ms candidate. Endpoint-only cases reuse the same 560 ms offline proxy because stop_history_eou_ms and residue_tokens_at_end affect live endpointing, not full-file transcription.",
+  "cases": [
+    {
+      "name": "control_320_r1",
+      "group": "control_320",
+      "replicate": 1,
+      "latency_ms": 320,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "candidate_560_r1",
+      "group": "candidate_560",
+      "replicate": 1,
+      "latency_ms": 560,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "eou_fast_560",
+      "latency_ms": 560,
+      "stop_history_eou_ms": 400,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "lookahead_1120",
+      "latency_ms": 1120,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "candidate_560_r2",
+      "group": "candidate_560",
+      "replicate": 2,
+      "latency_ms": 560,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "residue_0_560",
+      "latency_ms": 560,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 0,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "eou_slow_560",
+      "latency_ms": 560,
+      "stop_history_eou_ms": 1200,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "control_320_r2",
+      "group": "control_320",
+      "replicate": 2,
+      "latency_ms": 320,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "residue_4_560",
+      "latency_ms": 560,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 4,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "candidate_560_r3",
+      "group": "candidate_560",
+      "replicate": 3,
+      "latency_ms": 560,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    }
+  ]
+}

@@ -103,7 +103,8 @@ int stt_event_rx_poll(stt_event_rx_t* rx,
                       uint32_t max_events,
                       uint32_t* event_count);
 
-/// @brief Queue the delivery result for a transcript previously returned by stt_event_rx_poll().
+/// @brief Queue the delivery result and attempt an immediate nonblocking flush.
+/// Unsent bytes remain queued and are retried by stt_event_rx_poll().
 /// @return 0 on success, -EAGAIN if the nonblocking response queue is full, or -APP_ESTATE.
 int stt_event_rx_report_delivery(stt_event_rx_t* rx,
                                  uint32_t seq,

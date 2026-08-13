@@ -1,0 +1,53 @@
+{
+  "_comment": "Initial Nemotron 3.5 latency sweep. It isolates the model's published algorithmic-lookahead operating point while keeping the official endpointing defaults fixed (stop_history_eou_ms=800, residue_tokens_at_end=2). The 320 ms control is repeated three times and interleaved to expose run-order drift. The 1120 ms point is intentionally excluded because its lookahead alone consumes most of the 1.5 s end-to-end target.",
+  "cases": [
+    {
+      "name": "control_320_r1",
+      "group": "control_320",
+      "replicate": 1,
+      "latency_ms": 320,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "low_latency_80",
+      "latency_ms": 80,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "control_320_r2",
+      "group": "control_320",
+      "replicate": 2,
+      "latency_ms": 320,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "quality_560",
+      "latency_ms": 560,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "balanced_160",
+      "latency_ms": 160,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "control_320_r3",
+      "group": "control_320",
+      "replicate": 3,
+      "latency_ms": 320,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    }
+  ]
+}

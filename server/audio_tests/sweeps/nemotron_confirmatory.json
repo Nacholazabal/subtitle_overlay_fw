@@ -1,0 +1,113 @@
+{
+  "_comment": "Confirmatory Nemotron sweep. Four operating points are each repeated three times in an interleaved order: the 320/800/2 control, the 560/800/2 candidate, and 560 ms with 600 or 400 ms EOU history. Residue stays fixed at the official value 2. The design estimates run-to-run variation and tests whether 600 ms preserves the fast endpointing seen at 400 ms with less fragmentation.",
+  "cases": [
+    {
+      "name": "control_320_r1",
+      "group": "control_320",
+      "replicate": 1,
+      "latency_ms": 320,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "candidate_560_r1",
+      "group": "candidate_560",
+      "replicate": 1,
+      "latency_ms": 560,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "mid_eou_600_r1",
+      "group": "mid_eou_600",
+      "replicate": 1,
+      "latency_ms": 560,
+      "stop_history_eou_ms": 600,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "fast_eou_400_r1",
+      "group": "fast_eou_400",
+      "replicate": 1,
+      "latency_ms": 560,
+      "stop_history_eou_ms": 400,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "mid_eou_600_r2",
+      "group": "mid_eou_600",
+      "replicate": 2,
+      "latency_ms": 560,
+      "stop_history_eou_ms": 600,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "fast_eou_400_r2",
+      "group": "fast_eou_400",
+      "replicate": 2,
+      "latency_ms": 560,
+      "stop_history_eou_ms": 400,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "control_320_r2",
+      "group": "control_320",
+      "replicate": 2,
+      "latency_ms": 320,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "candidate_560_r2",
+      "group": "candidate_560",
+      "replicate": 2,
+      "latency_ms": 560,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "fast_eou_400_r3",
+      "group": "fast_eou_400",
+      "replicate": 3,
+      "latency_ms": 560,
+      "stop_history_eou_ms": 400,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "mid_eou_600_r3",
+      "group": "mid_eou_600",
+      "replicate": 3,
+      "latency_ms": 560,
+      "stop_history_eou_ms": 600,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "candidate_560_r3",
+      "group": "candidate_560",
+      "replicate": 3,
+      "latency_ms": 560,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    },
+    {
+      "name": "control_320_r3",
+      "group": "control_320",
+      "replicate": 3,
+      "latency_ms": 320,
+      "stop_history_eou_ms": 800,
+      "residue_tokens_at_end": 2,
+      "target_lang": "es-ES"
+    }
+  ]
+}
