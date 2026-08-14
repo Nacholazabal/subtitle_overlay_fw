@@ -56,6 +56,7 @@ typedef enum
     SUBTITLE_TEXT_SIG,   ///< Directed event from stt_ao_t to subtitle_ao_t.
     SUBTITLE_CLEAR_SIG,  ///< Private subtitle AO timer signal to clear stale subtitles.
     SUBTITLE_PREVIOUS_EXPIRE_SIG, ///< Private subtitle AO timer signal to hide previous final text.
+    SYSTEM_SHUTDOWN_SIG, ///< Directed request from a POSIX signal: begin coordinated shutdown.
     SYSTEM_STOP_SIG, ///< Directed command from system_ao_t: quiesce and stop (fail-fast shutdown).
     SYSTEM_STOPPED_SIG,          ///< Directed ack to system_ao_t: this component has quiesced.
     SYSTEM_SHUTDOWN_TIMEOUT_SIG, ///< Private system AO timer: shutdown ack timeout.

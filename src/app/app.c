@@ -12,6 +12,8 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 #include "app.h"
 
+#include <signal.h>
+#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -53,6 +55,8 @@ typedef union
 static void bsp_init_placeholder(void);
 static void app_init(void);
 static void app_log_output(log_level_e severity, const char* msg);
+static void app_install_signal_handlers(void);
+static void app_shutdown_signal_handler(int signal_number);
 
 // === Public variable definitions ================================================================================= //
 // === Private variable definitions ================================================================================ //
@@ -71,6 +75,32 @@ static void app_log_output(log_level_e severity, const char* msg)
 {
     fprintf(stdout, "[%s] %s\n", log_level_to_str(severity), msg);
     fflush(stdout);
+}
+
+// Signal handlers may only perform async-signal-safe work. The ticker thread
+// translates this flag into a normal QP/C event on its next 10 ms tick.
+static volatile sig_atomic_t shutdown_signal_pending;
+static volatile sig_atomic_t shutdown_event_posted;
+
+static void app_shutdown_signal_handler(int const signal_number)
+{
+    Q_UNUSED_PAR(signal_number);
+    shutdown_signal_pending = 1;
+}
+
+static void app_install_signal_handlers(void)
+{
+    struct sigaction action;
+
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = &app_shutdown_signal_handler;
+    (void)sigemptyset(&action.sa_mask);
+    (void)sigaction(SIGINT, &action, NULL);
+    (void)sigaction(SIGTERM, &action, NULL);
+
+    // OpenSSL's SSL_write() ultimately writes to a socket. Ignore SIGPIPE so a
+    // peer reset is reported as an I/O error and reaches the reconnect path.
+    (void)signal(SIGPIPE, SIG_IGN);
 }
 
 // === Public function implementation ============================================================================== //
@@ -143,6 +173,7 @@ int main(void)
     LOG_INFO("app: starting subtitle overlay firmware");
 
     QF_init();
+    app_install_signal_handlers();
     bsp_init_placeholder();
     app_init();
     return QF_run();
@@ -166,7 +197,14 @@ void QF_onCleanup(void)
 
 void QF_onClockTick(void)
 {
+    static QEvt const shutdown_evt = QEVT_INITIALIZER(SYSTEM_SHUTDOWN_SIG);
+
     QTIMEEVT_TICK_X(0U, (void*)0);
+    if ((shutdown_signal_pending != 0) && (shutdown_event_posted == 0))
+    {
+        shutdown_event_posted = 1;
+        (void)QACTIVE_POST_X(AO_System, &shutdown_evt, 0U, (void*)0);
+    }
 }
 
 // === End of documentation ======================================================================================== //

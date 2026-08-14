@@ -44,6 +44,9 @@
     - src/hal/video_dynclk
     - src/hal/video_gpio
     - src/hal/video_vtc
+    # Header only: net_tls.c is never built on the host, so unit tests never
+    # need OpenSSL. Tests reach it through CMock as mock_net_tls.h.
+    - src/hal/net_tls
     - src/hal/usb_audio
     - src/svc/stt
     - src/svc/system

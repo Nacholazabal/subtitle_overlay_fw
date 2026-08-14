@@ -41,6 +41,11 @@ tar \
     --exclude='./.llm_context' \
     --exclude='./.agents' \
     --exclude='./.codex' \
+    --exclude='./.claude' \
+    --exclude='./.claude-*' \
+    --exclude='./.code-review-graph' \
+    --exclude='./.localdev' \
+    --exclude='./logs' \
     -C "${REPO_ROOT}" \
     -cf - . | ssh_vm "tar -xf - -C '${REMOTE_PROJECT_DIR}'"
 

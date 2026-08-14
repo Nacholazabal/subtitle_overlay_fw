@@ -116,7 +116,7 @@ static void post_error(usb_audio_ao_t* const me, int32_t code)
 }
 
 /**
- * @brief Start USB audio capture and TCP streaming.
+ * @brief Start USB audio capture.
  * @param me USB audio active object.
  * @return 0 on success, or a negative errno-style value on failure.
  */
@@ -126,10 +126,8 @@ static int on_component_init(usb_audio_ao_t* const me)
     int status;
 
     usb_audio_stream_default_config(&config);
-    LOG_INFO("usb-audio: starting capture device=%s target=%s:%lu",
-             config.pcm_device,
-             config.tcp_host,
-             (unsigned long)config.tcp_port);
+    // STT owns the bounded queue and WebSocket worker; USB owns ALSA only.
+    LOG_INFO("usb-audio: starting capture device=%s", config.pcm_device);
 
     status = usb_audio_stream_start(&me->stream, &config);
     if (status == 0)
@@ -137,7 +135,7 @@ static int on_component_init(usb_audio_ao_t* const me)
         me->running = 1U;
         QTimeEvt_armX(&me->poll_time_evt, USB_AUDIO_AO_POLL_TICKS, USB_AUDIO_AO_POLL_TICKS);
         post_ready(me);
-        LOG_INFO("usb-audio: capture and TCP streaming ready, health poll=%u ms",
+        LOG_INFO("usb-audio: capture ready, health poll=%u ms",
                  (unsigned)USB_AUDIO_AO_POLL_PERIOD_MS);
     }
     else

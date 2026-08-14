@@ -8,7 +8,7 @@ import threading
 import time
 
 
-STREAM_MAGIC = b"SAUDPCM\\x00"
+STREAM_MAGIC = b"SAUDPCM\x00"
 STREAM_HEADER = "!6I"
 CHUNK_HEADER = "!QQ5I"
 FORMAT_S16_LE = 1

@@ -34,6 +34,7 @@ COMMON_FLAGS=(
     -Isrc/hal/video_dynclk
     -Isrc/hal/video_gpio
     -Isrc/hal/video_vtc
+    -Isrc/hal/net_tls
     -Isrc/hal/usb_audio
     -Isrc/svc/stt
     -Isrc/svc/subtitle_pipeline
@@ -42,7 +43,9 @@ COMMON_FLAGS=(
 )
 
 mapfile -t SOURCES < <(
-    git ls-files \
+    # Include new source files before they are staged; otherwise a clean lint
+    # can silently omit exactly the implementation under review.
+    git ls-files --cached --others --exclude-standard \
         'src/app/*.c' \
         'src/hal/**/*.c' \
         'src/svc/**/*.c' \

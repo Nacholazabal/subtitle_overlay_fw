@@ -145,14 +145,18 @@ El probe pasó. El SHA de NeMo quedó fijado en
 
 ## Etapa 2: servidor live
 
-Nemotron es el backend STT final. La placa, el bridge
-(`server/runtime/bridge.py`), el protocolo (`server/runtime/protocol.py`), los
-ACK del firmware y el overlay HDMI forman el camino de producción.
+Nemotron es el backend STT final. En producción, la placa abre directamente el
+WebSocket seguro contra Colab; el bridge (`server/runtime/bridge.py`) queda para
+el banco de audios y las evaluaciones físicas, no para el runtime autónomo.
 
 ```text
-placa → bridge actual → WebSocket Colab → Nemotron/NeMo
-      ← transcripts ← bridge ← ACK firmware ← overlay HDMI
+placa ── audio/WSS ──► Colab/ngrok ──► Nemotron/NeMo
+      ◄─ transcripts ────────────────┘
+      └─ SttAO ──► SubtitleAO ──► overlay HDMI
 ```
+
+El procedimiento de red, imagen PetaLinux, SD y servicio de boot está en
+[Despliegue directo placa → Colab](direct_board_colab_deployment.md).
 
 ### Archivos
 
@@ -161,7 +165,8 @@ placa → bridge actual → WebSocket Colab → Nemotron/NeMo
 | `server/runtime/nemotron.py` | Config, provenance, sesión cache-aware, adapter de transcripts, offline |
 | `server/runtime/app.py` | `GET /health`, `POST /stt/offline`, `WS /stt/stream` |
 | `server/notebooks/nemotron_server.ipynb` | Notebook live (GPU → Drive → repo → NeMo pin → carga → uvicorn → ngrok) |
-| `server/run.sh` | Launcher de producción del bridge |
+| `scripts/run.sh` | Build, deploy por SSH e instalación del servicio de boot en la placa |
+| `server/run.sh` | Bridge conservado para banco de audios/evaluación; no forma parte del camino autónomo |
 | `server/audio-test.sh` | Wrapper fino del banco de pruebas, perfil `nemotron_3_5_nemo` |
 | `server/tests/` | Tests del servidor sin GPU |
 

@@ -1,11 +1,13 @@
 #include <stdlib.h>
+#include <string.h>
 
 #include "unity.h"
 
 #include "app.h"
-#include "mock_stt_event_rx.h"
+#include "mock_stt_ws_client.h"
 #include "mock_subtitle_pipeline.h"
 #include "qpc_test_harness.h"
+#include "stt_ws_client.h"
 #include "SttAO.h"
 #include "SubtitleAO.h"
 
@@ -34,7 +36,7 @@ QActive* const AO_System = &system_fake.super;
 static char captured_text[SUBTITLE_TEXT_MAX_LEN * 2U];
 static uint8_t captured_current_is_final;
 static int write_text_status;
-static subtitle_text_evt_t poll_events[STT_EVENT_RX_MAX_EVENTS_PER_POLL];
+static subtitle_text_evt_t poll_events[STT_WS_EVENT_RING_DEPTH];
 static uint32_t poll_event_count;
 static int poll_status;
 
@@ -56,11 +58,18 @@ static void start_subtitle_ao(void)
     qpc_test_start(AO_Subtitle, 3U, subtitle_queue, Q_DIM(subtitle_queue));
 }
 
+static stt_ws_client_t fake_client;
+
 static void expect_stt_init_success(void)
 {
-    stt_event_rx_default_config_Ignore();
-    stt_event_rx_init_IgnoreAndReturn(0);
-    stt_event_rx_report_delivery_IgnoreAndReturn(0);
+    stt_ws_client_shared_IgnoreAndReturn(&fake_client);
+    stt_ws_client_start_IgnoreAndReturn(0);
+    stt_ws_client_request_stop_Ignore();
+    stt_ws_client_finish_stop_IgnoreAndReturn(0);
+    stt_ws_client_report_delivery_Ignore();
+    stt_ws_client_stats_Ignore();
+    stt_ws_client_state_IgnoreAndReturn(STT_WS_STATE_READY);
+    stt_ws_client_state_name_IgnoreAndReturn("ready");
 }
 
 static void post_component_init(QActive* const target, uint32_t width, uint32_t height)
@@ -87,20 +96,20 @@ static int subtitle_pipeline_write_caption_capture(subtitle_pipeline_t* pipeline
     return write_text_status;
 }
 
-static int stt_event_rx_poll_stub(stt_event_rx_t* rx,
-                                  subtitle_text_evt_t* events,
-                                  uint32_t max_events,
-                                  uint32_t* event_count,
-                                  int call_count)
+static int stt_ws_client_poll_events_stub(stt_ws_client_t* client,
+                                          subtitle_text_evt_t* events,
+                                          uint32_t max_events,
+                                          uint32_t* event_count,
+                                          int call_count)
 {
     uint32_t i;
 
-    Q_UNUSED_PAR(rx);
+    Q_UNUSED_PAR(client);
     Q_UNUSED_PAR(call_count);
 
     if (poll_status == 0)
     {
-        TEST_ASSERT_LESS_OR_EQUAL_UINT32(STT_EVENT_RX_MAX_EVENTS_PER_POLL, max_events);
+        TEST_ASSERT_LESS_OR_EQUAL_UINT32(STT_WS_EVENT_RING_DEPTH, max_events);
         TEST_ASSERT_LESS_OR_EQUAL_UINT32(max_events, poll_event_count);
         for (i = 0U; i < poll_event_count; i++)
         {
@@ -123,7 +132,7 @@ static void set_stt_poll_result(subtitle_text_evt_t const* events, uint32_t coun
     }
     poll_event_count = count;
     poll_status = status;
-    stt_event_rx_poll_Stub(stt_event_rx_poll_stub);
+    stt_ws_client_poll_events_Stub(stt_ws_client_poll_events_stub);
 }
 
 static void expect_subtitle_init_success(void)
@@ -403,7 +412,7 @@ void test_subtitle_quiesces_and_acks_on_system_stop(void)
 
 void test_stt_quiesces_and_acks_on_system_stop(void)
 {
-    // SRC-H07: on SYSTEM_STOP the STT AO closes its receiver and acknowledges.
+    // SRC-H07: an already-stopped network worker is acknowledged immediately.
     expect_stt_init_success();
     start_stt_ao();
 
@@ -411,7 +420,7 @@ void test_stt_quiesces_and_acks_on_system_stop(void)
     qpc_test_dispatch_one(AO_Stt);
     qpc_test_gc(qpc_test_pop(AO_System)); // ready
 
-    stt_event_rx_cleanup_Ignore();
+    stt_ws_client_stop_complete_ExpectAndReturn(&fake_client, 1U);
     qpc_test_post_signal(AO_Stt, SYSTEM_STOP_SIG);
     qpc_test_dispatch_one(AO_Stt);
 
@@ -419,6 +428,39 @@ void test_stt_quiesces_and_acks_on_system_stop(void)
     TEST_ASSERT_EQUAL_UINT(SYSTEM_STOPPED_SIG, ack->sig);
     TEST_ASSERT_EQUAL_INT(COMPONENT_STT, ((component_ready_evt_t const*)ack)->source);
     qpc_test_gc(ack);
+}
+
+void test_stt_waits_asynchronously_for_network_worker_before_ack(void)
+{
+    expect_stt_init_success();
+    start_stt_ao();
+
+    post_component_init(AO_Stt, 0U, 0U);
+    qpc_test_dispatch_one(AO_Stt);
+    qpc_test_gc(qpc_test_pop(AO_System));
+
+    stt_ws_client_stop_complete_ExpectAndReturn(&fake_client, 0U);
+    qpc_test_post_signal(AO_Stt, SYSTEM_STOP_SIG);
+    qpc_test_dispatch_one(AO_Stt);
+    assert_no_system_event();
+
+    stt_ws_client_stop_complete_ExpectAndReturn(&fake_client, 0U);
+    qpc_test_post_signal(AO_Stt, STT_POLL_SIG);
+    qpc_test_dispatch_one(AO_Stt);
+    assert_no_system_event();
+
+    stt_ws_client_stop_complete_ExpectAndReturn(&fake_client, 1U);
+    qpc_test_post_signal(AO_Stt, STT_POLL_SIG);
+    qpc_test_dispatch_one(AO_Stt);
+
+    {
+        QEvt const* const ack = qpc_test_pop(AO_System);
+
+        TEST_ASSERT_EQUAL_UINT(SYSTEM_STOPPED_SIG, ack->sig);
+        TEST_ASSERT_EQUAL_INT(COMPONENT_STT,
+                              ((component_ready_evt_t const*)ack)->source);
+        qpc_test_gc(ack);
+    }
 }
 
 void test_stt_poll_error_posts_component_error(void)
@@ -433,7 +475,6 @@ void test_stt_poll_error_posts_component_error(void)
     qpc_test_gc(qpc_test_pop(AO_System));
 
     set_stt_poll_result(NULL, 0U, -EIO);
-    stt_event_rx_cleanup_Ignore();
 
     qpc_test_post_signal(AO_Stt, STT_POLL_SIG);
     qpc_test_dispatch_one(AO_Stt);
