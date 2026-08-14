@@ -211,24 +211,24 @@ y lo proyecta con `model.prompt_kernel`, exactamente como
 provenance exponen `prompt_projection_compat=true` mientras este workaround sea
 necesario.
 
-El arranque de Colab ya no considera suficiente un warmup con silencio. Antes de
-abrir ngrok procesa los primeros 12 s de `desay-short.webm` desde Drive mediante la
-misma sesión incremental del servidor y exige al menos un evento. Si el pipeline
-vuelve a producir solamente blanks, queda en `failed` y no anuncia un falso
-`HEALTH: ready`.
+El arranque de producción no depende de los audios del banco. Antes de abrir
+ngrok carga CUDA, ejecuta el warmup técnico y comprueba que puede crear una
+sesión streaming. Si se configura explícitamente `AUDIO_DIR`, también procesa
+los primeros 12 s de `desay-short.webm` y exige un evento; este canario hablado
+es opcional y queda fuera del camino normal placa → Colab.
 
 ### Configuración inicial fija
 
 - `target_lang=es-ES`
 - decoder RNNT (`greedy_batch`)
-- `att_context_size=[56,3]` (punto publicado de 320 ms)
-- `stop_history_eou=800 ms`, `residue_tokens_at_end=2` (defaults oficiales)
+- `att_context_size=[56,6]` (punto final seleccionado de 560 ms)
+- `stop_history_eou=600 ms`, `residue_tokens_at_end=2`
 - 16 kHz, tags `<es-ES>` eliminados
 - `compute_dtype=float32` + AMP, igual que el probe en T4
 
 Sin beam search, sin auto-language, sin context biasing, sin ITN y sin traducción.
 
-`320 ms` es el **lookahead algorítmico del modelo**, no la latencia end-to-end
+`560 ms` es el **lookahead algorítmico del modelo**, no la latencia end-to-end
 hasta el HDMI. En `/health`, en los eventos y en el summary aparece como
 `lookahead_ms` justamente por eso.
 
@@ -276,7 +276,7 @@ El endpoint offline nunca fabrica timestamps: si NeMo no los da, devuelve
 1. Desde WSL, pushear la rama:
 
    ```bash
-   git push -u origin dev/nemotron
+   git push -u origin dev/direct-connect
    ```
 
 2. Abrir `server/notebooks/nemotron_server.ipynb` en Colab, GPU T4 o mejor,
@@ -285,7 +285,8 @@ El endpoint offline nunca fabrica timestamps: si NeMo no los da, devuelve
    de la readiness real; usa el dominio reservado
    `passage-capacity-wistful.ngrok-free.dev` (secret `NGROK_AUTHTOKEN`, opcional
    `NGROK_DOMAIN`).
-4. Desde WSL:
+4. La placa, con el servicio instalado, abre directamente la URL WSS. No se
+   ejecuta un bridge desde WSL. Para un banco de audio opcional:
 
    ```bash
    ./server/audio-test.sh
