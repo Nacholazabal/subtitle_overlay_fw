@@ -3,11 +3,10 @@ set -euo pipefail
 
 # Deploy the latest VM-built Linux userspace app to the board and run it.
 #
-# The board now opens its own WebSocket session to the Nemotron server, so no
-# PC-side bridge is started here. What the PC still owns is deployment and,
-# critically, the clock: the Arty Z7 has no RTC and boots at its rootfs build
-# date, which would make every TLS handshake fail with "certificate is not yet
-# valid". See -d/--detach if you intend to power the PC off afterwards.
+# The board opens its own WebSocket session to the Nemotron server, so no
+# PC-side bridge is started here. The production image obtains its clock from
+# NTP; -T exists only as an emergency fallback for an image without working
+# time synchronisation.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -25,10 +24,10 @@ SUBTITLE_STT_NEMOTRON_STOP_HISTORY_EOU_MS="${SUBTITLE_STT_NEMOTRON_STOP_HISTORY_
 SUBTITLE_STT_NEMOTRON_RESIDUE_TOKENS_AT_END="${SUBTITLE_STT_NEMOTRON_RESIDUE_TOKENS_AT_END:-2}"
 SUBTITLE_STT_NEMOTRON_TARGET_LANG="${SUBTITLE_STT_NEMOTRON_TARGET_LANG:-es-ES}"
 
-BOARD_HOST="hdmi-overlay"
+BOARD_HOST="${BOARD_HOST:-hdmi-overlay}"
 BOARD_DEPLOY_DIR="${BOARD_DEPLOY_DIR:-/home/root}"
 BOARD_LOG_DIR="${BOARD_LOG_DIR:-/home/root/logs}"
-BOARD_SSH_TARGET="${BOARD_HOST}"
+BOARD_SSH_TARGET="${BOARD_SSH_TARGET:-${BOARD_HOST}}"
 BOARD_SSH_OPTS=()
 
 APP_TARGET="${APP_TARGET:-subtitle_overlay_fw}"
@@ -38,23 +37,27 @@ LOCAL_BINARY="${LOCAL_BINARY:-${LOCAL_ARTIFACT_DIR}/${APP_TARGET}}"
 SKIP_BUILD=0
 DETACH=0
 INSTALL_SERVICE=0
-SKIP_CLOCK=0
+SET_CLOCK_FROM_HOST=0
 
 usage() {
     cat <<EOF
-Usage: ${0##*/} [-x] [-d] [-s] [-C]
+Usage: ${0##*/} [-x] [-d] [-s] [-T]
 
 Options:
   -x    Skip the VM rebuild and deploy the latest local artifact.
   -d    Run detached on the board so it survives the SSH session ending
-        (required if you want to power this PC off afterwards).
-  -s    Install /etc/init.d/subtitle-overlay so the board starts it at boot.
-  -C    Skip setting the board clock (TLS will fail unless NTP already ran).
+        (only for a one-shot launch; -s already runs as a service).
+  -s    Install/update /etc/init.d/subtitle-overlay and start it. This is the
+        normal production deployment and is safe to run repeatedly.
+  -T    Emergency fallback: set the board clock from this PC before deploy.
+        Normal operation uses NTP from the PetaLinux image.
   -h    Show this help.
 
 Environment:
   SUBTITLE_STT_WS_URL   Streaming STT endpoint (default: the reserved ngrok domain)
   USB_AUDIO_PCM_DEVICE  ALSA capture device (default: hw:0,0)
+  BOARD_HOST             SSH host alias shown in messages (default: hdmi-overlay)
+  BOARD_SSH_TARGET       SSH/SCP destination (default: BOARD_HOST)
 EOF
 }
 
@@ -69,12 +72,13 @@ shell_quote() {
     printf "'%s'" "${value}"
 }
 
-while getopts ":xdsCh" opt; do
+while getopts ":xdsTCh" opt; do
     case "${opt}" in
         x) SKIP_BUILD=1 ;;
         d) DETACH=1 ;;
         s) INSTALL_SERVICE=1 ;;
-        C) SKIP_CLOCK=1 ;;
+        T) SET_CLOCK_FROM_HOST=1 ;;
+        C) SET_CLOCK_FROM_HOST=0 ;; # Legacy compatibility: NTP is now default.
         h) usage; exit 0 ;;
         :)
             printf 'Option -%s requires an argument\n' "${OPTARG}" >&2
@@ -110,9 +114,15 @@ if [[ ! -f "${LOCAL_BINARY}" ]]; then
     exit 2
 fi
 
-if [[ "${SKIP_CLOCK}" -eq 0 ]]; then
-    step "Setting the board clock (no RTC on this hardware)"
+if [[ "${SET_CLOCK_FROM_HOST}" -eq 1 ]]; then
+    step "Setting the board clock from this PC (emergency fallback)"
     ssh "${BOARD_SSH_OPTS[@]}" "${BOARD_SSH_TARGET}" "date -s @$(date -u +%s) >/dev/null && date -u"
+fi
+
+if [[ "${INSTALL_SERVICE}" -eq 1 ]]; then
+    step "Stopping the installed service before replacing the executable"
+    ssh "${BOARD_SSH_OPTS[@]}" "${BOARD_SSH_TARGET}" \
+        "if [ -x /etc/init.d/subtitle-overlay ]; then /etc/init.d/subtitle-overlay stop; fi"
 fi
 
 step "Copying ${LOCAL_BINARY} to ${BOARD_SSH_TARGET}:${BOARD_DEPLOY_DIR}/"
@@ -131,7 +141,7 @@ ENV_ASSIGNMENTS=(
 ENV_LINE="${ENV_ASSIGNMENTS[*]}"
 
 if [[ "${INSTALL_SERVICE}" -eq 1 ]]; then
-    step "Installing the boot service on ${BOARD_HOST}"
+    step "Installing/updating the boot service on ${BOARD_HOST}"
     scp -O "${BOARD_SSH_OPTS[@]}" "${SCRIPT_DIR}/board/subtitle-overlay.init" \
         "${BOARD_SSH_TARGET}:/etc/init.d/subtitle-overlay"
     # The endpoint lives in /etc/default so the service can be repointed
@@ -143,7 +153,14 @@ if [[ "${INSTALL_SERVICE}" -eq 1 ]]; then
         done
     } | ssh "${BOARD_SSH_OPTS[@]}" "${BOARD_SSH_TARGET}" "cat > /etc/default/subtitle-overlay"
     ssh "${BOARD_SSH_OPTS[@]}" "${BOARD_SSH_TARGET}" \
-        "chmod +x /etc/init.d/subtitle-overlay && ln -sf ../init.d/subtitle-overlay /etc/rc5.d/S95subtitle-overlay && echo 'service installed'"
+        "chmod +x $(shell_quote "${BOARD_DEPLOY_DIR}/${APP_TARGET}") /etc/init.d/subtitle-overlay \
+         && ln -sf ../init.d/subtitle-overlay /etc/rc5.d/S95subtitle-overlay \
+         && /etc/init.d/subtitle-overlay start \
+         && /etc/init.d/subtitle-overlay status"
+
+    printf '\nService installed and running. Follow the log with:\n  ssh %s '\''tail -f %s/run-latest.log'\''\n' \
+        "${BOARD_HOST}" "${BOARD_LOG_DIR}"
+    exit 0
 fi
 
 if [[ "${DETACH}" -eq 1 ]]; then

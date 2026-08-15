@@ -440,7 +440,10 @@ def parse_args():
     parser.add_argument("--jsonl", help="write transcript events as JSON Lines")
     parser.add_argument("--save-wav", help="save the exact PCM received from the board")
     parser.add_argument("--send-subtitles", action="store_true")
-    parser.add_argument("--subtitle-host", default="192.168.1.10")
+    parser.add_argument(
+        "--subtitle-host",
+        help="board address for the evaluation TCP sink (required with --send-subtitles)",
+    )
     parser.add_argument("--subtitle-port", type=int, default=5001)
     parser.add_argument("--board-ack-jsonl", help="write board transcript ACKs as JSON Lines")
     parser.add_argument("--subtitle-ready-timeout", type=float, default=15.0)
@@ -475,6 +478,8 @@ def parse_args():
             parser.error(f"{backend_option} is not a valid JSON object: {exc}")
     if args.subtitle_ready_timeout <= 0:
         parser.error("--subtitle-ready-timeout must be positive")
+    if args.send_subtitles and not args.subtitle_host:
+        parser.error("--subtitle-host is required with --send-subtitles")
     return args
 
 

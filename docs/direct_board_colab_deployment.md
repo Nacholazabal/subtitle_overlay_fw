@@ -53,15 +53,20 @@ también incluye `/etc/ssl/certs/ca-certificates.crt`.
 La diferencia es solamente el recorrido de red: PC → router → placa. No hace
 falta retirar la SD para actualizar este ejecutable.
 
-En la primera instalación persistente se usa:
+Para instalar por primera vez o actualizar una instalación existente se usa el
+mismo comando idempotente:
 
 ```bash
-./scripts/run.sh -s -d -C
+./scripts/run.sh -s
 ```
 
-- `-s`: instala el servicio de arranque y `/etc/default/subtitle-overlay`.
-- `-d`: deja la primera ejecución separada del SSH.
-- `-C`: no copia la hora de la PC; permite validar el NTP de la placa.
+- `-s` detiene ordenadamente la instancia anterior, actualiza el ejecutable,
+  instala `/etc/init.d/subtitle-overlay` y `/etc/default/subtitle-overlay`, y
+  vuelve a iniciar el servicio con su PID y log controlados.
+- La hora se obtiene de NTP. `-T` queda sólo como recuperación manual si una
+  imagen vieja o una falla de red impiden sincronizarla.
+- `-d` sólo se usa para una ejecución temporal sin servicio; con `-s` no es
+  necesario porque el servicio ya queda desacoplado de SSH.
 
 ### Imagen PetaLinux
 
@@ -127,7 +132,7 @@ Nunca asumir el nombre del dispositivo sin revisar `lsblk`.
 5. Probar `ssh root@IP_ASIGNADA` y actualizar el alias `hdmi-overlay`.
 6. Ejecutar el notebook `server/notebooks/nemotron_server.ipynb` hasta que
    `/health` y el túnel ngrok estén listos.
-7. Instalar el ejecutable y servicio con `./scripts/run.sh -s -d -C`.
+7. Instalar el ejecutable y servicio con `./scripts/run.sh -s`.
 8. Reiniciar la placa y comprobar que inicia, sincroniza la hora y conecta a
    Colab sin ejecutar `server/run.sh` ni otro bridge en la PC.
 

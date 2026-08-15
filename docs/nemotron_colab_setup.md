@@ -95,7 +95,7 @@ MyDrive/TESIS/nemotron/
 1. Desde WSL, pushear la rama para que Colab pueda clonarla:
 
    ```bash
-   git push -u origin dev/nemotron
+   git push -u origin dev/direct-connect
    ```
 
 2. Abrir `server/notebooks/nemotron_probe.ipynb` en Colab.
@@ -286,7 +286,13 @@ El endpoint offline nunca fabrica timestamps: si NeMo no los da, devuelve
    `passage-capacity-wistful.ngrok-free.dev` (secret `NGROK_AUTHTOKEN`, opcional
    `NGROK_DOMAIN`).
 4. La placa, con el servicio instalado, abre directamente la URL WSS. No se
-   ejecuta un bridge desde WSL. Para un banco de audio opcional:
+   ejecuta un bridge desde WSL. Para instalar o actualizar ese servicio:
+
+   ```bash
+   ./scripts/run.sh -s
+   ```
+
+   Para un banco de audio opcional:
 
    ```bash
    ./server/audio-test.sh

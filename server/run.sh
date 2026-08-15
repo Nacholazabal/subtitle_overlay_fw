@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Production launcher: board -> PC bridge -> Colab Nemotron -> firmware ACK.
-# Segmentation and end-of-utterance detection run in Colab through the official
-# NeMo RNNTGreedyEndpointing pipeline.
+# Evaluation-only launcher for the legacy PC bridge path. Production uses the
+# direct board -> Colab WebSocket started by /etc/init.d/subtitle-overlay; do
+# not run this script for normal live subtitles.
+#
+# Segmentation and end-of-utterance detection still run in Colab through the
+# official NeMo RNNTGreedyEndpointing pipeline.
 STT_STREAM_URL="${STT_STREAM_URL:-wss://passage-capacity-wistful.ngrok-free.dev/stt/stream}"
+BOARD_HOST="${BOARD_HOST:-hdmi-overlay}"
+SSH_CONFIG_HOST="$(ssh -G "${BOARD_HOST}" 2>/dev/null | awk '$1 == "hostname" { print $2; exit }')"
 
 echo "Using Nemotron STT URL: $STT_STREAM_URL"
+echo "Mode: evaluation PC bridge (not the production board -> Colab path)"
 
-SUBTITLE_HOST="${STT_SUBTITLE_HOST:-192.168.1.10}"
+SUBTITLE_HOST="${STT_SUBTITLE_HOST:-${SSH_CONFIG_HOST:-${BOARD_HOST}}}"
 SUBTITLE_PORT="${STT_SUBTITLE_PORT:-5001}"
 AUDIO_PORT="${STT_AUDIO_PORT:-5000}"
 JSONL="${STT_JSONL:-logs/stt_events.jsonl}"
@@ -20,6 +26,8 @@ STOP_FILE="${STT_STOP_FILE:-}"
 BOARD_ACK_JSONL="${STT_BOARD_ACK_JSONL:-}"
 SUBTITLE_READY_TIMEOUT="${STT_SUBTITLE_READY_TIMEOUT:-15}"
 SINGLE_SESSION="${STT_SINGLE_SESSION:-0}"
+
+echo "Evaluation subtitle target: ${SUBTITLE_HOST}:${SUBTITLE_PORT}"
 
 # Nemotron session config. Either supply the whole JSON object directly via
 # STT_BACKEND_CONFIG_JSON, or set individual STT_NEMOTRON_* vars and let this script

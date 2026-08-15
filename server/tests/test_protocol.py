@@ -170,6 +170,17 @@ class BackendConfigTests(unittest.TestCase):
 
         self.assertEqual(raw, args.backend_config_json)
 
+    def test_cli_requires_explicit_board_host_for_subtitle_sink(self):
+        argv = [
+            "stt_stream_bridge.py",
+            "--stream-url",
+            "ws://example.test/stt/stream",
+            "--send-subtitles",
+        ]
+
+        with mock.patch.object(sys, "argv", argv), self.assertRaises(SystemExit):
+            parse_args()
+
 
 class RecordingSink:
     def __init__(self):
