@@ -9,21 +9,23 @@ ejecutado con NVIDIA NeMo en Colab.
 | Acción | Entrada |
 | --- | --- |
 | Levantar el servidor en Colab | `notebooks/nemotron_server.ipynb` |
-| Conectar placa, Colab y subtítulos | `./server/run.sh` |
+| Instalar/actualizar el servicio autónomo de la placa | `./scripts/run.sh -s` |
 | Probar los tres audios cortos | `./server/audio-test.sh` |
 | Ejecutar el replay físico del corpus | `./server/physical-eval.sh` |
 | Analizar una captura | `./server/analyze.sh` |
 | Evaluar el corpus en Colab | `notebooks/nemotron_dataset_eval.ipynb` |
 
-El uso normal es ejecutar toda la notebook del servidor, esperar
-`HEALTH: ready` y luego lanzar `./server/run.sh` desde WSL. Para las pruebas
-cortas se usa `./server/audio-test.sh`; ese wrapper levanta el mismo bridge y
-consume el mismo protocolo de producción.
+El uso normal es ejecutar toda la notebook del servidor y esperar
+`HEALTH: ready`. Si el servicio ya está instalado, la placa se conecta sola;
+no se lanza ningún bridge desde WSL. `./scripts/run.sh -s` se usa sólo al
+instalar o actualizar el ejecutable de la placa. El banco histórico
+`./server/audio-test.sh` conserva el bridge de evaluación y requiere un firmware
+compatible con sus puertos TCP; no forma parte del camino autónomo.
 
 ## Estructura
 
-- `runtime/`: servidor FastAPI/WebSocket, inferencia Nemotron, bridge, protocolo
-  y transporte TCP de subtítulos con ACK del firmware.
+- `runtime/`: servidor FastAPI/WebSocket, inferencia Nemotron, protocolo y el
+  bridge conservado exclusivamente para evaluación.
 - `evaluation/`: manifest y runners del corpus MediaSpeech y del replay físico.
 - `audio_tests/`: banco de tres audios, sweeps, análisis y reconstrucción lógica
   del overlay.

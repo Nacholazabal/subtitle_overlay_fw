@@ -12,6 +12,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 #include "SttAO.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -19,13 +20,17 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 #include "app.h"
 #include "log.h"
-#include "stt_event_rx.h"
+#include "stt_ws_client.h"
 #include "SubtitleAO.h"
 
 // === Macros definitions ========================================================================================== //
 
 #define STT_AO_POLL_TICKS           (1U)
 #define STT_AO_POLL_PERIOD_MS       (10U)
+/// One metrics line every 5 s at a 10 ms poll: with the PC bridge gone this
+/// log is the only place the run's counters are recorded.
+#define STT_AO_METRICS_POLLS        (500U)
+#define STT_AO_MAX_EVENTS_PER_POLL  (4U)
 #define STT_AO_PARTIAL_EVENT_MARGIN (4U)
 #define STT_AO_FINAL_EVENT_MARGIN   (1U)
 
@@ -36,7 +41,8 @@ typedef struct
     QActive super;
     QTimeEvt poll_time_evt;
 
-    stt_event_rx_t rx;
+    stt_ws_client_t* client;
+    uint32_t polls_since_metrics;
     uint8_t running;
 } stt_ao_t;
 
@@ -48,6 +54,7 @@ static QState stt_ao_top(stt_ao_t* const me, QEvt const* const e);
 static QState stt_ao_idle(stt_ao_t* const me, QEvt const* const e);
 static QState stt_ao_ready(stt_ao_t* const me, QEvt const* const e);
 static QState stt_ao_error(stt_ao_t* const me, QEvt const* const e);
+static QState stt_ao_stopping(stt_ao_t* const me, QEvt const* const e);
 static QState stt_ao_stopped(stt_ao_t* const me, QEvt const* const e);
 
 static void post_ready(stt_ao_t* const me);
@@ -56,7 +63,9 @@ static void post_stopped(stt_ao_t* const me);
 static int on_component_init(stt_ao_t* const me);
 static int on_poll(stt_ao_t* const me);
 static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e);
-static void quiesce(stt_ao_t* const me);
+static void log_metrics(stt_ao_t* const me);
+static void begin_stop(stt_ao_t* const me);
+static void complete_stop(stt_ao_t* const me);
 static void enter_error(stt_ao_t* const me, int32_t code);
 
 // === Private variable definitions ================================================================================ //
@@ -130,31 +139,30 @@ static void post_error(stt_ao_t* const me, int32_t code)
  */
 static int on_component_init(stt_ao_t* const me)
 {
-    stt_event_rx_config_t config;
-    int status;
-
-    stt_event_rx_default_config(&config);
-
-    LOG_INFO("stt: starting transcript receiver on %s:%lu",
-             config.host,
-             (unsigned long)config.port);
-
-    status = stt_event_rx_init(&me->rx, &config);
-    if (status == 0)
+    me->client = stt_ws_client_shared();
+    if (me->client == NULL)
     {
-        me->running = 1U;
-        QTimeEvt_armX(&me->poll_time_evt, STT_AO_POLL_TICKS, STT_AO_POLL_TICKS);
-        post_ready(me);
-        LOG_INFO("stt: transcript receiver ready, poll period=%lu ms",
-                 (unsigned long)STT_AO_POLL_PERIOD_MS);
+        // Configuration failed; the client already logged why.
+        LOG_ERROR("stt: no STT WebSocket client available");
+        enter_error(me, -EINVAL);
+        return -EINVAL;
     }
-    else
+    if (stt_ws_client_start(me->client) != 0)
     {
-        LOG_ERROR("stt: receiver initialization failed, code=%ld", (long)status);
-        enter_error(me, status);
+        LOG_ERROR("stt: failed to start the STT network worker");
+        me->client = NULL;
+        enter_error(me, -EIO);
+        return -EIO;
     }
 
-    return status;
+    me->running = 1U;
+    me->polls_since_metrics = 0U;
+    QTimeEvt_armX(&me->poll_time_evt, STT_AO_POLL_TICKS, STT_AO_POLL_TICKS);
+    post_ready(me);
+    LOG_INFO("stt: transcript intake ready, poll period=%lu ms",
+             (unsigned long)STT_AO_POLL_PERIOD_MS);
+
+    return 0;
 }
 
 /**
@@ -164,15 +172,17 @@ static int on_component_init(stt_ao_t* const me)
  */
 static int on_poll(stt_ao_t* const me)
 {
-    subtitle_text_evt_t events[STT_EVENT_RX_MAX_EVENTS_PER_POLL];
+    subtitle_text_evt_t events[STT_AO_MAX_EVENTS_PER_POLL];
     uint32_t event_count = 0U;
     uint32_t i;
     int status;
 
-    status = stt_event_rx_poll(&me->rx, events, Q_DIM(events), &event_count);
+    // Strictly nonblocking: this runs on the single QP/C thread, so any wait
+    // here would also freeze video and subtitle rendering.
+    status = stt_ws_client_poll_events(me->client, events, Q_DIM(events), &event_count);
     if (status != 0)
     {
-        LOG_ERROR("stt: receiver poll failed, code=%ld", (long)status);
+        LOG_ERROR("stt: transcript poll failed, code=%ld", (long)status);
         return status;
     }
 
@@ -181,7 +191,48 @@ static int on_poll(stt_ao_t* const me)
         (void)on_transcript(me, &events[i]);
     }
 
+    log_metrics(me);
     return 0;
+}
+
+/** @brief Emit the periodic counters line that replaces the PC bridge report. */
+static void log_metrics(stt_ao_t* const me)
+{
+    stt_ws_client_stats_t stats;
+
+    me->polls_since_metrics++;
+    if (me->polls_since_metrics < STT_AO_METRICS_POLLS)
+    {
+        return;
+    }
+    me->polls_since_metrics = 0U;
+
+    stt_ws_client_stats(me->client, &stats);
+    LOG_INFO("stt: link=%s sessions=%lu reconnects=%lu chunks sent=%lu dropped=%lu",
+             stt_ws_client_state_name(stt_ws_client_state(me->client)),
+             (unsigned long)stats.sessions,
+             (unsigned long)stats.reconnects,
+             (unsigned long)stats.chunks_sent,
+             (unsigned long)stats.chunks_dropped_tx);
+    LOG_INFO("stt: transcripts=%lu (final=%lu partial=%lu) delivered=%lu "
+             "dropped(pool=%lu queue=%lu ring=%lu) stale=%lu proto_err=%lu",
+             (unsigned long)stats.transcripts_received,
+             (unsigned long)stats.transcripts_final,
+             (unsigned long)stats.transcripts_partial,
+             (unsigned long)stats.deliveries_accepted,
+             (unsigned long)stats.deliveries_dropped_pool,
+             (unsigned long)stats.deliveries_dropped_queue,
+             (unsigned long)stats.events_dropped_ring,
+             (unsigned long)stats.events_rejected_old_seq,
+             (unsigned long)stats.protocol_errors);
+    if ((stats.clock_deferrals > 0U) || (stats.tls_failures > 0U) || (stats.busy_rejections > 0U))
+    {
+        LOG_INFO("stt: clock_deferrals=%lu tls_failures=%lu busy=%lu connect_failures=%lu",
+                 (unsigned long)stats.clock_deferrals,
+                 (unsigned long)stats.tls_failures,
+                 (unsigned long)stats.busy_rejections,
+                 (unsigned long)stats.connect_failures);
+    }
 }
 
 /**
@@ -193,8 +244,6 @@ static int on_poll(stt_ao_t* const me)
 static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
 {
     subtitle_text_evt_t* subtitle_evt;
-    stt_event_rx_delivery_status_t delivery_status;
-    int status;
     uint16_t margin;
 
     // Validate me/e before reading any field.
@@ -212,9 +261,7 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
                     (e->is_final != 0U) ? "final" : "partial",
                     (unsigned long)e->seq,
                     (unsigned)margin);
-        (void)stt_event_rx_report_delivery(&me->rx,
-                                           e->seq,
-                                           STT_EVENT_RX_DELIVERY_DROPPED_EVENT_POOL);
+        stt_ws_client_report_delivery(me->client, STT_EVENT_RX_DELIVERY_DROPPED_EVENT_POOL);
         return -EAGAIN;
     }
 
@@ -233,25 +280,13 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
                     (e->is_final != 0U) ? "final" : "partial",
                     (unsigned long)e->seq,
                     (unsigned)margin);
-        delivery_status = STT_EVENT_RX_DELIVERY_DROPPED_SUBTITLE_QUEUE;
-        status = stt_event_rx_report_delivery(&me->rx, e->seq, delivery_status);
-        if (status != 0)
-        {
-            LOG_WARNING("stt: failed to queue delivery ACK seq=%lu, code=%ld",
-                        (unsigned long)e->seq,
-                        (long)status);
-        }
+        stt_ws_client_report_delivery(me->client, STT_EVENT_RX_DELIVERY_DROPPED_SUBTITLE_QUEUE);
         return -EAGAIN;
     }
 
-    delivery_status = STT_EVENT_RX_DELIVERY_ACCEPTED;
-    status = stt_event_rx_report_delivery(&me->rx, e->seq, delivery_status);
-    if (status != 0)
-    {
-        LOG_WARNING("stt: failed to queue delivery ACK seq=%lu, code=%ld",
-                    (unsigned long)e->seq,
-                    (long)status);
-    }
+    // "Delivered" now means "posted to the subtitle AO": with the PC bridge
+    // gone there is no peer to acknowledge to, so the outcome is a counter.
+    stt_ws_client_report_delivery(me->client, STT_EVENT_RX_DELIVERY_ACCEPTED);
 
     return 0;
 }
@@ -262,16 +297,27 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
  * @param code Negative errno-style value.
  * @return None.
  */
-// Idempotent teardown of this AO's resources (timer + TCP receiver). Shared by
-// the error path and the coordinated-shutdown STOP handler.
-static void quiesce(stt_ao_t* const me)
+// Request-only phase: it runs in a QP/C handler and therefore cannot join a
+// network thread that may still be inside a bounded DNS/TLS operation.
+static void begin_stop(stt_ao_t* const me)
 {
-    if (me->running != 0U)
+    if (me->client != NULL)
     {
-        (void)QTimeEvt_disarm(&me->poll_time_evt);
-        stt_event_rx_cleanup(&me->rx);
-        me->running = 0U;
+        stt_ws_client_request_stop(me->client);
     }
+}
+
+// Completion phase: finish_stop only joins after stop_complete proves that the
+// worker has exited, so this remains bounded on the cooperative QP/C thread.
+static void complete_stop(stt_ao_t* const me)
+{
+    (void)QTimeEvt_disarm(&me->poll_time_evt);
+    if (me->client != NULL)
+    {
+        (void)stt_ws_client_finish_stop(me->client);
+        me->client = NULL;
+    }
+    me->running = 0U;
 }
 
 // Acknowledge SYSTEM_STOP to system_ao_t once this AO has quiesced.
@@ -293,7 +339,7 @@ static void post_stopped(stt_ao_t* const me)
 
 static void enter_error(stt_ao_t* const me, int32_t code)
 {
-    quiesce(me);
+    begin_stop(me);
     post_error(me, code);
 }
 
@@ -324,9 +370,17 @@ static QState stt_ao_top(stt_ao_t* const me, QEvt const* const e)
     switch (e->sig)
     {
     case SYSTEM_STOP_SIG:
-        quiesce(me);
-        post_stopped(me);
-        status = Q_TRAN(&stt_ao_stopped);
+        begin_stop(me);
+        if ((me->client == NULL) || (stt_ws_client_stop_complete(me->client) != 0U))
+        {
+            complete_stop(me);
+            post_stopped(me);
+            status = Q_TRAN(&stt_ao_stopped);
+        }
+        else
+        {
+            status = Q_TRAN(&stt_ao_stopping);
+        }
         break;
 
     default:
@@ -416,6 +470,43 @@ static QState stt_ao_error(stt_ao_t* const me, QEvt const* const e)
     return Q_SUPER(&stt_ao_top);
 }
 
+/** @brief Poll an asynchronously stopping network worker without doing I/O. */
+static QState stt_ao_stopping(stt_ao_t* const me, QEvt const* const e)
+{
+    QState status;
+
+    switch (e->sig)
+    {
+    case Q_ENTRY_SIG:
+        LOG_INFO("stt: waiting for network worker shutdown");
+        status = Q_HANDLED();
+        break;
+
+    case STT_POLL_SIG:
+        if ((me->client == NULL) || (stt_ws_client_stop_complete(me->client) != 0U))
+        {
+            complete_stop(me);
+            post_stopped(me);
+            status = Q_TRAN(&stt_ao_stopped);
+        }
+        else
+        {
+            status = Q_HANDLED();
+        }
+        break;
+
+    case SYSTEM_STOP_SIG:
+        status = Q_HANDLED();
+        break;
+
+    default:
+        status = Q_SUPER(&stt_ao_top);
+        break;
+    }
+
+    return status;
+}
+
 /**
  * @brief Terminal state after a coordinated SYSTEM_STOP: the receiver is closed.
  * @param me STT active object instance.
@@ -456,6 +547,7 @@ void stt_ao_ctor(void)
 
     QActive_ctor(&me->super, Q_STATE_CAST(&stt_ao_initial));
     QTimeEvt_ctorX(&me->poll_time_evt, &me->super, STT_POLL_SIG, 0U);
+    me->client = NULL;
     me->running = 0U;
 }
 

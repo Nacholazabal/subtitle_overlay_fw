@@ -72,7 +72,7 @@ resultados persistentes.
 
 ## Ejecución
 
-1. Pushear esta implementación a `dev/nemotron`.
+1. Pushear esta implementación a `dev/direct-connect`.
 2. Abrir `server/notebooks/nemotron_dataset_eval.ipynb` en Colab.
 3. Seleccionar un runtime con GPU.
 4. Ejecutar `Runtime -> Run all`.

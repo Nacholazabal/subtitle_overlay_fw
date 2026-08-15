@@ -1,4 +1,5 @@
 import base64
+import struct
 import unittest
 import sys
 import tempfile
@@ -28,6 +29,11 @@ from server.runtime.protocol import (
     validate_session_start,
 )
 from server.runtime.bridge import parse_backend_config
+from server.runtime.transport import (
+    STREAM_HEADER,
+    STREAM_MAGIC,
+    validate_audio_format,
+)
 
 
 class SttStreamProtocolTests(unittest.TestCase):
@@ -164,6 +170,17 @@ class BackendConfigTests(unittest.TestCase):
 
         self.assertEqual(raw, args.backend_config_json)
 
+    def test_cli_requires_explicit_board_host_for_subtitle_sink(self):
+        argv = [
+            "stt_stream_bridge.py",
+            "--stream-url",
+            "ws://example.test/stt/stream",
+            "--send-subtitles",
+        ]
+
+        with mock.patch.object(sys, "argv", argv), self.assertRaises(SystemExit):
+            parse_args()
+
 
 class RecordingSink:
     def __init__(self):
@@ -248,6 +265,40 @@ class BridgeTracingTests(unittest.TestCase):
     def test_bridge_only_counts_board_drops_after_session_start(self):
         self.assertEqual(0, board_drop_delta(769, 769))
         self.assertEqual(3, board_drop_delta(769, 772))
+
+
+class BoardStreamHeaderTests(unittest.TestCase):
+    """Guard the byte-level contract with the firmware's ``send_stream_header``.
+
+    ``usb_audio_stream.c`` writes ``"SAUDPCM\\0"`` (8 bytes, exactly one trailing
+    NUL, enforced there by a ``_Static_assert``) followed by six big-endian
+    uint32 words. A stray backslash in this constant makes the bridge read 11
+    bytes and reject every real board session with "bad stream magic", which is
+    invisible to every test that does not replay the firmware's own bytes.
+    """
+
+    FIRMWARE_HEADER_WORDS = (48000, 1, FORMAT_S16_LE, 20, 960, 1920)
+
+    def firmware_stream_header_bytes(self):
+        return STREAM_MAGIC + struct.pack(STREAM_HEADER, *self.FIRMWARE_HEADER_WORDS)
+
+    def test_stream_magic_is_the_eight_bytes_the_firmware_sends(self):
+        self.assertEqual(b"SAUDPCM\x00", STREAM_MAGIC)
+        self.assertEqual(8, len(STREAM_MAGIC))
+
+    def test_bridge_parses_the_exact_header_the_firmware_emits(self):
+        header = self.firmware_stream_header_bytes()
+
+        self.assertEqual(STREAM_MAGIC, header[: len(STREAM_MAGIC)])
+        unpacked = struct.unpack(STREAM_HEADER, header[len(STREAM_MAGIC) :])
+
+        self.assertEqual(self.FIRMWARE_HEADER_WORDS, unpacked)
+        validate_audio_format(unpacked[0], unpacked[1], unpacked[2])
+
+    def test_header_length_matches_the_firmware_wire_size(self):
+        # 8 magic bytes + 6 * uint32; the firmware sends exactly this much.
+        self.assertEqual(8 + 24, len(self.firmware_stream_header_bytes()))
+
 
 if __name__ == "__main__":
     unittest.main()

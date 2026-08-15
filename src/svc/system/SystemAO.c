@@ -30,7 +30,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #define SYSTEM_STOP_EXPECTED_MASK                                    \
     ((uint8_t)((1U << COMPONENT_VIDEO) | (1U << COMPONENT_USB_AUDIO) \
                | (1U << COMPONENT_SUBTITLE_PIPELINE) | (1U << COMPONENT_STT)))
-#define SYSTEM_SHUTDOWN_TIMEOUT_TICKS (50U) // ~500 ms at 100 Hz
+#define SYSTEM_SHUTDOWN_TIMEOUT_TICKS (1600U) // 16 s: bounds an in-flight TLS handshake.
 
 // === Private data type declarations ============================================================================== //
 
@@ -47,6 +47,7 @@ typedef struct
     uint8_t subtitle_init_requested;
     uint8_t stt_init_requested;
     uint8_t stopped_mask; ///< bitmask of components that acked SYSTEM_STOPPED.
+    uint8_t requested_shutdown; ///< A signal requested a normal process stop.
 } system_ao_t;
 
 // === Private variable declarations =============================================================================== //
@@ -325,6 +326,11 @@ static QState system_ao_active(system_ao_t* const me, QEvt const* const e)
         status = Q_TRAN(&system_ao_stopping);
         break;
 
+    case SYSTEM_SHUTDOWN_SIG:
+        me->requested_shutdown = 1U;
+        status = Q_TRAN(&system_ao_stopping);
+        break;
+
     default:
         status = Q_SUPER(&QHsm_top);
         break;
@@ -421,9 +427,16 @@ static QState system_ao_stopping(system_ao_t* const me, QEvt const* const e)
     switch (e->sig)
     {
     case Q_ENTRY_SIG:
-        LOG_ERROR("system: fail-fast shutdown (source=%s code=%ld); stopping all components",
-                  component_id_to_str(me->error_source),
-                  (long)me->error_code);
+        if (me->requested_shutdown != 0U)
+        {
+            LOG_INFO("system: shutdown requested; stopping all components");
+        }
+        else
+        {
+            LOG_ERROR("system: fail-fast shutdown (source=%s code=%ld); stopping all components",
+                      component_id_to_str(me->error_source),
+                      (long)me->error_code);
+        }
         me->stopped_mask = 0U;
         broadcast_stop(me);
         QTimeEvt_armX(&me->shutdown_timeout_evt, SYSTEM_SHUTDOWN_TIMEOUT_TICKS, 0U);
@@ -456,6 +469,7 @@ static QState system_ao_stopping(system_ao_t* const me, QEvt const* const e)
 
     case COMPONENT_ERROR_SIG:
     case COMPONENT_READY_SIG:
+    case SYSTEM_SHUTDOWN_SIG:
         // Already shutting down: ignore further component traffic.
         status = Q_HANDLED();
         break;
@@ -484,6 +498,7 @@ void system_ao_ctor(void)
     me->subtitle_init_requested = 0U;
     me->stt_init_requested = 0U;
     me->stopped_mask = 0U;
+    me->requested_shutdown = 0U;
 }
 
 // === End of documentation ======================================================================================== //

@@ -1,0 +1,105 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          subtitle-overlay
+# Required-Start:    $network $remote_fs
+# Default-Start:     5
+# Default-Stop:      0 1 6
+# Short-Description: HDMI live subtitle overlay firmware
+### END INIT INFO
+#
+# SysV service for the subtitle overlay application.
+#
+# Why this exists: scripts/run.sh used to run the binary in the foreground of an
+# SSH session, so closing that session (or powering off the PC) killed it with
+# SIGHUP. The whole point of the direct board-to-Colab link is that the PC can
+# go away, which means the firmware has to start at boot and survive on its own.
+#
+# The board has no start-stop-daemon, so process control is done with setsid,
+# a PID file and plain signals.
+
+NAME="subtitle_overlay_fw"
+DAEMON="/home/root/${NAME}"
+PIDFILE="/var/run/${NAME}.pid"
+LOGDIR="/home/root/logs"
+ENVFILE="/etc/default/subtitle-overlay"
+KEEP_LOGS=5
+
+# /var/log is a tmpfs on this image, so application logs go to the ext4 rootfs
+# where they survive a reboot and can be collected later over scp.
+mkdir -p "${LOGDIR}"
+
+# Endpoint and tuning live outside this script so an image rebuild is not
+# needed to repoint the board at a different server.
+[ -r "${ENVFILE}" ] && . "${ENVFILE}"
+
+running() {
+    [ -f "${PIDFILE}" ] || return 1
+    kill -0 "$(cat "${PIDFILE}")" 2>/dev/null
+}
+
+prune_logs() {
+    # Keep the newest few runs; the rootfs is large but not infinite.
+    ls -1t "${LOGDIR}"/run-*.log 2>/dev/null | tail -n "+$((KEEP_LOGS + 1))" | while read -r old; do
+        rm -f "${old}"
+    done
+}
+
+start() {
+    if running; then
+        echo "${NAME} is already running (pid $(cat "${PIDFILE}"))"
+        return 0
+    fi
+
+    [ -x "${DAEMON}" ] || { echo "${DAEMON} is missing or not executable" >&2; return 1; }
+
+    prune_logs
+    LOGFILE="${LOGDIR}/run-$(date -u +%Y%m%dT%H%M%SZ).log"
+    ln -sf "${LOGFILE}" "${LOGDIR}/run-latest.log"
+
+    echo "Starting ${NAME}, logging to ${LOGFILE}"
+    # setsid detaches from any controlling terminal so no SIGHUP can reach it.
+    setsid "${DAEMON}" >"${LOGFILE}" 2>&1 &
+    echo $! > "${PIDFILE}"
+}
+
+stop() {
+    if ! running; then
+        echo "${NAME} is not running"
+        rm -f "${PIDFILE}"
+        return 0
+    fi
+
+    PID="$(cat "${PIDFILE}")"
+    echo "Stopping ${NAME} (pid ${PID})"
+    # SIGTERM lets the app close the STT session and quiesce the AOs first.
+    kill -TERM "${PID}" 2>/dev/null
+    i=0
+    # The firmware coordinates four services and bounds an in-flight TLS
+    # handshake at 16 s. Leave enough room for that graceful path.
+    while [ "${i}" -lt 200 ] && kill -0 "${PID}" 2>/dev/null; do
+        sleep 0.1
+        i=$((i + 1))
+    done
+    kill -0 "${PID}" 2>/dev/null && kill -KILL "${PID}" 2>/dev/null
+    rm -f "${PIDFILE}"
+}
+
+case "$1" in
+    start)   start ;;
+    stop)    stop ;;
+    restart) stop; start ;;
+    status)
+        if running; then
+            echo "${NAME} is running (pid $(cat "${PIDFILE}"))"
+        else
+            echo "${NAME} is not running"
+            exit 3
+        fi
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}" >&2
+        exit 2
+        ;;
+esac
+
+exit 0

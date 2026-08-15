@@ -243,6 +243,18 @@ void test_system_fail_fast_broadcasts_stop_on_component_error(void)
     assert_no_event(AO_USBAudio);
 }
 
+void test_system_shutdown_signal_broadcasts_a_normal_coordinated_stop(void)
+{
+    start_system_with_fake_components();
+
+    qpc_test_gc(qpc_test_pop(AO_Video));
+    qpc_test_gc(qpc_test_pop(AO_USBAudio));
+    qpc_test_post_signal(AO_System, SYSTEM_SHUTDOWN_SIG);
+    qpc_test_dispatch_one(AO_System);
+
+    assert_stop_broadcast_to_all_workers();
+}
+
 // SRC-H07: once every worker acknowledges SYSTEM_STOPPED, the shutdown completes
 // (system_ao_t requests QF termination) without hanging.
 void test_system_shutdown_completes_after_all_workers_stop(void)

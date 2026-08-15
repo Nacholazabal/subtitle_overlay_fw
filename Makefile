@@ -7,6 +7,7 @@ APP_BUILD_DIR := build/app
 APP_TARGET := subtitle_overlay_fw
 PETALINUX_PROJECT ?= /home/tesislinux/tesis/hdmi-overlay
 ALSA_SYSROOT_COMPONENT ?= $(PETALINUX_PROJECT)/build/tmp/sysroots-components/cortexa9hf-neon/alsa-lib
+OPENSSL_SYSROOT_COMPONENT ?= $(PETALINUX_PROJECT)/build/tmp/sysroots-components/cortexa9hf-neon/openssl
 
 COMMON_CFLAGS := \
 	-std=gnu99 \
@@ -31,6 +32,7 @@ COMMON_CFLAGS := \
 	-Isrc/hal/video_dynclk \
 	-Isrc/hal/video_gpio \
 	-Isrc/hal/video_vtc \
+	-Isrc/hal/net_tls \
 	-Isrc/hal/usb_audio \
 	-Isrc/svc/stt \
 	-Isrc/svc/subtitle_pipeline \
@@ -47,6 +49,17 @@ APP_LDLIBS += -Wl,-rpath-link,$(ALSA_SYSROOT_COMPONENT)/usr/lib
 APP_LDLIBS += -lasound
 endif
 
+# TLS for the outbound STT WebSocket. The board ships OpenSSL 1.0.2o and the VM
+# sysroot carries its headers, so this needs no new PetaLinux package.
+USB_AUDIO_ENABLE_TLS ?= 1
+
+ifeq ($(USB_AUDIO_ENABLE_TLS),1)
+COMMON_CFLAGS += -I$(OPENSSL_SYSROOT_COMPONENT)/usr/include
+APP_LDLIBS += -L$(OPENSSL_SYSROOT_COMPONENT)/usr/lib
+APP_LDLIBS += -Wl,-rpath-link,$(OPENSSL_SYSROOT_COMPONENT)/usr/lib
+APP_LDLIBS += -lssl -lcrypto
+endif
+
 VIDEO_PORT_CFLAGS := \
 	$(COMMON_CFLAGS)
 
@@ -61,6 +74,7 @@ VIDEO_PORT_SRCS := \
 	src/hal/video_dynclk/video_dynclk.c \
 	src/hal/video_gpio/video_gpio.c \
 	src/hal/video_vtc/video_vtc.c \
+	src/hal/net_tls/net_tls.c \
 	src/hal/usb_audio/usb_audio_capture.c \
 	src/hal/subtitle_bram/subtitle_bram.c \
 	src/hal/subtitle_overlay/subtitle_overlay.c \
@@ -69,7 +83,11 @@ VIDEO_PORT_SRCS := \
 	src/app/app.c \
 	src/svc/system/SystemAO.c \
 	src/svc/stt/SttAO.c \
-	src/svc/stt/stt_event_rx.c \
+	src/svc/stt/stt_transcript_parse.c \
+	src/svc/stt/stt_json.c \
+	src/svc/stt/stt_session_json.c \
+	src/svc/stt/stt_ws_client.c \
+	src/svc/stt/stt_ws_frame.c \
 	src/svc/subtitle_pipeline/SubtitleAO.c \
 	src/svc/subtitle_pipeline/subtitle_pipeline.c \
 	src/svc/subtitle_pipeline/subtitle_text_renderer.c \
