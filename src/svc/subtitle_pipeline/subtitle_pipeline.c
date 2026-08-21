@@ -246,6 +246,51 @@ int subtitle_pipeline_write_bitmap(subtitle_pipeline_t* const pipeline,
 }
 
 /**
+ * @brief Resize and reposition the black subtitle box around compact mask content.
+ * @param pipeline Initialized pipeline instance.
+ * @param width Box width in pixels, including horizontal text padding.
+ * @param height Box height in pixels, including vertical text padding.
+ * @return 0 on success, or a negative errno-style value on failure.
+ */
+int subtitle_pipeline_set_box(subtitle_pipeline_t* const pipeline,
+                              uint32_t const width,
+                              uint32_t const height)
+{
+    subtitle_overlay_config_t config;
+    uint32_t margin;
+    int status;
+
+    if (!pipeline_is_initialized(pipeline))
+    {
+        return (pipeline == NULL) ? -EINVAL : -APP_ESTATE;
+    }
+
+    if ((width == 0U) || (height == 0U) || (width > SUBTITLE_BRAM_MASK_WIDTH)
+        || (height > SUBTITLE_BRAM_MASK_HEIGHT) || (width > pipeline->display_width)
+        || (height > pipeline->display_height))
+    {
+        return -EINVAL;
+    }
+
+    config = pipeline->config;
+    margin = SUBTITLE_PIPELINE_DEFAULT_BOTTOM_MARGIN(pipeline->display_height);
+    config.width = width;
+    config.height = height;
+    config.x = (pipeline->display_width - width) / 2U;
+    config.y = (pipeline->display_height > (height + margin))
+                   ? (pipeline->display_height - height - margin)
+                   : 0U;
+
+    status = subtitle_overlay_configure(&pipeline->overlay, &config);
+    if (status == 0)
+    {
+        pipeline->config = config;
+    }
+
+    return status;
+}
+
+/**
  * @brief Render text into a subtitle mask and write it to BRAM.
  * @param pipeline Initialized pipeline instance.
  * @param text Null-terminated subtitle text.
@@ -257,7 +302,7 @@ int subtitle_pipeline_write_text(subtitle_pipeline_t* const pipeline, char const
 }
 
 /**
- * @brief Render a broadcast caption into the subtitle mask and write it to BRAM.
+ * @brief Render a broadcast caption, size its compact background, and update BRAM.
  * @param pipeline Initialized pipeline instance.
  * @param text Null-terminated subtitle text.
  * @param current_is_final Nonzero when the current/live segment is final.
@@ -288,7 +333,23 @@ int subtitle_pipeline_write_caption(subtitle_pipeline_t* const pipeline,
         return status;
     }
 
-    return subtitle_bram_write_bitmap(&pipeline->bram, bitmap, sizeof(bitmap), 0, 0, width, height);
+    status = subtitle_pipeline_set_box(pipeline, width, height);
+    if (status == 0)
+    {
+        status = subtitle_bram_clear(&pipeline->bram);
+    }
+    if (status == 0)
+    {
+        status = subtitle_bram_write_bitmap(&pipeline->bram,
+                                            bitmap,
+                                            sizeof(bitmap),
+                                            0,
+                                            0,
+                                            width,
+                                            height);
+    }
+
+    return status;
 }
 
 /**

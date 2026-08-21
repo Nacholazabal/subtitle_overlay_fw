@@ -5,7 +5,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 ///
 /// @file subtitle_text_sanitize.c
-/// @brief UTF-8 to approximate-ASCII sanitizer for subtitle text
+/// @brief UTF-8 normalizer for the supported subtitle character set
 ///
 
 // === Headers files inclusions ==================================================================================== //
@@ -13,277 +13,161 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include "subtitle_text_sanitize.h"
 
 #include <stdint.h>
+#include <string.h>
 
 #include "errorno.h"
 
 // === Macros definitions ========================================================================================== //
 
-#define SANITIZE_ASCII_MIN     (0x20U) ///< First printable ASCII byte (space).
-#define SANITIZE_ASCII_MAX     (0x7EU) ///< Last printable ASCII byte (tilde).
-#define SANITIZE_UTF8_CONT_MIN (0x80U)
-#define SANITIZE_UTF8_CONT_MAX (0xBFU)
-#define SANITIZE_UTF8_LEAD2    (0xC0U) ///< First two-byte lead byte.
-#define SANITIZE_UTF8_LEAD3    (0xE0U) ///< First three-byte lead byte.
-#define SANITIZE_UTF8_LEAD4    (0xF0U) ///< First four-byte lead byte.
-#define SANITIZE_UTF8_LEAD5    (0xF8U) ///< First invalid lead byte (above four-byte range).
+#define SANITIZE_ASCII_MIN (0x20U)
+#define SANITIZE_ASCII_MAX (0x7EU)
 
-// === Private data type declarations ============================================================================== //
-// === Private variable declarations =============================================================================== //
 // === Private function declarations =============================================================================== //
 
-static void emit(char* out, size_t out_size, size_t* idx, char ch);
-static uint8_t is_continuation(unsigned char b);
-static uint8_t lead_length(unsigned char lead);
-static char map_two_byte(unsigned char b2);
-static char map_two_byte_c2(unsigned char b2);
-static char map_three_byte_punct(unsigned char b3);
+static uint8_t is_continuation(unsigned char byte);
+static uint8_t encoded_length(unsigned char lead);
+static uint8_t is_supported_spanish(unsigned char lead, unsigned char continuation);
+static char normalize_ascii(unsigned char byte);
+static void emit_bytes(char* out, size_t out_size, size_t* index, char const* bytes, size_t count);
 
-// === Public variable definitions ================================================================================= //
-// === Private variable definitions ================================================================================ //
 // === Private function implementation ============================================================================= //
 
-/**
- * @brief Append one character to the output buffer if capacity allows.
- * @param out Destination buffer.
- * @param out_size Destination capacity including the terminating NUL.
- * @param idx Current write index, advanced on success.
- * @param ch Character to append.
- * @return None.
- */
-static void emit(char* const out, size_t out_size, size_t* const idx, char ch)
+static uint8_t is_continuation(unsigned char const byte)
 {
-    if ((*idx + 1U) < out_size)
-    {
-        out[(*idx)++] = ch;
-    }
+    return ((byte >= 0x80U) && (byte <= 0xBFU)) ? 1U : 0U;
 }
 
-/**
- * @brief Test whether a byte is a UTF-8 continuation byte.
- * @param b Byte to test.
- * @return 1 when the byte is a continuation byte, 0 otherwise.
- */
-static uint8_t is_continuation(unsigned char b)
+static uint8_t encoded_length(unsigned char const lead)
 {
-    return ((b >= SANITIZE_UTF8_CONT_MIN) && (b <= SANITIZE_UTF8_CONT_MAX)) ? 1U : 0U;
-}
-
-/**
- * @brief Return the encoded length implied by a UTF-8 lead byte.
- * @param lead Candidate lead byte (>= 0x80).
- * @return Sequence length 2, 3, or 4, or 1 for an invalid/stray byte.
- */
-static uint8_t lead_length(unsigned char lead)
-{
-    if ((lead >= SANITIZE_UTF8_LEAD2) && (lead < SANITIZE_UTF8_LEAD3))
+    if ((lead >= 0xC2U) && (lead <= 0xDFU))
     {
         return 2U;
     }
-
-    if ((lead >= SANITIZE_UTF8_LEAD3) && (lead < SANITIZE_UTF8_LEAD4))
+    if ((lead >= 0xE0U) && (lead <= 0xEFU))
     {
         return 3U;
     }
-
-    if ((lead >= SANITIZE_UTF8_LEAD4) && (lead < SANITIZE_UTF8_LEAD5))
+    if ((lead >= 0xF0U) && (lead <= 0xF4U))
     {
         return 4U;
     }
-
     return 1U;
 }
 
-/**
- * @brief Map a Latin-1 supplement character in the 0xC3 block to ASCII.
- * @param b2 Second byte of the 0xC3 sequence.
- * @return Approximate ASCII character, or 0 when unmapped.
- */
-static char map_two_byte(unsigned char b2)
+static uint8_t is_supported_spanish(unsigned char const lead, unsigned char const continuation)
 {
-    switch (b2)
+    if ((lead == 0xC2U) && ((continuation == 0xA1U) || (continuation == 0xBFU)))
     {
-    case 0xA1U: // á
-        return 'a';
-    case 0xA9U: // é
-        return 'e';
-    case 0xADU: // í
-        return 'i';
-    case 0xB3U: // ó
-        return 'o';
-    case 0xBAU: // ú
-    case 0xBCU: // ü
-        return 'u';
-    case 0xB1U: // ñ
-        return 'n';
-    case 0x81U: // Á
-        return 'A';
-    case 0x89U: // É
-        return 'E';
-    case 0x8DU: // Í
-        return 'I';
-    case 0x93U: // Ó
-        return 'O';
-    case 0x9AU: // Ú
-    case 0x9CU: // Ü
-        return 'U';
-    case 0x91U: // Ñ
-        return 'N';
+        return 1U;
+    }
+
+    if (lead != 0xC3U)
+    {
+        return 0U;
+    }
+
+    switch (continuation)
+    {
+    case 0x81U: case 0x89U: case 0x8DU: case 0x91U: case 0x93U: case 0x9AU: case 0x9CU:
+    case 0xA1U: case 0xA9U: case 0xADU: case 0xB1U: case 0xB3U: case 0xBAU: case 0xBCU:
+        return 1U;
     default:
-        return '\0';
+        return 0U;
     }
 }
 
-/**
- * @brief Map a character in the 0xC2 block (inverted marks) to ASCII.
- * @param b2 Second byte of the 0xC2 sequence.
- * @return Approximate ASCII character, or 0 when unmapped.
- */
-static char map_two_byte_c2(unsigned char b2)
+static char normalize_ascii(unsigned char const byte)
 {
-    switch (b2)
+    if (byte < SANITIZE_ASCII_MIN)
     {
-    case 0xBFU: // ¿
-    case 0xA1U: // ¡
         return ' ';
-    default:
-        return '\0';
     }
+    if (byte == (unsigned char)'"')
+    {
+        return '\'';
+    }
+    return (char)byte;
 }
 
-/**
- * @brief Map common General Punctuation (0xE2 0x80 block) characters to ASCII.
- * @param b3 Third byte of the 0xE2 0x80 sequence.
- * @return Approximate ASCII character, or 0 when unmapped.
- */
-static char map_three_byte_punct(unsigned char b3)
+static void emit_bytes(char* const out,
+                       size_t const out_size,
+                       size_t* const index,
+                       char const* const bytes,
+                       size_t const count)
 {
-    switch (b3)
+    if ((*index + count) < out_size)
     {
-    case 0x9CU: // “
-    case 0x9DU: // ”
-    case 0x98U: // ‘
-    case 0x99U: // ’
-        return '\'';
-    case 0x93U: // – en dash
-    case 0x94U: // — em dash
-        return '-';
-    case 0xA6U: // … ellipsis
-        return '.';
-    default:
-        return '\0';
+        memcpy(&out[*index], bytes, count);
+        *index += count;
     }
 }
 
 // === Public function implementation ============================================================================== //
 
 /**
- * @brief Convert UTF-8 subtitle text into approximate printable ASCII.
+ * @brief Normalize UTF-8 subtitle text to the characters available in the generated font.
  *
- * Printable ASCII passes through (with '"' folded to '\''), control bytes become
- * spaces, and recognized Latin/punctuation UTF-8 sequences are folded to ASCII.
- * Any other multibyte sequence is collapsed to a single space so it never renders
- * as several unknown-glyph markers. The output is always NUL-terminated.
+ * Printable ASCII and supported Spanish letters and punctuation are preserved. Curly quotes,
+ * dashes, and ellipses are converted to their printable ASCII equivalents. Unsupported or
+ * malformed UTF-8 sequences become one space. Supported multibyte characters are copied
+ * atomically, so a truncated destination never contains partial UTF-8.
  * @param in Null-terminated UTF-8 input.
- * @param out Destination ASCII buffer.
- * @param out_size Destination capacity in bytes (must be at least 1).
+ * @param out Destination UTF-8 buffer.
+ * @param out_size Destination capacity in bytes, including the terminating NUL.
  * @return 0 on success, or a negative errno-style value on failure.
  */
-int subtitle_text_sanitize(char const* const in, char* const out, size_t out_size)
+int subtitle_text_sanitize(char const* const in, char* const out, size_t const out_size)
 {
-    char const* cursor = in;
-    size_t idx = 0U;
+    size_t input = 0U;
+    size_t output = 0U;
 
     if ((in == NULL) || (out == NULL) || (out_size == 0U))
     {
         return -EINVAL;
     }
 
-    while (*cursor != '\0')
+    while (in[input] != '\0')
     {
-        unsigned char const b = (unsigned char)*cursor;
+        unsigned char const lead = (unsigned char)in[input];
+        uint8_t const length = encoded_length(lead);
 
-        if (b <= SANITIZE_ASCII_MAX)
+        if (lead <= SANITIZE_ASCII_MAX)
         {
-            if (b < SANITIZE_ASCII_MIN)
-            {
-                emit(out, out_size, &idx, ' ');
-            }
-            else if (b == (unsigned char)'"')
-            {
-                emit(out, out_size, &idx, '\'');
-            }
-            else
-            {
-                emit(out, out_size, &idx, (char)b);
-            }
-
-            cursor++;
-            continue;
+            char const replacement = normalize_ascii(lead);
+            emit_bytes(out, out_size, &output, &replacement, 1U);
+            input++;
         }
-
-        uint8_t const length = lead_length(b);
-        uint8_t valid = (length >= 2U) ? 1U : 0U;
-        uint8_t k;
-
-        // A complete sequence needs (length - 1) continuation bytes. Stop at the
-        // terminator so a truncated sequence never reads past it.
-        for (k = 1U; (k < length) && (valid != 0U); k++)
+        else if ((length == 2U) && (in[input + 1U] != '\0')
+                 && (is_continuation((unsigned char)in[input + 1U]) != 0U)
+                 && (is_supported_spanish(lead, (unsigned char)in[input + 1U]) != 0U))
         {
-            if ((cursor[k] == '\0') || (is_continuation((unsigned char)cursor[k]) == 0U))
-            {
-                valid = 0U;
-            }
+            emit_bytes(out, out_size, &output, &in[input], 2U);
+            input += 2U;
         }
-
-        if (valid != 0U)
+        else if ((lead == 0xE2U) && ((unsigned char)in[input + 1U] == 0x80U)
+                 && (in[input + 2U] != '\0'))
         {
-            unsigned char const b2 = (unsigned char)cursor[1];
-            char mapped = '\0';
-
-            if (length == 2U)
-            {
-                if (b == 0xC3U)
-                {
-                    mapped = map_two_byte(b2);
-                }
-                else if (b == 0xC2U)
-                {
-                    mapped = map_two_byte_c2(b2);
-                }
-            }
-            else if (length == 3U)
-            {
-                if ((b == 0xE2U) && (b2 == 0x80U))
-                {
-                    mapped = map_three_byte_punct((unsigned char)cursor[2]);
-                }
-            }
-            else
-            {
-                // Valid but unmapped (e.g. 4-byte emoji): collapse to one space below.
-                mapped = '\0';
-            }
-
-            if (mapped != '\0')
-            {
-                emit(out, out_size, &idx, mapped);
-            }
-            else
-            {
-                emit(out, out_size, &idx, ' ');
-            }
-            cursor += length;
+            unsigned char const punctuation = (unsigned char)in[input + 2U];
+            char const* replacement = ((punctuation >= 0x98U) && (punctuation <= 0x9DU)) ? "'"
+                                      : ((punctuation == 0x93U) || (punctuation == 0x94U)) ? "-"
+                                      : (punctuation == 0xA6U) ? "..." : " ";
+            emit_bytes(out, out_size, &output, replacement, strlen(replacement));
+            input += 3U;
         }
         else
         {
-            // Stray continuation, invalid lead, or truncated sequence: emit one space
-            // and resync on the next byte.
-            emit(out, out_size, &idx, ' ');
-            cursor++;
+            uint8_t consumed = 1U;
+            while ((consumed < length) && (in[input + consumed] != '\0')
+                   && (is_continuation((unsigned char)in[input + consumed]) != 0U))
+            {
+                consumed++;
+            }
+            emit_bytes(out, out_size, &output, " ", 1U);
+            input += consumed;
         }
     }
 
-    out[idx] = '\0';
+    out[output] = '\0';
     return 0;
 }
 

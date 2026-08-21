@@ -89,6 +89,7 @@ VIDEO_PORT_SRCS := \
 	src/svc/stt/stt_ws_client.c \
 	src/svc/stt/stt_ws_frame.c \
 	src/svc/subtitle_pipeline/SubtitleAO.c \
+	src/svc/subtitle_pipeline/subtitle_font.c \
 	src/svc/subtitle_pipeline/subtitle_pipeline.c \
 	src/svc/subtitle_pipeline/subtitle_text_renderer.c \
 	src/svc/subtitle_pipeline/subtitle_text_sanitize.c \

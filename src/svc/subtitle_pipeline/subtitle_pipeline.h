@@ -58,7 +58,10 @@ int subtitle_pipeline_write_bitmap(subtitle_pipeline_t* pipeline,
                                    int32_t y,
                                    uint32_t width,
                                    uint32_t height);
+int subtitle_pipeline_set_box(subtitle_pipeline_t* pipeline, uint32_t width, uint32_t height);
+/// @brief Render final text, resize the compact subtitle box, clear stale mask pixels, and write it.
 int subtitle_pipeline_write_text(subtitle_pipeline_t* pipeline, char const* text);
+/// @brief Render a final/partial caption and prepare its compact mask region.
 int subtitle_pipeline_write_caption(subtitle_pipeline_t* pipeline,
                                     char const* text,
                                     uint8_t current_is_final);

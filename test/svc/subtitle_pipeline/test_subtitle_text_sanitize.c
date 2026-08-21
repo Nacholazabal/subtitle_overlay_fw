@@ -20,33 +20,33 @@ void test_sanitize_passes_printable_ascii_through(void)
     TEST_ASSERT_EQUAL_STRING("hola mundo 123.", out);
 }
 
-void test_sanitize_folds_lowercase_accents_enie_and_dieresis(void)
+void test_sanitize_preserves_lowercase_accents_enie_and_dieresis(void)
 {
     // "áéíóú ñ ü"
     TEST_ASSERT_EQUAL_INT(0, subtitle_text_sanitize("\xC3\xA1\xC3\xA9\xC3\xAD\xC3\xB3\xC3\xBA"
                                                     " \xC3\xB1 \xC3\xBC",
                                                     out,
                                                     sizeof(out)));
-    TEST_ASSERT_EQUAL_STRING("aeiou n u", out);
+    TEST_ASSERT_EQUAL_STRING("áéíóú ñ ü", out);
 }
 
-void test_sanitize_folds_uppercase_accents_enie_and_dieresis(void)
+void test_sanitize_preserves_uppercase_accents_enie_and_dieresis(void)
 {
     // "ÁÉÍÓÚ ÑÜ"
     TEST_ASSERT_EQUAL_INT(0, subtitle_text_sanitize("\xC3\x81\xC3\x89\xC3\x8D\xC3\x93\xC3\x9A"
                                                     " \xC3\x91\xC3\x9C",
                                                     out,
                                                     sizeof(out)));
-    TEST_ASSERT_EQUAL_STRING("AEIOU NU", out);
+    TEST_ASSERT_EQUAL_STRING("ÁÉÍÓÚ ÑÜ", out);
 }
 
-void test_sanitize_maps_inverted_marks_to_space_and_keeps_ascii_marks(void)
+void test_sanitize_preserves_inverted_and_ascii_marks(void)
 {
     // "¿Hola? ¡Hey!"
     TEST_ASSERT_EQUAL_INT(0, subtitle_text_sanitize("\xC2\xBF" "Hola? \xC2\xA1" "Hey!",
                                                     out,
                                                     sizeof(out)));
-    TEST_ASSERT_EQUAL_STRING(" Hola?  Hey!", out);
+    TEST_ASSERT_EQUAL_STRING("¿Hola? ¡Hey!", out);
 }
 
 void test_sanitize_maps_typographic_quotes_dashes_and_ellipsis(void)
@@ -58,7 +58,7 @@ void test_sanitize_maps_typographic_quotes_dashes_and_ellipsis(void)
                                                  " \xE2\x80\xA6 \"q\"",
                                                  out,
                                                  sizeof(out)));
-    TEST_ASSERT_EQUAL_STRING("'hola' - 'x' . 'q'", out);
+    TEST_ASSERT_EQUAL_STRING("'hola' - 'x' ... 'q'", out);
 }
 
 void test_sanitize_collapses_unknown_multibyte_to_single_space(void)
@@ -97,15 +97,15 @@ void test_sanitize_truncates_safely_and_terminates(void)
 
 void test_sanitize_does_not_split_multibyte_when_truncating(void)
 {
-    char small[3];
+    char small[4];
 
-    // Input is 'a', á(->a), é(->e); out holds only 2 chars + NUL, so 'é' is dropped
-    // cleanly without leaving a partial multibyte fragment.
+    // The buffer holds ASCII 'a', one complete two-byte 'á', and NUL. The next
+    // accented glyph is discarded without leaving a partial UTF-8 sequence.
     memset(small, 0xAA, sizeof(small));
     TEST_ASSERT_EQUAL_INT(0,
                           subtitle_text_sanitize("a\xC3\xA1\xC3\xA9", small, sizeof(small)));
-    TEST_ASSERT_EQUAL_STRING("aa", small);
-    TEST_ASSERT_EQUAL_CHAR('\0', small[2]);
+    TEST_ASSERT_EQUAL_STRING("aá", small);
+    TEST_ASSERT_EQUAL_CHAR('\0', small[3]);
 }
 
 void test_sanitize_rejects_invalid_arguments(void)
