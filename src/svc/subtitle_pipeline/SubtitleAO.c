@@ -24,12 +24,6 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 // === Macros definitions ========================================================================================== //
 
-#define SUBTITLE_AO_DONE_WIDTH         (32)
-#define SUBTITLE_AO_DONE_HEIGHT        (8)
-#define SUBTITLE_AO_DONE_X             ((SUBTITLE_BRAM_MASK_WIDTH - SUBTITLE_AO_DONE_WIDTH) / 2)
-#define SUBTITLE_AO_DONE_Y             ((SUBTITLE_BRAM_MASK_HEIGHT - SUBTITLE_AO_DONE_HEIGHT) / 2)
-#define SUBTITLE_AO_DONE_BYTES_PER_ROW (SUBTITLE_AO_DONE_WIDTH / 8)
-
 /// Broadcast captions: keep one previous final segment briefly above the live segment.
 #define SUBTITLE_AO_SLOT_MAX   (SUBTITLE_TEXT_MAX_LEN)
 #define SUBTITLE_AO_RENDER_MAX ((SUBTITLE_AO_SLOT_MAX * 2U) + 2U)
@@ -85,23 +79,11 @@ static uint32_t ms_to_ticks(uint32_t timeout_ms);
 static uint32_t resolve_timeout_ticks(char const* env_name, uint32_t default_ms, uint32_t min_ms);
 static uint32_t resolve_clear_timeout_ticks(void);
 static uint32_t resolve_previous_hold_ticks(void);
-static int draw_startup_marker(subtitle_ao_t* const me);
 static void enter_error(subtitle_ao_t* const me, int32_t code);
 
 // === Private variable definitions ================================================================================ //
 
 static subtitle_ao_t subtitle_ao_inst;
-
-static uint8_t const done_bitmap[SUBTITLE_AO_DONE_HEIGHT][SUBTITLE_AO_DONE_BYTES_PER_ROW] = {
-    {0xF0U, 0x70U, 0x88U, 0xF8U},
-    {0x88U, 0x88U, 0xC8U, 0x80U},
-    {0x84U, 0x88U, 0xA8U, 0x80U},
-    {0x84U, 0x88U, 0x98U, 0xF0U},
-    {0x84U, 0x88U, 0x88U, 0x80U},
-    {0x88U, 0x88U, 0x88U, 0x80U},
-    {0xF0U, 0x70U, 0x88U, 0xF8U},
-    {0x00U, 0x00U, 0x00U, 0x00U},
-};
 
 // === Public variable definitions ================================================================================= //
 
@@ -162,48 +144,7 @@ static void post_error(subtitle_ao_t* const me, int32_t code)
 }
 
 /**
- * @brief Draw the temporary startup marker into subtitle BRAM.
- * @param me Subtitle active object owning the pipeline.
- * @return 0 on success, or a negative errno-style value on failure.
- */
-static int draw_startup_marker(subtitle_ao_t* const me)
-{
-    int status;
-
-    LOG_INFO("subtitle: drawing startup marker");
-
-    status = subtitle_pipeline_clear(&me->pipeline);
-    if (status != 0)
-    {
-        LOG_ERROR("subtitle: clear failed, code=%ld", (long)status);
-        return status;
-    }
-
-    status = subtitle_pipeline_write_bitmap(&me->pipeline,
-                                            &done_bitmap[0][0],
-                                            sizeof(done_bitmap),
-                                            SUBTITLE_AO_DONE_X,
-                                            SUBTITLE_AO_DONE_Y,
-                                            SUBTITLE_AO_DONE_WIDTH,
-                                            SUBTITLE_AO_DONE_HEIGHT);
-    if (status != 0)
-    {
-        LOG_ERROR("subtitle: bitmap write failed, code=%ld", (long)status);
-        return status;
-    }
-
-    status = subtitle_pipeline_enable(&me->pipeline, 1U);
-    if (status != 0)
-    {
-        LOG_ERROR("subtitle: enable failed, code=%ld", (long)status);
-        return status;
-    }
-
-    return 0;
-}
-
-/**
- * @brief Initialize the subtitle pipeline and display a temporary DONE marker.
+ * @brief Initialize the subtitle pipeline in a cleared, disabled state.
  * @param me Subtitle active object receiving COMPONENT_INIT_SIG.
  * @param e Initialization event carrying the active video dimensions.
  * @return 0 on success, or a negative errno-style value on failure.
@@ -223,18 +164,10 @@ static int on_component_init(subtitle_ao_t* const me, component_init_evt_t const
                  (unsigned long)e->height);
 
         status = subtitle_pipeline_init(&me->pipeline, e->width, e->height);
-        if (status == 0)
-        {
-            status = draw_startup_marker(me);
-        }
     }
 
     if (status == 0)
     {
-        // The startup DONE marker is a temporary diagnostic. Arm the inactivity
-        // clear timer now so it is removed after the normal timeout even if no
-        // STT transcript ever arrives.
-        QTimeEvt_rearm(&me->clear_time_evt, me->clear_timeout_ticks);
         post_ready(me);
         LOG_INFO("subtitle: pipeline ready");
     }
@@ -374,11 +307,7 @@ static int render_current_state(subtitle_ao_t* const me)
         snprintf(render_text, sizeof(render_text), "%s", me->current_text);
     }
 
-    status = subtitle_pipeline_clear(&me->pipeline);
-    if (status == 0)
-    {
-        status = subtitle_pipeline_write_caption(&me->pipeline, render_text, me->current_is_final);
-    }
+    status = subtitle_pipeline_write_caption(&me->pipeline, render_text, me->current_is_final);
     if (status == 0)
     {
         status = subtitle_pipeline_enable(&me->pipeline, 1U);

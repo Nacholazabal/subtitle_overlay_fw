@@ -1,4 +1,3 @@
-#include <stdlib.h>
 #include <string.h>
 
 #include "unity.h"
@@ -138,9 +137,6 @@ static void set_stt_poll_result(subtitle_text_evt_t const* events, uint32_t coun
 static void expect_subtitle_init_success(void)
 {
     subtitle_pipeline_init_IgnoreAndReturn(0);
-    subtitle_pipeline_clear_IgnoreAndReturn(0);
-    subtitle_pipeline_write_bitmap_IgnoreAndReturn(0);
-    subtitle_pipeline_enable_IgnoreAndReturn(0);
 }
 
 static void init_subtitle_ready(void)
@@ -158,7 +154,6 @@ static void expect_subtitle_render_success(void)
     write_text_status = 0;
     captured_text[0] = '\0';
     captured_current_is_final = 0U;
-    subtitle_pipeline_clear_IgnoreAndReturn(0);
     subtitle_pipeline_write_caption_Stub(subtitle_pipeline_write_caption_capture);
     subtitle_pipeline_enable_IgnoreAndReturn(0);
 }
@@ -216,7 +211,7 @@ void test_stt_init_success_posts_ready_to_system(void)
     qpc_test_gc(&ready->super);
 }
 
-void test_subtitle_init_success_draws_marker_and_posts_ready_to_system(void)
+void test_subtitle_init_success_posts_ready_without_drawing_content(void)
 {
     component_ready_evt_t const* ready;
 
@@ -229,35 +224,6 @@ void test_subtitle_init_success_draws_marker_and_posts_ready_to_system(void)
     ready = pop_ready_from_system();
     TEST_ASSERT_EQUAL_INT(COMPONENT_SUBTITLE_PIPELINE, ready->source);
     qpc_test_gc(&ready->super);
-}
-
-void test_subtitle_startup_marker_clears_after_inactivity_timeout(void)
-{
-    // SRC-M02: the startup DONE marker must auto-clear even if no STT transcript
-    // ever arrives. Init arms the inactivity clear timer; advancing the clock to
-    // the timeout must post SUBTITLE_CLEAR_SIG and blank the overlay.
-    setenv("SUBTITLE_CLEAR_TIMEOUT_MS", "1000", 1); // 100 ticks (the minimum)
-
-    expect_subtitle_init_success();
-    start_subtitle_ao();
-
-    post_component_init(AO_Subtitle, 1280U, 720U);
-    qpc_test_dispatch_one(AO_Subtitle);
-    qpc_test_gc(qpc_test_pop(AO_System)); // consume ready
-
-    // No transcript arrives; advance the clock to the clear timeout.
-    for (uint32_t tick = 0U; tick < 100U; ++tick)
-    {
-        QF_onClockTick();
-    }
-
-    TEST_ASSERT_EQUAL_UINT16(1U, qpc_test_queue_use(AO_Subtitle));
-
-    subtitle_pipeline_clear_ExpectAnyArgsAndReturn(0);
-    subtitle_pipeline_enable_ExpectAnyArgsAndReturn(0);
-    qpc_test_dispatch_one(AO_Subtitle);
-
-    unsetenv("SUBTITLE_CLEAR_TIMEOUT_MS");
 }
 
 void test_stt_poll_partial_and_final_render_as_current_segment(void)

@@ -5,490 +5,576 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 ///
 /// @file subtitle_text_renderer.c
-/// @brief Minimal text-to-bitmap renderer for subtitle masks
+/// @brief Proportional UTF-8 subtitle renderer for the hardware overlay mask
 ///
 
 // === Headers files inclusions ==================================================================================== //
 
 #include "subtitle_text_renderer.h"
 
-#include <ctype.h>
-#include <stdio.h>
+#include <limits.h>
 #include <string.h>
 
 #include "errorno.h"
 #include "subtitle_bram.h"
+#include "subtitle_font.h"
 #include "subtitle_text_sanitize.h"
 
 // === Macros definitions ========================================================================================== //
 
-#define GLYPH_WIDTH  (8U)
-#define GLYPH_HEIGHT (12U)
-// Scale 2 keeps the 8x12 subtitle font crisp while preserving three compact rows.
-#define GLYPH_SCALE           (2U)
-#define GLYPH_RENDERED_WIDTH  (GLYPH_WIDTH * GLYPH_SCALE)
-#define GLYPH_RENDERED_HEIGHT (GLYPH_HEIGHT * GLYPH_SCALE)
-#define GLYPH_ADVANCE         (9U * GLYPH_SCALE)
-#define RENDER_LINE_HEIGHT    (16U * GLYPH_SCALE)
-#define RENDER_MAX_LINES      (3U)
-#define RENDER_PREVIOUS_LINES (1U)
-#define RENDER_CURRENT_LINES  (RENDER_MAX_LINES - RENDER_PREVIOUS_LINES)
-#define RENDER_TEXT_X         (24U)
-#define RENDER_TEXT_BLOCK_HEIGHT \
-    (GLYPH_RENDERED_HEIGHT + ((RENDER_MAX_LINES - 1U) * RENDER_LINE_HEIGHT))
-#define RENDER_TEXT_Y                                                    \
-    ((SUBTITLE_BRAM_MASK_HEIGHT > RENDER_TEXT_BLOCK_HEIGHT)              \
-         ? ((SUBTITLE_BRAM_MASK_HEIGHT - RENDER_TEXT_BLOCK_HEIGHT) / 2U) \
-         : 0U)
-#define RENDER_BITMAP_STRIDE ((size_t)SUBTITLE_BRAM_MASK_WIDTH / 8U)
-#define RENDER_BITMAP_SIZE   (RENDER_BITMAP_STRIDE * SUBTITLE_BRAM_MASK_HEIGHT)
-#define RENDER_SANITIZE_MAX  (512U)
-#define RENDER_GLYPHS_PER_LINE \
-    (((SUBTITLE_BRAM_MASK_WIDTH - RENDER_TEXT_X - GLYPH_RENDERED_WIDTH) / GLYPH_ADVANCE) + 1U)
-#define RENDER_LAYOUT_MAX_LINES (32U)
-#define RENDER_LINE_TEXT_MAX    ((size_t)RENDER_GLYPHS_PER_LINE)
-#define RENDER_UNKNOWN_GLYPH    (36U)
-#define RENDER_SPACE_GLYPH      (37U)
-#define RENDER_PERIOD_GLYPH     (38U)
-#define RENDER_COMMA_GLYPH      (39U)
-#define RENDER_DASH_GLYPH       (40U)
-#define RENDER_APOSTROPHE_GLYPH (41U)
-#define RENDER_COLON_GLYPH      (42U)
-#define RENDER_LINE_PREVIOUS    (0U)
-#define RENDER_LINE_CURRENT     (1U)
+#define RENDER_PADDING_X          (18U)
+#define RENDER_PADDING_Y          (10U)
+#define RENDER_MAX_LINES          (3U)
+#define RENDER_PREVIOUS_LINES     (1U)
+#define RENDER_CURRENT_LINES      (2U)
+#define RENDER_LAYOUT_MAX_LINES   (32U)
+#define RENDER_CODEPOINT_MAX      (512U)
+#define RENDER_UTF8_MAX           (1024U)
+#define RENDER_CONTENT_MAX_WIDTH  (SUBTITLE_BRAM_MASK_WIDTH - (2U * RENDER_PADDING_X))
+#define RENDER_BITMAP_SIZE        (SUBTITLE_BRAM_SIZE_BYTES)
+#define RENDER_ROLE_PREVIOUS      (0U)
+#define RENDER_ROLE_CURRENT       (1U)
 
 // === Private data type declarations ============================================================================== //
-// === Private variable declarations =============================================================================== //
+
+typedef struct
+{
+    uint16_t start;
+    uint16_t count;
+    uint8_t append_hyphen;
+} render_span_t;
+
+typedef struct
+{
+    uint32_t codepoints[RENDER_CODEPOINT_MAX];
+    render_span_t lines[RENDER_LAYOUT_MAX_LINES];
+    uint16_t codepoint_count;
+    uint16_t line_count;
+} render_layout_t;
+
+typedef struct
+{
+    render_layout_t const* layout;
+    render_span_t const* span;
+    uint8_t role;
+} visible_line_t;
+
+typedef struct
+{
+    int32_t min_x;
+    int32_t max_x;
+    int32_t min_y;
+    int32_t max_y;
+} ink_bounds_t;
+
+typedef struct
+{
+    ink_bounds_t lines[RENDER_MAX_LINES];
+    int32_t min_y;
+    int32_t max_y;
+    uint32_t maximum_width;
+} render_metrics_t;
+
 // === Private function declarations =============================================================================== //
 
-static uint8_t const* glyph_for_char(char ch);
-static void set_bitmap_pixel(uint8_t* dst, uint32_t x, uint32_t y);
-static void draw_glyph(uint8_t* dst, uint32_t x, uint32_t y, uint8_t const* glyph, uint8_t dimmed);
-static void append_layout_line(char lines[RENDER_LAYOUT_MAX_LINES][RENDER_GLYPHS_PER_LINE + 1U],
-                               uint32_t* line_count,
-                               char const* line);
-static void append_word(char lines[RENDER_LAYOUT_MAX_LINES][RENDER_GLYPHS_PER_LINE + 1U],
-                        uint32_t* line_count,
-                        char current[RENDER_GLYPHS_PER_LINE + 1U],
-                        char const* word,
-                        size_t word_len);
-static int sanitize_slice(char const* src, size_t len, char* dst, size_t dst_size);
-static uint32_t
-build_wrapped_lines(char const* text,
-                    char lines[RENDER_LAYOUT_MAX_LINES][RENDER_GLYPHS_PER_LINE + 1U]);
-static uint32_t copy_tail_lines(char dst[RENDER_MAX_LINES][RENDER_GLYPHS_PER_LINE + 1U],
-                                uint8_t dst_roles[RENDER_MAX_LINES],
-                                uint32_t dst_start,
-                                uint32_t max_lines,
-                                uint8_t role,
-                                char src[RENDER_LAYOUT_MAX_LINES][RENDER_GLYPHS_PER_LINE + 1U],
-                                uint32_t src_count);
-static int build_visible_lines(char const* text,
-                               char lines[RENDER_MAX_LINES][RENDER_GLYPHS_PER_LINE + 1U],
-                               uint8_t line_roles[RENDER_MAX_LINES],
-                               uint32_t* line_count);
-static void draw_text_line(uint8_t* dst, char const* text, uint32_t line, uint8_t dimmed);
-
-// === Public variable definitions ================================================================================= //
-// === Private variable definitions ================================================================================ //
-
-static uint8_t const glyphs[][GLYPH_HEIGHT] = {
-    {0x00U, 0x3CU, 0x66U, 0x6EU, 0x76U, 0x66U, 0x66U, 0x66U, 0x66U, 0x3CU, 0x00U, 0x00U}, // 0
-    {0x00U, 0x18U, 0x38U, 0x18U, 0x18U, 0x18U, 0x18U, 0x18U, 0x18U, 0x7EU, 0x00U, 0x00U}, // 1
-    {0x00U, 0x3CU, 0x66U, 0x06U, 0x0CU, 0x18U, 0x30U, 0x60U, 0x66U, 0x7EU, 0x00U, 0x00U}, // 2
-    {0x00U, 0x3CU, 0x66U, 0x06U, 0x1CU, 0x06U, 0x06U, 0x06U, 0x66U, 0x3CU, 0x00U, 0x00U}, // 3
-    {0x00U, 0x0CU, 0x1CU, 0x3CU, 0x6CU, 0xCCU, 0xFEU, 0x0CU, 0x0CU, 0x1EU, 0x00U, 0x00U}, // 4
-    {0x00U, 0x7EU, 0x60U, 0x60U, 0x7CU, 0x06U, 0x06U, 0x06U, 0x66U, 0x3CU, 0x00U, 0x00U}, // 5
-    {0x00U, 0x1CU, 0x30U, 0x60U, 0x7CU, 0x66U, 0x66U, 0x66U, 0x66U, 0x3CU, 0x00U, 0x00U}, // 6
-    {0x00U, 0x7EU, 0x66U, 0x06U, 0x0CU, 0x18U, 0x18U, 0x30U, 0x30U, 0x30U, 0x00U, 0x00U}, // 7
-    {0x00U, 0x3CU, 0x66U, 0x66U, 0x3CU, 0x66U, 0x66U, 0x66U, 0x66U, 0x3CU, 0x00U, 0x00U}, // 8
-    {0x00U, 0x3CU, 0x66U, 0x66U, 0x66U, 0x3EU, 0x06U, 0x0CU, 0x18U, 0x70U, 0x00U, 0x00U}, // 9
-    {0x00U, 0x00U, 0x00U, 0x3CU, 0x06U, 0x3EU, 0x66U, 0x66U, 0x66U, 0x3EU, 0x00U, 0x00U}, // a
-    {0x00U, 0x60U, 0x60U, 0x7CU, 0x66U, 0x66U, 0x66U, 0x66U, 0x66U, 0x7CU, 0x00U, 0x00U}, // b
-    {0x00U, 0x00U, 0x00U, 0x3CU, 0x66U, 0x60U, 0x60U, 0x60U, 0x66U, 0x3CU, 0x00U, 0x00U}, // c
-    {0x00U, 0x06U, 0x06U, 0x3EU, 0x66U, 0x66U, 0x66U, 0x66U, 0x66U, 0x3EU, 0x00U, 0x00U}, // d
-    {0x00U, 0x00U, 0x00U, 0x3CU, 0x66U, 0x7EU, 0x60U, 0x60U, 0x66U, 0x3CU, 0x00U, 0x00U}, // e
-    {0x00U, 0x1CU, 0x36U, 0x30U, 0x30U, 0x7CU, 0x30U, 0x30U, 0x30U, 0x78U, 0x00U, 0x00U}, // f
-    {0x00U, 0x00U, 0x00U, 0x3EU, 0x66U, 0x66U, 0x66U, 0x3EU, 0x06U, 0x66U, 0x3CU, 0x00U}, // g
-    {0x00U, 0x60U, 0x60U, 0x7CU, 0x66U, 0x66U, 0x66U, 0x66U, 0x66U, 0x66U, 0x00U, 0x00U}, // h
-    {0x00U, 0x18U, 0x00U, 0x38U, 0x18U, 0x18U, 0x18U, 0x18U, 0x18U, 0x3CU, 0x00U, 0x00U}, // i
-    {0x00U, 0x0CU, 0x00U, 0x1CU, 0x0CU, 0x0CU, 0x0CU, 0x0CU, 0x0CU, 0xCCU, 0x78U, 0x00U}, // j
-    {0x00U, 0x60U, 0x60U, 0x66U, 0x6CU, 0x78U, 0x70U, 0x78U, 0x6CU, 0x66U, 0x00U, 0x00U}, // k
-    {0x00U, 0x38U, 0x18U, 0x18U, 0x18U, 0x18U, 0x18U, 0x18U, 0x18U, 0x3CU, 0x00U, 0x00U}, // l
-    {0x00U, 0x00U, 0x00U, 0xECU, 0xFEU, 0xD6U, 0xD6U, 0xC6U, 0xC6U, 0xC6U, 0x00U, 0x00U}, // m
-    {0x00U, 0x00U, 0x00U, 0x7CU, 0x66U, 0x66U, 0x66U, 0x66U, 0x66U, 0x66U, 0x00U, 0x00U}, // n
-    {0x00U, 0x00U, 0x00U, 0x3CU, 0x66U, 0x66U, 0x66U, 0x66U, 0x66U, 0x3CU, 0x00U, 0x00U}, // o
-    {0x00U, 0x00U, 0x00U, 0x7CU, 0x66U, 0x66U, 0x66U, 0x7CU, 0x60U, 0x60U, 0xF0U, 0x00U}, // p
-    {0x00U, 0x00U, 0x00U, 0x3EU, 0x66U, 0x66U, 0x66U, 0x3EU, 0x06U, 0x06U, 0x0FU, 0x00U}, // q
-    {0x00U, 0x00U, 0x00U, 0x6CU, 0x76U, 0x60U, 0x60U, 0x60U, 0x60U, 0xF0U, 0x00U, 0x00U}, // r
-    {0x00U, 0x00U, 0x00U, 0x3EU, 0x60U, 0x60U, 0x3CU, 0x06U, 0x06U, 0x7CU, 0x00U, 0x00U}, // s
-    {0x00U, 0x18U, 0x18U, 0x7EU, 0x18U, 0x18U, 0x18U, 0x18U, 0x1AU, 0x0CU, 0x00U, 0x00U}, // t
-    {0x00U, 0x00U, 0x00U, 0x66U, 0x66U, 0x66U, 0x66U, 0x66U, 0x66U, 0x3EU, 0x00U, 0x00U}, // u
-    {0x00U, 0x00U, 0x00U, 0x66U, 0x66U, 0x66U, 0x66U, 0x66U, 0x3CU, 0x18U, 0x00U, 0x00U}, // v
-    {0x00U, 0x00U, 0x00U, 0xC6U, 0xC6U, 0xC6U, 0xD6U, 0xD6U, 0xFEU, 0x6CU, 0x00U, 0x00U}, // w
-    {0x00U, 0x00U, 0x00U, 0x66U, 0x66U, 0x3CU, 0x18U, 0x3CU, 0x66U, 0x66U, 0x00U, 0x00U}, // x
-    {0x00U, 0x00U, 0x00U, 0x66U, 0x66U, 0x66U, 0x66U, 0x3EU, 0x06U, 0x66U, 0x3CU, 0x00U}, // y
-    {0x00U, 0x00U, 0x00U, 0x7EU, 0x06U, 0x0CU, 0x18U, 0x30U, 0x60U, 0x7EU, 0x00U, 0x00U}, // z
-    {0x00U, 0x3CU, 0x66U, 0x06U, 0x0CU, 0x18U, 0x18U, 0x00U, 0x18U, 0x18U, 0x00U, 0x00U}, // ?
-    {0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U}, // space
-    {0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x18U, 0x18U, 0x00U, 0x00U}, // .
-    {0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x18U, 0x18U, 0x30U, 0x00U}, // ,
-    {0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x7EU, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U}, // -
-    {0x00U, 0x18U, 0x18U, 0x30U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U}, // '
-    {0x00U, 0x00U, 0x18U, 0x18U, 0x00U, 0x00U, 0x00U, 0x18U, 0x18U, 0x00U, 0x00U, 0x00U}, // :
-};
+static int sanitize_slice(char const* source, size_t length, char* destination, size_t capacity);
+static uint32_t decode_codepoint(char const* text, size_t* offset);
+static int decode_text(char const* text, render_layout_t* layout);
+static uint32_t span_advance(render_layout_t const* layout, uint16_t start, uint16_t count);
+static void append_line(render_layout_t* layout, uint16_t start, uint16_t count, uint8_t hyphen);
+static void split_word(render_layout_t* layout, uint16_t start, uint16_t end);
+static void wrap_codepoints(render_layout_t* layout);
+static int build_layout(char const* source, size_t length, render_layout_t* layout);
+static uint32_t append_tail(visible_line_t* visible,
+                            uint32_t count,
+                            render_layout_t const* layout,
+                            uint32_t maximum,
+                            uint8_t role);
+static uint32_t build_visible_lines(char const* text,
+                                    render_layout_t* previous,
+                                    render_layout_t* current,
+                                    visible_line_t visible[RENDER_MAX_LINES]);
+static ink_bounds_t measure_line(visible_line_t const* line, uint32_t baseline);
+static void measure_visible(visible_line_t const* visible,
+                            uint32_t line_count,
+                            render_metrics_t* metrics);
+static void set_pixel(uint8_t* bitmap, uint32_t stride, uint32_t x, uint32_t y);
+static void draw_glyph(uint8_t* bitmap,
+                       uint32_t stride,
+                       uint32_t box_width,
+                       uint32_t box_height,
+                       subtitle_font_glyph_t const* glyph,
+                       int32_t x,
+                       int32_t y,
+                       uint8_t dimmed);
+static void draw_line(uint8_t* bitmap,
+                      uint32_t stride,
+                      uint32_t box_width,
+                      uint32_t box_height,
+                      visible_line_t const* line,
+                      int32_t pen_x,
+                      int32_t baseline,
+                      uint8_t dimmed);
+static void draw_visible(uint8_t* bitmap,
+                         uint32_t width,
+                         uint32_t height,
+                         visible_line_t const* visible,
+                         uint32_t line_count,
+                         render_metrics_t const* metrics,
+                         uint8_t current_is_final);
 
 // === Private function implementation ============================================================================= //
 
-/**
- * @brief Return the 8x12 glyph bitmap for one supported character.
- * @param ch Character to render.
- * @return Glyph row bitmap.
- */
-static uint8_t const* glyph_for_char(char ch)
+static int sanitize_slice(char const* const source,
+                          size_t const length,
+                          char* const destination,
+                          size_t const capacity)
 {
-    unsigned char const uch = (unsigned char)ch;
+    char input[RENDER_UTF8_MAX];
 
-    if (isdigit(uch))
+    if ((length + 1U) > sizeof(input))
     {
-        return glyphs[uch - (unsigned char)'0'];
+        return -EINVAL;
     }
 
-    if (isupper(uch))
+    memcpy(input, source, length);
+    input[length] = '\0';
+    return subtitle_text_sanitize(input, destination, capacity);
+}
+
+static uint32_t decode_codepoint(char const* const text, size_t* const offset)
+{
+    unsigned char const lead = (unsigned char)text[*offset];
+
+    if (lead < 0x80U)
     {
-        ch = (char)tolower(uch);
+        (*offset)++;
+        return lead;
     }
 
-    if ((ch >= 'a') && (ch <= 'z'))
     {
-        return glyphs[10U + ((uint32_t)ch - (uint32_t)'a')];
-    }
-
-    switch (ch)
-    {
-    case ' ':
-        return glyphs[RENDER_SPACE_GLYPH];
-
-    case '.':
-        return glyphs[RENDER_PERIOD_GLYPH];
-
-    case ',':
-        return glyphs[RENDER_COMMA_GLYPH];
-
-    case '-':
-        return glyphs[RENDER_DASH_GLYPH];
-
-    case '\'':
-        return glyphs[RENDER_APOSTROPHE_GLYPH];
-
-    case ':':
-        return glyphs[RENDER_COLON_GLYPH];
-
-    default:
-        return glyphs[RENDER_UNKNOWN_GLYPH];
+        unsigned char const continuation = (unsigned char)text[*offset + 1U];
+        *offset += 2U;
+        return ((uint32_t)(lead & 0x1FU) << 6U) | (uint32_t)(continuation & 0x3FU);
     }
 }
 
-/**
- * @brief Set one pixel in the packed MSB-first bitmap.
- * @param dst Destination bitmap.
- * @param x Pixel x coordinate.
- * @param y Pixel y coordinate.
- * @return None.
- */
-static void set_bitmap_pixel(uint8_t* const dst, uint32_t x, uint32_t y)
+static int decode_text(char const* const text, render_layout_t* const layout)
 {
-    if ((x >= SUBTITLE_BRAM_MASK_WIDTH) || (y >= SUBTITLE_BRAM_MASK_HEIGHT))
+    size_t offset = 0U;
+    uint8_t pending_space = 0U;
+
+    while ((text[offset] != '\0') && (layout->codepoint_count < RENDER_CODEPOINT_MAX))
     {
-        return;
-    }
+        uint32_t const codepoint = decode_codepoint(text, &offset);
 
-    size_t const byte_index = ((size_t)y * RENDER_BITMAP_STRIDE) + ((size_t)x / 8U);
-    uint8_t const bit_mask = (uint8_t)(1U << (7U - (x % 8U)));
-
-    dst[byte_index] |= bit_mask;
-}
-
-/**
- * @brief Draw one glyph into the packed destination bitmap.
- * @param dst Destination bitmap.
- * @param x Glyph x coordinate.
- * @param y Glyph y coordinate.
- * @param glyph Glyph row bitmap.
- * @return None.
- */
-static void draw_glyph(uint8_t* const dst,
-                       uint32_t x,
-                       uint32_t y,
-                       uint8_t const* const glyph,
-                       uint8_t const dimmed)
-{
-    uint32_t row;
-
-    for (row = 0U; row < GLYPH_HEIGHT; row++)
-    {
-        uint32_t col;
-        for (col = 0U; col < GLYPH_WIDTH; col++)
+        if (codepoint == (uint32_t)' ')
         {
-            if ((glyph[row] & (1U << (GLYPH_WIDTH - 1U - col))) != 0U)
-            {
-                uint32_t scaled_row;
-                for (scaled_row = 0U; scaled_row < GLYPH_SCALE; scaled_row++)
-                {
-                    uint32_t scaled_col;
-                    for (scaled_col = 0U; scaled_col < GLYPH_SCALE; scaled_col++)
-                    {
-                        if ((dimmed != 0U) && (GLYPH_SCALE > 1U)
-                            && (scaled_row == (GLYPH_SCALE - 1U))
-                            && (scaled_col == (GLYPH_SCALE - 1U)))
-                        {
-                            continue;
-                        }
-                        set_bitmap_pixel(dst,
-                                         x + (col * GLYPH_SCALE) + scaled_col,
-                                         y + (row * GLYPH_SCALE) + scaled_row);
-                    }
-                }
-            }
-        }
-    }
-}
-
-static void append_layout_line(char lines[RENDER_LAYOUT_MAX_LINES][RENDER_GLYPHS_PER_LINE + 1U],
-                               uint32_t* const line_count,
-                               char const* const line)
-{
-    if (line[0] == '\0')
-    {
-        return;
-    }
-
-    if (*line_count >= RENDER_LAYOUT_MAX_LINES)
-    {
-        memmove(lines[0], lines[1], (RENDER_LAYOUT_MAX_LINES - 1U) * sizeof(lines[0]));
-        *line_count = RENDER_LAYOUT_MAX_LINES - 1U;
-    }
-
-    strncpy(lines[*line_count], line, RENDER_LINE_TEXT_MAX);
-    lines[*line_count][RENDER_LINE_TEXT_MAX] = '\0';
-    (*line_count)++;
-}
-
-static void append_word(char lines[RENDER_LAYOUT_MAX_LINES][RENDER_GLYPHS_PER_LINE + 1U],
-                        uint32_t* const line_count,
-                        char current[RENDER_GLYPHS_PER_LINE + 1U],
-                        char const* word,
-                        size_t word_len)
-{
-    while (word_len > 0U)
-    {
-        size_t const current_len = strlen(current);
-
-        if (current_len == 0U)
-        {
-            size_t const copy_len = (word_len > RENDER_LINE_TEXT_MAX) ? (RENDER_LINE_TEXT_MAX - 1U)
-                                                                      : word_len;
-
-            memcpy(current, word, copy_len);
-            current[copy_len] = (word_len > RENDER_LINE_TEXT_MAX) ? '-' : '\0';
-            current[copy_len + ((word_len > RENDER_LINE_TEXT_MAX) ? 1U : 0U)] = '\0';
-            word += copy_len;
-            word_len -= copy_len;
-
-            if (word_len > 0U)
-            {
-                append_layout_line(lines, line_count, current);
-                current[0] = '\0';
-            }
-        }
-        else if ((current_len + 1U + word_len) <= RENDER_LINE_TEXT_MAX)
-        {
-            current[current_len] = ' ';
-            memcpy(&current[current_len + 1U], word, word_len);
-            current[current_len + 1U + word_len] = '\0';
-            word_len = 0U;
+            pending_space = (layout->codepoint_count != 0U) ? 1U : 0U;
         }
         else
         {
-            append_layout_line(lines, line_count, current);
-            current[0] = '\0';
+            uint16_t const required = (pending_space != 0U) ? 2U : 1U;
+
+            if (layout->codepoint_count > (RENDER_CODEPOINT_MAX - required))
+            {
+                break;
+            }
+            if (pending_space != 0U)
+            {
+                layout->codepoints[layout->codepoint_count++] = (uint32_t)' ';
+            }
+            layout->codepoints[layout->codepoint_count++] = codepoint;
+            pending_space = 0U;
         }
     }
+
+    return (layout->codepoint_count != 0U) ? 0 : -EINVAL;
 }
 
-static int sanitize_slice(char const* const src, size_t len, char* const dst, size_t const dst_size)
+static uint32_t span_advance(render_layout_t const* const layout,
+                             uint16_t const start,
+                             uint16_t const count)
 {
-    char raw[RENDER_SANITIZE_MAX];
+    uint32_t width = 0U;
+    uint16_t index;
 
-    if (len >= sizeof(raw))
+    for (index = 0U; index < count; index++)
     {
-        len = sizeof(raw) - 1U;
+        width += subtitle_font_lookup(layout->codepoints[start + index])->advance;
+    }
+    return width;
+}
+
+static void append_line(render_layout_t* const layout,
+                        uint16_t const start,
+                        uint16_t const count,
+                        uint8_t const hyphen)
+{
+    if ((count == 0U) || (layout->line_count >= RENDER_LAYOUT_MAX_LINES))
+    {
+        return;
     }
 
-    memcpy(raw, src, len);
-    raw[len] = '\0';
-    return subtitle_text_sanitize(raw, dst, dst_size);
+    layout->lines[layout->line_count].start = start;
+    layout->lines[layout->line_count].count = count;
+    layout->lines[layout->line_count].append_hyphen = hyphen;
+    layout->line_count++;
 }
 
-static uint32_t
-build_wrapped_lines(char const* const text,
-                    char lines[RENDER_LAYOUT_MAX_LINES][RENDER_GLYPHS_PER_LINE + 1U])
+static void split_word(render_layout_t* const layout, uint16_t start, uint16_t const end)
 {
-    char current[RENDER_GLYPHS_PER_LINE + 1U] = {0};
-    uint32_t line_count = 0U;
-    char const* cursor = text;
+    uint32_t const hyphen_width = subtitle_font_lookup((uint32_t)'-')->advance;
 
-    while (*cursor != '\0')
+    while (start < end)
     {
-        char const* word;
-        size_t word_len;
+        uint16_t count = 0U;
+        uint32_t width = 0U;
+        uint32_t const remaining_width = span_advance(layout, start, (uint16_t)(end - start));
 
-        while (*cursor == ' ')
+        if (remaining_width <= RENDER_CONTENT_MAX_WIDTH)
+        {
+            append_line(layout, start, (uint16_t)(end - start), 0U);
+            return;
+        }
+
+        while ((start + count) < end)
+        {
+            uint32_t const advance = subtitle_font_lookup(layout->codepoints[start + count])->advance;
+            if ((count != 0U) && ((width + advance + hyphen_width) > RENDER_CONTENT_MAX_WIDTH))
+            {
+                break;
+            }
+            width += advance;
+            count++;
+        }
+
+        append_line(layout, start, count, 1U);
+        start = (uint16_t)(start + count);
+    }
+}
+
+static void wrap_codepoints(render_layout_t* const layout)
+{
+    uint16_t cursor = 0U;
+    uint16_t line_start = 0U;
+    uint16_t line_count = 0U;
+    uint32_t line_width = 0U;
+    uint32_t const space_width = subtitle_font_lookup((uint32_t)' ')->advance;
+
+    while (cursor < layout->codepoint_count)
+    {
+        uint16_t const word_start = cursor;
+        uint16_t word_end;
+        uint32_t word_width;
+
+        while ((cursor < layout->codepoint_count) && (layout->codepoints[cursor] != (uint32_t)' '))
         {
             cursor++;
         }
+        word_end = cursor;
+        word_width = span_advance(layout, word_start, (uint16_t)(word_end - word_start));
 
-        word = cursor;
-        while ((*cursor != '\0') && (*cursor != ' '))
+        if ((line_count != 0U) && ((line_width + space_width + word_width) > RENDER_CONTENT_MAX_WIDTH))
         {
-            cursor++;
+            append_line(layout, line_start, line_count, 0U);
+            line_count = 0U;
+            line_width = 0U;
         }
-
-        word_len = (size_t)(cursor - word);
-        append_word(lines, &line_count, current, word, word_len);
-    }
-
-    append_layout_line(lines, &line_count, current);
-    return line_count;
-}
-
-static uint32_t copy_tail_lines(char dst[RENDER_MAX_LINES][RENDER_GLYPHS_PER_LINE + 1U],
-                                uint8_t dst_roles[RENDER_MAX_LINES],
-                                uint32_t dst_start,
-                                uint32_t const max_lines,
-                                uint8_t const role,
-                                char src[RENDER_LAYOUT_MAX_LINES][RENDER_GLYPHS_PER_LINE + 1U],
-                                uint32_t const src_count)
-{
-    uint32_t const copy_count = (src_count > max_lines) ? max_lines : src_count;
-    uint32_t const src_start = src_count - copy_count;
-    uint32_t i;
-
-    for (i = 0U; i < copy_count; i++)
-    {
-        snprintf(dst[dst_start], RENDER_GLYPHS_PER_LINE + 1U, "%s", src[src_start + i]);
-        dst_roles[dst_start] = role;
-        dst_start++;
-    }
-
-    return dst_start;
-}
-
-static int build_visible_lines(char const* const text,
-                               char lines[RENDER_MAX_LINES][RENDER_GLYPHS_PER_LINE + 1U],
-                               uint8_t line_roles[RENDER_MAX_LINES],
-                               uint32_t* const line_count)
-{
-    char const* const split = strchr(text, '\n');
-    char sanitized[RENDER_SANITIZE_MAX];
-    char wrapped[RENDER_LAYOUT_MAX_LINES][RENDER_GLYPHS_PER_LINE + 1U] = {{0}};
-
-    *line_count = 0U;
-
-    if (split == NULL)
-    {
-        if (subtitle_text_sanitize(text, sanitized, sizeof(sanitized)) != 0)
+        if ((line_count == 0U) && (word_width > RENDER_CONTENT_MAX_WIDTH))
         {
-            return -EINVAL;
+            split_word(layout, word_start, word_end);
         }
-
-        *line_count = copy_tail_lines(lines,
-                                      line_roles,
-                                      0U,
-                                      RENDER_MAX_LINES,
-                                      RENDER_LINE_CURRENT,
-                                      wrapped,
-                                      build_wrapped_lines(sanitized, wrapped));
-        return 0;
+        else
+        {
+            line_start = (line_count == 0U) ? word_start : line_start;
+            line_count = (uint16_t)(word_end - line_start);
+            line_width = (line_width == 0U) ? word_width : (line_width + space_width + word_width);
+        }
+        cursor = (cursor < layout->codepoint_count) ? (uint16_t)(cursor + 1U) : cursor;
     }
 
-    if (sanitize_slice(text, (size_t)(split - text), sanitized, sizeof(sanitized)) != 0)
-    {
-        return -EINVAL;
-    }
-    *line_count = copy_tail_lines(lines,
-                                  line_roles,
-                                  *line_count,
-                                  RENDER_PREVIOUS_LINES,
-                                  RENDER_LINE_PREVIOUS,
-                                  wrapped,
-                                  build_wrapped_lines(sanitized, wrapped));
-
-    memset(wrapped, 0, sizeof(wrapped));
-    if (subtitle_text_sanitize(split + 1, sanitized, sizeof(sanitized)) != 0)
-    {
-        return -EINVAL;
-    }
-    *line_count = copy_tail_lines(lines,
-                                  line_roles,
-                                  *line_count,
-                                  RENDER_CURRENT_LINES,
-                                  RENDER_LINE_CURRENT,
-                                  wrapped,
-                                  build_wrapped_lines(sanitized, wrapped));
-
-    return 0;
+    append_line(layout, line_start, line_count, 0U);
 }
 
-static void draw_text_line(uint8_t* const dst,
-                           char const* const text,
-                           uint32_t const line,
-                           uint8_t const dimmed)
+static int build_layout(char const* const source,
+                        size_t const length,
+                        render_layout_t* const layout)
 {
-    uint32_t x = RENDER_TEXT_X;
-    uint32_t const y = RENDER_TEXT_Y + (line * RENDER_LINE_HEIGHT);
-    char const* cursor;
+    char normalized[RENDER_UTF8_MAX];
+    int status;
 
-    for (cursor = text;
-         (*cursor != '\0') && ((x + GLYPH_RENDERED_WIDTH) <= SUBTITLE_BRAM_MASK_WIDTH);
-         cursor++)
+    memset(layout, 0, sizeof(*layout));
+    status = sanitize_slice(source, length, normalized, sizeof(normalized));
+    if (status == 0)
     {
-        draw_glyph(dst, x, y, glyph_for_char(*cursor), dimmed);
-        x += GLYPH_ADVANCE;
+        status = decode_text(normalized, layout);
+    }
+    if (status == 0)
+    {
+        wrap_codepoints(layout);
+    }
+    return status;
+}
+
+static uint32_t append_tail(visible_line_t* const visible,
+                            uint32_t count,
+                            render_layout_t const* const layout,
+                            uint32_t const maximum,
+                            uint8_t const role)
+{
+    uint32_t source = (layout->line_count > maximum) ? (layout->line_count - maximum) : 0U;
+
+    while ((source < layout->line_count) && (count < RENDER_MAX_LINES))
+    {
+        visible[count].layout = layout;
+        visible[count].span = &layout->lines[source];
+        visible[count].role = role;
+        count++;
+        source++;
+    }
+    return count;
+}
+
+static uint32_t build_visible_lines(char const* const text,
+                                    render_layout_t* const previous,
+                                    render_layout_t* const current,
+                                    visible_line_t visible[RENDER_MAX_LINES])
+{
+    char const* const separator = strchr(text, '\n');
+    uint32_t count = 0U;
+
+    if (separator != NULL)
+    {
+        if (build_layout(text, (size_t)(separator - text), previous) == 0)
+        {
+            count = append_tail(visible, count, previous, RENDER_PREVIOUS_LINES, RENDER_ROLE_PREVIOUS);
+        }
+        if (build_layout(separator + 1, strlen(separator + 1), current) == 0)
+        {
+            count = append_tail(visible, count, current, RENDER_CURRENT_LINES, RENDER_ROLE_CURRENT);
+        }
+    }
+    else if (build_layout(text, strlen(text), current) == 0)
+    {
+        count = append_tail(visible, count, current, RENDER_MAX_LINES, RENDER_ROLE_CURRENT);
+    }
+    return count;
+}
+
+static ink_bounds_t measure_line(visible_line_t const* const line, uint32_t const baseline)
+{
+    ink_bounds_t bounds = {INT_MAX, INT_MIN, INT_MAX, INT_MIN};
+    uint32_t pen = 0U;
+    uint16_t index;
+    uint16_t const total = (uint16_t)(line->span->count + line->span->append_hyphen);
+
+    for (index = 0U; index < total; index++)
+    {
+        uint32_t const codepoint = (index < line->span->count)
+                                       ? line->layout->codepoints[line->span->start + index]
+                                       : (uint32_t)'-';
+        subtitle_font_glyph_t const* const glyph = subtitle_font_lookup(codepoint);
+
+        if ((glyph->bitmap != NULL) && (glyph->width != 0U) && (glyph->height != 0U))
+        {
+            int32_t const left = (int32_t)pen + glyph->x_offset;
+            int32_t const top = (int32_t)baseline + glyph->y_offset;
+            bounds.min_x = (left < bounds.min_x) ? left : bounds.min_x;
+            bounds.max_x = ((left + glyph->width - 1) > bounds.max_x) ? (left + glyph->width - 1) : bounds.max_x;
+            bounds.min_y = (top < bounds.min_y) ? top : bounds.min_y;
+            bounds.max_y = ((top + glyph->height - 1) > bounds.max_y) ? (top + glyph->height - 1) : bounds.max_y;
+        }
+        pen += glyph->advance;
+    }
+    return bounds;
+}
+
+static void measure_visible(visible_line_t const* const visible,
+                            uint32_t const line_count,
+                            render_metrics_t* const metrics)
+{
+    uint32_t line;
+
+    metrics->min_y = INT_MAX;
+    metrics->max_y = INT_MIN;
+    metrics->maximum_width = 0U;
+    for (line = 0U; line < line_count; line++)
+    {
+        uint32_t const baseline = line * subtitle_font_line_height();
+        uint32_t ink_width;
+
+        metrics->lines[line] = measure_line(&visible[line], baseline);
+        ink_width = (uint32_t)(metrics->lines[line].max_x - metrics->lines[line].min_x + 1);
+        metrics->maximum_width = (ink_width > metrics->maximum_width) ? ink_width
+                                                                      : metrics->maximum_width;
+        metrics->min_y = (metrics->lines[line].min_y < metrics->min_y)
+                             ? metrics->lines[line].min_y
+                             : metrics->min_y;
+        metrics->max_y = (metrics->lines[line].max_y > metrics->max_y)
+                             ? metrics->lines[line].max_y
+                             : metrics->max_y;
+    }
+}
+
+static void set_pixel(uint8_t* const bitmap,
+                      uint32_t const stride,
+                      uint32_t const x,
+                      uint32_t const y)
+{
+    bitmap[((size_t)y * stride) + (x / 8U)] |= (uint8_t)(1U << (7U - (x % 8U)));
+}
+
+static void draw_glyph(uint8_t* const bitmap,
+                       uint32_t const stride,
+                       uint32_t const box_width,
+                       uint32_t const box_height,
+                       subtitle_font_glyph_t const* const glyph,
+                       int32_t const x,
+                       int32_t const y,
+                       uint8_t const dimmed)
+{
+    uint32_t const glyph_stride = (glyph->width + 7U) / 8U;
+    uint32_t row;
+
+    for (row = 0U; row < glyph->height; row++)
+    {
+        uint32_t column;
+        for (column = 0U; column < glyph->width; column++)
+        {
+            int32_t const destination_x = x + (int32_t)column;
+            int32_t const destination_y = y + (int32_t)row;
+            uint8_t const source = glyph->bitmap[(row * glyph_stride) + (column / 8U)];
+
+            if ((source & (1U << (7U - (column % 8U)))) == 0U)
+            {
+                continue;
+            }
+            if ((destination_x < 0) || (destination_y < 0)
+                || ((uint32_t)destination_x >= box_width) || ((uint32_t)destination_y >= box_height))
+            {
+                continue;
+            }
+            if ((dimmed != 0U) && (((uint32_t)destination_x & 1U) != 0U)
+                && (((uint32_t)destination_y & 1U) != 0U))
+            {
+                continue;
+            }
+            set_pixel(bitmap, stride, (uint32_t)destination_x, (uint32_t)destination_y);
+        }
+    }
+}
+
+static void draw_line(uint8_t* const bitmap,
+                      uint32_t const stride,
+                      uint32_t const box_width,
+                      uint32_t const box_height,
+                      visible_line_t const* const line,
+                      int32_t pen_x,
+                      int32_t const baseline,
+                      uint8_t const dimmed)
+{
+    uint16_t index;
+    uint16_t const total = (uint16_t)(line->span->count + line->span->append_hyphen);
+
+    for (index = 0U; index < total; index++)
+    {
+        uint32_t const codepoint = (index < line->span->count)
+                                       ? line->layout->codepoints[line->span->start + index]
+                                       : (uint32_t)'-';
+        subtitle_font_glyph_t const* const glyph = subtitle_font_lookup(codepoint);
+
+        if (glyph->bitmap != NULL)
+        {
+            draw_glyph(bitmap,
+                       stride,
+                       box_width,
+                       box_height,
+                       glyph,
+                       pen_x + glyph->x_offset,
+                       baseline + glyph->y_offset,
+                       dimmed);
+        }
+        pen_x += glyph->advance;
+    }
+}
+
+static void draw_visible(uint8_t* const bitmap,
+                         uint32_t const width,
+                         uint32_t const height,
+                         visible_line_t const* const visible,
+                         uint32_t const line_count,
+                         render_metrics_t const* const metrics,
+                         uint8_t const current_is_final)
+{
+    uint32_t const stride = (width + 7U) / 8U;
+    uint32_t line;
+
+    for (line = 0U; line < line_count; line++)
+    {
+        uint32_t const ink_width = (uint32_t)(metrics->lines[line].max_x
+                                              - metrics->lines[line].min_x + 1);
+        int32_t const pen_x = (int32_t)RENDER_PADDING_X
+                              + (int32_t)((metrics->maximum_width - ink_width) / 2U)
+                              - metrics->lines[line].min_x;
+        int32_t const baseline = (int32_t)RENDER_PADDING_Y - metrics->min_y
+                                 + (int32_t)(line * subtitle_font_line_height());
+        uint8_t const dimmed = ((visible[line].role == RENDER_ROLE_CURRENT)
+                                && (current_is_final == 0U))
+                                   ? 1U
+                                   : 0U;
+
+        draw_line(bitmap, stride, width, height, &visible[line], pen_x, baseline, dimmed);
     }
 }
 
 // === Public function implementation ============================================================================== //
 
 /**
- * @brief Render text into a packed subtitle mask bitmap.
- * @param text Null-terminated text to render.
- * @param dst Destination bitmap buffer.
- * @param dst_size Destination buffer size in bytes.
- * @param width Rendered bitmap width destination.
- * @param height Rendered bitmap height destination.
+ * @brief Render plain UTF-8 subtitle text as a final caption.
+ * @param text Null-terminated subtitle text.
+ * @param dst Destination packed MSB-first 1-bpp bitmap.
+ * @param dst_size Destination capacity; must hold the complete hardware mask.
+ * @param width Rendered compact box width, including 18 px horizontal padding per side.
+ * @param height Rendered compact box height, including 10 px vertical padding per side.
  * @return 0 on success, or a negative errno-style value on failure.
  */
 int subtitle_text_renderer_render(char const* const text,
                                   uint8_t* const dst,
-                                  size_t dst_size,
+                                  size_t const dst_size,
                                   uint32_t* const width,
                                   uint32_t* const height)
 {
     return subtitle_text_renderer_render_caption(text, 1U, dst, dst_size, width, height);
 }
 
+/**
+ * @brief Render a final/partial broadcast caption using proportional Lato Semibold glyphs.
+ *
+ * A caption pair reserves one line for the previous final segment and up to two lines for
+ * the current segment. Partial current text is dithered; previous and final text remain solid.
+ * The returned bitmap is tightly packed to a black box with 18 px horizontal and 10 px vertical
+ * padding, and never exceeds the 1024x256 hardware mask.
+ * @param text Null-terminated UTF-8 text; the first newline separates previous and current text.
+ * @param current_is_final Nonzero renders the current segment solid.
+ * @param dst Destination packed MSB-first 1-bpp bitmap.
+ * @param dst_size Destination capacity; must hold the complete hardware mask.
+ * @param width Rendered compact box width in pixels.
+ * @param height Rendered compact box height in pixels.
+ * @return 0 on success, or a negative errno-style value on failure.
+ */
 int subtitle_text_renderer_render_caption(char const* const text,
                                           uint8_t const current_is_final,
                                           uint8_t* const dst,
-                                          size_t dst_size,
+                                          size_t const dst_size,
                                           uint32_t* const width,
                                           uint32_t* const height)
 {
-    char lines[RENDER_MAX_LINES][RENDER_GLYPHS_PER_LINE + 1U] = {{0}};
-    uint8_t line_roles[RENDER_MAX_LINES] = {0};
+    render_layout_t previous;
+    render_layout_t current;
+    visible_line_t visible[RENDER_MAX_LINES];
+    render_metrics_t metrics;
     uint32_t line_count;
-    uint32_t visible_line;
 
     if ((text == NULL) || (dst == NULL) || (width == NULL) || (height == NULL)
         || (dst_size < RENDER_BITMAP_SIZE))
@@ -496,23 +582,22 @@ int subtitle_text_renderer_render_caption(char const* const text,
         return -EINVAL;
     }
 
-    if (build_visible_lines(text, lines, line_roles, &line_count) != 0)
+    line_count = build_visible_lines(text, &previous, &current, visible);
+    if (line_count == 0U)
+    {
+        return -EINVAL;
+    }
+
+    measure_visible(visible, line_count, &metrics);
+    *width = metrics.maximum_width + (2U * RENDER_PADDING_X);
+    *height = (uint32_t)(metrics.max_y - metrics.min_y + 1) + (2U * RENDER_PADDING_Y);
+    if ((*width > SUBTITLE_BRAM_MASK_WIDTH) || (*height > SUBTITLE_BRAM_MASK_HEIGHT))
     {
         return -EINVAL;
     }
 
     memset(dst, 0, dst_size);
-
-    for (visible_line = 0U; visible_line < line_count; visible_line++)
-    {
-        uint8_t const dimmed =
-            ((current_is_final == 0U) && (line_roles[visible_line] == RENDER_LINE_CURRENT)) ? 1U
-                                                                                            : 0U;
-        draw_text_line(dst, lines[visible_line], visible_line, dimmed);
-    }
-
-    *width = SUBTITLE_BRAM_MASK_WIDTH;
-    *height = SUBTITLE_BRAM_MASK_HEIGHT;
+    draw_visible(dst, *width, *height, visible, line_count, &metrics, current_is_final);
     return 0;
 }
 

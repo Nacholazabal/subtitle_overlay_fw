@@ -189,9 +189,6 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
 
         me->active_video_width = e->width;
         me->active_video_height = e->height;
-        // Request subtitle init only once, and only when usb-audio is also
-        // ready; the subtitle_init_requested guard makes a duplicate video-ready
-        // event idempotent.
         if ((me->usb_audio_ready != 0U) && (me->subtitle_init_requested == 0U))
         {
             LOG_INFO("system: requesting subtitle init for %lux%lu",

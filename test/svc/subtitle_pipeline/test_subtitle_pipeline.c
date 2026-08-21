@@ -37,8 +37,8 @@ static int renderer_caption_stub(char const* text,
     (void)call_count;
 
     captured_caption_is_final = current_is_final;
-    *width = SUBTITLE_BRAM_MASK_WIDTH;
-    *height = SUBTITLE_BRAM_MASK_HEIGHT;
+    *width = 640U;
+    *height = 50U;
     return 0;
 }
 
@@ -203,13 +203,73 @@ void test_subtitle_pipeline_write_bitmap_requires_initialized_pipeline_and_deleg
         subtitle_pipeline_write_bitmap(&pipeline, bitmap, sizeof(bitmap), 1, 2, 3, 4));
 }
 
+void test_subtitle_pipeline_set_box_centers_compact_geometry_above_bottom_margin(void)
+{
+    pipeline.initialized = 1U;
+    pipeline.display_width = 1280U;
+    pipeline.display_height = 720U;
+    pipeline.config.bar_color = SUBTITLE_PIPELINE_DEFAULT_BAR_COLOR;
+    pipeline.config.text_color = SUBTITLE_PIPELINE_DEFAULT_TEXT_COLOR;
+    subtitle_overlay_configure_ExpectAnyArgsAndReturn(0);
+
+    TEST_ASSERT_EQUAL_INT(0, subtitle_pipeline_set_box(&pipeline, 640U, 50U));
+
+    TEST_ASSERT_EQUAL_UINT32(640U, pipeline.config.width);
+    TEST_ASSERT_EQUAL_UINT32(50U, pipeline.config.height);
+    TEST_ASSERT_EQUAL_UINT32(320U, pipeline.config.x);
+    TEST_ASSERT_EQUAL_UINT32(634U, pipeline.config.y);
+    TEST_ASSERT_EQUAL_UINT32(SUBTITLE_PIPELINE_DEFAULT_BAR_COLOR, pipeline.config.bar_color);
+    TEST_ASSERT_EQUAL_UINT32(SUBTITLE_PIPELINE_DEFAULT_TEXT_COLOR, pipeline.config.text_color);
+}
+
+void test_subtitle_pipeline_set_box_rejects_invalid_geometry(void)
+{
+    TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_pipeline_set_box(NULL, 100U, 40U));
+    TEST_ASSERT_EQUAL_INT(-APP_ESTATE, subtitle_pipeline_set_box(&pipeline, 100U, 40U));
+
+    pipeline.initialized = 1U;
+    pipeline.display_width = 1280U;
+    pipeline.display_height = 720U;
+    TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_pipeline_set_box(&pipeline, 0U, 40U));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_pipeline_set_box(&pipeline, 100U, 0U));
+    TEST_ASSERT_EQUAL_INT(
+        -EINVAL, subtitle_pipeline_set_box(&pipeline, SUBTITLE_BRAM_MASK_WIDTH + 1U, 40U));
+    TEST_ASSERT_EQUAL_INT(
+        -EINVAL, subtitle_pipeline_set_box(&pipeline, 100U, SUBTITLE_BRAM_MASK_HEIGHT + 1U));
+}
+
+void test_subtitle_pipeline_set_box_preserves_configuration_on_hal_failure(void)
+{
+    subtitle_overlay_config_t const previous = {
+        .x = 128U,
+        .y = 428U,
+        .width = 1024U,
+        .height = 256U,
+        .bar_color = SUBTITLE_PIPELINE_DEFAULT_BAR_COLOR,
+        .text_color = SUBTITLE_PIPELINE_DEFAULT_TEXT_COLOR,
+    };
+
+    pipeline.initialized = 1U;
+    pipeline.display_width = 1280U;
+    pipeline.display_height = 720U;
+    pipeline.config = previous;
+    subtitle_overlay_configure_ExpectAnyArgsAndReturn(-EIO);
+
+    TEST_ASSERT_EQUAL_INT(-EIO, subtitle_pipeline_set_box(&pipeline, 640U, 50U));
+    TEST_ASSERT_EQUAL_MEMORY(&previous, &pipeline.config, sizeof(previous));
+}
+
 void test_subtitle_pipeline_write_caption_passes_current_final_state_to_renderer(void)
 {
     TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_pipeline_write_caption(NULL, "hola", 0U));
     TEST_ASSERT_EQUAL_INT(-APP_ESTATE, subtitle_pipeline_write_caption(&pipeline, "hola", 0U));
 
     pipeline.initialized = 1U;
+    pipeline.display_width = 1280U;
+    pipeline.display_height = 720U;
     subtitle_text_renderer_render_caption_Stub(renderer_caption_stub);
+    subtitle_overlay_configure_ExpectAnyArgsAndReturn(0);
+    subtitle_bram_clear_ExpectAnyArgsAndReturn(0);
     subtitle_bram_write_bitmap_ExpectAnyArgsAndReturn(0);
 
     TEST_ASSERT_EQUAL_INT(0, subtitle_pipeline_write_caption(&pipeline, "hola", 0U));
@@ -219,7 +279,11 @@ void test_subtitle_pipeline_write_caption_passes_current_final_state_to_renderer
 void test_subtitle_pipeline_write_text_treats_text_as_final_caption(void)
 {
     pipeline.initialized = 1U;
+    pipeline.display_width = 1280U;
+    pipeline.display_height = 720U;
     subtitle_text_renderer_render_caption_Stub(renderer_caption_stub);
+    subtitle_overlay_configure_ExpectAnyArgsAndReturn(0);
+    subtitle_bram_clear_ExpectAnyArgsAndReturn(0);
     subtitle_bram_write_bitmap_ExpectAnyArgsAndReturn(0);
 
     TEST_ASSERT_EQUAL_INT(0, subtitle_pipeline_write_text(&pipeline, "manual"));
