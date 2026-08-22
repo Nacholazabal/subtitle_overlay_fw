@@ -127,7 +127,10 @@ static int on_component_init(usb_audio_ao_t* const me)
 
     usb_audio_stream_default_config(&config);
     // STT owns the bounded queue and WebSocket worker; USB owns ALSA only.
-    LOG_INFO("usb-audio: starting capture device=%s", config.pcm_device);
+    LOG_INFO("usb-audio: starting capture=%s optical=%s playback=%s",
+             config.pcm_device,
+             (config.passthrough_enabled != 0U) ? "on" : "off",
+             config.playback_pcm_device);
 
     status = usb_audio_stream_start(&me->stream, &config);
     if (status == 0)

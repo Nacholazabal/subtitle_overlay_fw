@@ -12,6 +12,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 USB_AUDIO_PCM_DEVICE="${USB_AUDIO_PCM_DEVICE:-hw:0,0}"
+USB_AUDIO_PLAYBACK_PCM_DEVICE="${USB_AUDIO_PLAYBACK_PCM_DEVICE:-${USB_AUDIO_PCM_DEVICE}}"
+SUBTITLE_USB_AUDIO_PASSTHROUGH_ENABLE="${SUBTITLE_USB_AUDIO_PASSTHROUGH_ENABLE:-1}"
+SUBTITLE_USB_AUDIO_PLAYBACK_VOL_PCT="${SUBTITLE_USB_AUDIO_PLAYBACK_VOL_PCT:-100}"
 
 # Streaming STT endpoint. No default is compiled into the firmware: an
 # unconfigured board must stay down and say so rather than dial somewhere.
@@ -55,7 +58,10 @@ Options:
 
 Environment:
   SUBTITLE_STT_WS_URL   Streaming STT endpoint (default: the reserved ngrok domain)
-  USB_AUDIO_PCM_DEVICE  ALSA capture device (default: hw:0,0)
+  USB_AUDIO_PCM_DEVICE                 ALSA capture device (default: hw:0,0)
+  USB_AUDIO_PLAYBACK_PCM_DEVICE        ALSA optical playback device (default: capture device)
+  SUBTITLE_USB_AUDIO_PASSTHROUGH_ENABLE  1 enables optical output; 0 disables it
+  SUBTITLE_USB_AUDIO_PLAYBACK_VOL_PCT    PCM playback level, 0..100 (default: 100)
   BOARD_HOST             SSH host alias shown in messages (default: hdmi-overlay)
   BOARD_SSH_TARGET       SSH/SCP destination (default: BOARD_HOST)
 EOF
@@ -131,6 +137,9 @@ scp -O "${BOARD_SSH_OPTS[@]}" "${LOCAL_BINARY}" "${BOARD_SSH_TARGET}:${BOARD_DEP
 # Environment shared by every launch mode.
 ENV_ASSIGNMENTS=(
     "USB_AUDIO_PCM_DEVICE=$(shell_quote "${USB_AUDIO_PCM_DEVICE}")"
+    "USB_AUDIO_PLAYBACK_PCM_DEVICE=$(shell_quote "${USB_AUDIO_PLAYBACK_PCM_DEVICE}")"
+    "SUBTITLE_USB_AUDIO_PASSTHROUGH_ENABLE=$(shell_quote "${SUBTITLE_USB_AUDIO_PASSTHROUGH_ENABLE}")"
+    "SUBTITLE_USB_AUDIO_PLAYBACK_VOL_PCT=$(shell_quote "${SUBTITLE_USB_AUDIO_PLAYBACK_VOL_PCT}")"
     "SUBTITLE_STT_WS_URL=$(shell_quote "${SUBTITLE_STT_WS_URL}")"
     "SUBTITLE_STT_WS_CA_FILE=$(shell_quote "${SUBTITLE_STT_WS_CA_FILE}")"
     "SUBTITLE_STT_NEMOTRON_LATENCY_MS=$(shell_quote "${SUBTITLE_STT_NEMOTRON_LATENCY_MS}")"

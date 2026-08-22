@@ -142,6 +142,20 @@ La URL se guarda en `/etc/default/subtitle-overlay`; el valor predeterminado es:
 wss://passage-capacity-wistful.ngrok-free.dev/stt/stream
 ```
 
+El mismo archivo habilita por defecto el passthrough de la entrada USB hacia
+la salida óptica de la interfaz de audio. `scripts/run.sh -s` instala estos
+valores junto con el endpoint:
+
+```text
+USB_AUDIO_PCM_DEVICE=hw:0,0
+USB_AUDIO_PLAYBACK_PCM_DEVICE=hw:0,0
+SUBTITLE_USB_AUDIO_PASSTHROUGH_ENABLE=1
+SUBTITLE_USB_AUDIO_PLAYBACK_VOL_PCT=100
+```
+
+La arquitectura y el comportamiento ante errores se describen en
+[Passthrough de audio por salida óptica](optical_audio_passthrough.md).
+
 ## Qué observar
 
 Los estados esperados son: DHCP con ruta por defecto, hora válida, arranque del
