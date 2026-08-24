@@ -232,3 +232,36 @@ void test_stt_transcript_parse_line_rejects_malformed_and_too_deep_containers(vo
     TEST_ASSERT_EQUAL_INT(-EINVAL, stt_transcript_parse_line(trailing_comma, &event));
     TEST_ASSERT_EQUAL_INT(-EINVAL, stt_transcript_parse_line(too_deep, &event));
 }
+
+void test_stt_transcript_parse_line_rejects_null_arguments(void)
+{
+    char const* const line = "{\"text\":\"hola\"}";
+
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_transcript_parse_line(NULL, &event));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_transcript_parse_line(line, NULL));
+}
+
+void test_stt_transcript_parse_line_rejects_non_object_payload(void)
+{
+    // A bare array or scalar is not a transcript event.
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_transcript_parse_line("[1,2]", &event));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_transcript_parse_line("42", &event));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_transcript_parse_line("", &event));
+}
+
+void test_stt_transcript_parse_line_accepts_empty_object(void)
+{
+    // No fields at all: the object closes immediately and the required-field
+    // check is what rejects it, not the scanner.
+    TEST_ASSERT_NOT_EQUAL(0, stt_transcript_parse_line("{}", &event));
+}
+
+void test_stt_transcript_parse_line_rejects_key_without_colon(void)
+{
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_transcript_parse_line("{\"text\" \"hola\"}", &event));
+}
+
+void test_stt_transcript_parse_line_rejects_non_string_key(void)
+{
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_transcript_parse_line("{5:\"hola\"}", &event));
+}

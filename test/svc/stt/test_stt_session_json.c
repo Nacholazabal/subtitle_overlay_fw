@@ -252,3 +252,88 @@ void test_stt_session_error_rejects_other_messages(void)
                           stt_session_json_parse_error("{\"type\":\"pong\"}", &error));
     TEST_ASSERT_EQUAL_INT(-EINVAL, stt_session_json_parse_error(NULL, &error));
 }
+
+void test_stt_session_json_build_start_reports_enobufs_at_every_truncation_point(void)
+{
+    // Walk every buffer size below the full message. Each must fail cleanly with
+    // -ENOBUFS and must never write past the capacity it was given, which is
+    // what protects the caller's stack frame on a short send buffer.
+    stt_session_start_t start = board_start();
+    char scratch[1024];
+    int full_length;
+    int size;
+
+    start.latency_ms = 560U;
+    start.stop_history_eou_ms = 600U;
+    start.residue_tokens_at_end = 3U;
+    snprintf(start.target_lang, sizeof(start.target_lang), "%s", "es-ES");
+
+    full_length = stt_session_json_build_start(out, sizeof(out), &start);
+    TEST_ASSERT_GREATER_THAN_INT(0, full_length);
+
+    for (size = 1; size < full_length; size++)
+    {
+        memset(scratch, 0x7FU, sizeof(scratch));
+        TEST_ASSERT_EQUAL_INT(-ENOBUFS,
+                              stt_session_json_build_start(scratch, (size_t)size, &start));
+        // The guard byte just past the advertised capacity is untouched.
+        TEST_ASSERT_EQUAL_HEX8(0x7FU, (unsigned char)scratch[size]);
+    }
+
+    // The exact full length still succeeds.
+    TEST_ASSERT_EQUAL_INT(full_length,
+                          stt_session_json_build_start(scratch, (size_t)full_length + 1U, &start));
+}
+
+void test_stt_session_json_build_start_reports_enobufs_without_backend_config(void)
+{
+    // Same truncation sweep for the minimal message, which takes the shorter
+    // code path that never opens a backend_config object.
+    stt_session_start_t start = board_start();
+    char scratch[512];
+    int full_length;
+    int size;
+
+    full_length = stt_session_json_build_start(out, sizeof(out), &start);
+    TEST_ASSERT_GREATER_THAN_INT(0, full_length);
+
+    for (size = 1; size < full_length; size++)
+    {
+        memset(scratch, 0x7FU, sizeof(scratch));
+        TEST_ASSERT_EQUAL_INT(-ENOBUFS,
+                              stt_session_json_build_start(scratch, (size_t)size, &start));
+        TEST_ASSERT_EQUAL_HEX8(0x7FU, (unsigned char)scratch[size]);
+    }
+}
+
+void test_stt_session_json_parsers_reject_null_arguments(void)
+{
+    char const* const ready_json = "{\"type\":\"ready\",\"version\":1}";
+    char const* const error_json = "{\"type\":\"error\",\"code\":\"bad\"}";
+
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_session_json_parse_ready(NULL, &ready));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_session_json_parse_ready(ready_json, NULL));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_session_json_parse_error(NULL, &error));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_session_json_parse_error(error_json, NULL));
+}
+
+void test_stt_session_json_parsers_reject_key_without_colon(void)
+{
+    TEST_ASSERT_EQUAL_INT(-EPROTO, stt_session_json_parse_ready("{\"version\" 1}", &ready));
+    TEST_ASSERT_EQUAL_INT(-EPROTO, stt_session_json_parse_error("{\"message\" \"x\"}", &error));
+}
+
+void test_stt_session_json_parse_error_truncates_an_overlong_message(void)
+{
+    // A long server message must be clamped into the fixed field instead of
+    // overrunning it; the span-capture path is what performs the clamp.
+    char json[1024];
+    char long_message[600];
+
+    memset(long_message, 'x', sizeof(long_message) - 1U);
+    long_message[sizeof(long_message) - 1U] = '\0';
+    snprintf(json, sizeof(json), "{\"type\":\"error\",\"message\":\"%s\"}", long_message);
+
+    TEST_ASSERT_EQUAL_INT(0, stt_session_json_parse_error(json, &error));
+    TEST_ASSERT_LESS_THAN_size_t(sizeof(error.message), strlen(error.message));
+}

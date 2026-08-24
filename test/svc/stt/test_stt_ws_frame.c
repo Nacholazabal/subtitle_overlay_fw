@@ -362,3 +362,88 @@ void test_stt_ws_frame_decode_rejects_null_arguments(void)
     TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_frame_decode(NULL, 4U, 8192U, &frame));
     TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_frame_decode(frame_buffer, 4U, 8192U, NULL));
 }
+
+void test_stt_ws_frame_decode_needs_the_whole_16bit_length_field(void)
+{
+    // Header announces a 2-byte extended length but only one of them arrived.
+    uint8_t const partial[3] = {0x82U, 126U, 0x01U};
+    stt_ws_frame_t frame;
+
+    TEST_ASSERT_EQUAL_INT(-EAGAIN, stt_ws_frame_decode(partial, sizeof(partial), 8192U, &frame));
+}
+
+void test_stt_ws_frame_decode_needs_the_whole_64bit_length_field(void)
+{
+    // Header announces an 8-byte extended length but only three arrived.
+    uint8_t const partial[5] = {0x82U, 127U, 0U, 0U, 0U};
+    stt_ws_frame_t frame;
+
+    TEST_ASSERT_EQUAL_INT(-EAGAIN, stt_ws_frame_decode(partial, sizeof(partial), 8192U, &frame));
+}
+
+void test_stt_ws_frame_decode_reads_a_64bit_length_field(void)
+{
+    // 8-byte length field holding 200; the decoder must assemble all 8 bytes
+    // big-endian rather than reading only the low word.
+    stt_ws_frame_t frame;
+    size_t const payload_len = 200U;
+    unsigned int i;
+
+    frame_buffer[0] = 0x82U; // FIN + binary
+    frame_buffer[1] = 127U;  // 64-bit extended length
+    for (i = 0U; i < 8U; i++)
+    {
+        frame_buffer[2U + i] = (uint8_t)((uint64_t)payload_len >> (56U - (i * 8U)));
+    }
+    memset(&frame_buffer[10], 0xCD, payload_len);
+
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_frame_decode(frame_buffer, 10U + payload_len, 8192U, &frame));
+    TEST_ASSERT_EQUAL_size_t(payload_len, frame.payload_len);
+    TEST_ASSERT_EQUAL_UINT8(0xCDU, frame.payload[0]);
+    TEST_ASSERT_EQUAL_UINT8(0xCDU, frame.payload[payload_len - 1U]);
+}
+
+void test_stt_ws_frame_decode_rejects_64bit_length_with_high_bit_set(void)
+{
+    // RFC 6455 §5.2: the most significant bit of a 64-bit length must be 0.
+    uint8_t const frame_bytes[10] = {0x82U, 127U, 0x80U, 0U, 0U, 0U, 0U, 0U, 0U, 0U};
+    stt_ws_frame_t frame;
+
+    TEST_ASSERT_EQUAL_INT(-EPROTO,
+                          stt_ws_frame_decode(frame_bytes, sizeof(frame_bytes), 8192U, &frame));
+}
+
+void test_stt_ws_handshake_accept_for_key_rejects_null_arguments(void)
+{
+    TEST_ASSERT_EQUAL_INT(-EINVAL,
+                          stt_ws_handshake_accept_for_key(NULL, accept, sizeof(accept)));
+    TEST_ASSERT_EQUAL_INT(-EINVAL,
+                          stt_ws_handshake_accept_for_key(RFC_KEY, NULL, sizeof(accept)));
+}
+
+void test_stt_ws_handshake_validate_response_rejects_null_arguments(void)
+{
+    char const response[] = "HTTP/1.1 101 Switching Protocols\r\n\r\n";
+    size_t header_len = 0U;
+
+    TEST_ASSERT_EQUAL_INT(
+        -EINVAL,
+        stt_ws_handshake_validate_response(NULL, strlen(response), RFC_ACCEPT, &header_len));
+    TEST_ASSERT_EQUAL_INT(
+        -EINVAL,
+        stt_ws_handshake_validate_response(response, strlen(response), NULL, &header_len));
+    TEST_ASSERT_EQUAL_INT(
+        -EINVAL,
+        stt_ws_handshake_validate_response(response, strlen(response), RFC_ACCEPT, NULL));
+}
+
+void test_stt_ws_handshake_rejects_status_line_shorter_than_the_prefix(void)
+{
+    // Too short to hold "HTTP/1.x 101", so it can never be a valid upgrade.
+    char const response[] = "HTTP/\r\n\r\n";
+    size_t header_len = 0U;
+
+    TEST_ASSERT_EQUAL_INT(-EPROTO,
+                          stt_ws_handshake_validate_response(response, strlen(response),
+                                                             RFC_ACCEPT, &header_len));
+}

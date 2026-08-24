@@ -79,6 +79,48 @@ void test_log_threshold_and_unsubscribe_control_delivery(void)
     TEST_ASSERT_EQUAL_UINT32(1U, callback_count);
 }
 
+void test_log_subscribe_twice_updates_threshold_without_consuming_a_slot(void)
+{
+    expected_thread_tag = 'A';
+
+    // First subscription filters everything below WARNING.
+    TEST_ASSERT_EQUAL_INT(LOG_ERROR_NONE, log_subscribe(capture_log, LOG_LEVEL_WARNING));
+    log_message(LOG_LEVEL_INFO, "thread-A-hidden");
+    TEST_ASSERT_EQUAL_UINT32(0U, callback_count);
+
+    // Re-subscribing the same function lowers the threshold in place; with
+    // LOG_MAX_SUBSCRIBERS == 1 this only works if no second slot is consumed.
+    TEST_ASSERT_EQUAL_INT(LOG_ERROR_NONE, log_subscribe(capture_log, LOG_LEVEL_TRACE));
+    log_message(LOG_LEVEL_INFO, "thread-A-visible");
+    TEST_ASSERT_EQUAL_UINT32(1U, callback_count);
+    TEST_ASSERT_EQUAL_UINT32(0U, mismatched_count);
+}
+
+void test_log_message_ignores_null_format(void)
+{
+    expected_thread_tag = 'A';
+    TEST_ASSERT_EQUAL_INT(LOG_ERROR_NONE, log_subscribe(capture_log, LOG_LEVEL_TRACE));
+
+    log_message(LOG_LEVEL_ERROR, NULL);
+
+    TEST_ASSERT_EQUAL_UINT32(0U, callback_count);
+}
+
+void test_log_level_to_str_maps_every_level(void)
+{
+    TEST_ASSERT_EQUAL_STRING("TRC", log_level_to_str(LOG_LEVEL_TRACE));
+    TEST_ASSERT_EQUAL_STRING("DBG", log_level_to_str(LOG_LEVEL_DEBUG));
+    TEST_ASSERT_EQUAL_STRING("INF", log_level_to_str(LOG_LEVEL_INFO));
+    TEST_ASSERT_EQUAL_STRING("WRN", log_level_to_str(LOG_LEVEL_WARNING));
+    TEST_ASSERT_EQUAL_STRING("ERR", log_level_to_str(LOG_LEVEL_ERROR));
+}
+
+void test_log_level_to_str_reports_unknown_for_out_of_range_level(void)
+{
+    TEST_ASSERT_EQUAL_STRING("UNK", log_level_to_str((log_level_e)(LOG_LEVEL_ERROR + 1)));
+    TEST_ASSERT_EQUAL_STRING("UNK", log_level_to_str((log_level_e)(LOG_LEVEL_TRACE - 1)));
+}
+
 void test_log_message_uses_independent_buffers_across_threads(void)
 {
     pthread_t first;

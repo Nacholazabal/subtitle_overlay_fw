@@ -362,3 +362,50 @@ void test_subtitle_pipeline_enable_rejects_uninitialized_or_returns_hal_failure(
     TEST_ASSERT_EQUAL_INT(-EIO, subtitle_pipeline_enable(&pipeline, 1));
     TEST_ASSERT_EQUAL_UINT8(0U, pipeline.enabled);
 }
+
+void test_subtitle_pipeline_write_caption_propagates_renderer_failure(void)
+{
+    pipeline.initialized = 1U;
+
+    // A renderer failure aborts before any BRAM/overlay geometry work.
+    subtitle_text_renderer_render_caption_ExpectAnyArgsAndReturn(-EINVAL);
+
+    TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_pipeline_write_caption(&pipeline, "hola", 1U));
+}
+
+void test_subtitle_pipeline_sof_helpers_reject_null_and_uninitialized(void)
+{
+    uint8_t sof_seen = 0U;
+    subtitle_pipeline_t uninitialized;
+
+    memset(&uninitialized, 0, sizeof(uninitialized));
+
+    TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_pipeline_clear_sof(NULL));
+    TEST_ASSERT_EQUAL_INT(-APP_ESTATE, subtitle_pipeline_clear_sof(&uninitialized));
+
+    TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_pipeline_poll_sof(NULL, &sof_seen));
+    TEST_ASSERT_EQUAL_INT(-APP_ESTATE, subtitle_pipeline_poll_sof(&uninitialized, &sof_seen));
+}
+
+void test_subtitle_pipeline_poll_sof_rejects_null_output(void)
+{
+    pipeline.initialized = 1U;
+
+    TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_pipeline_poll_sof(&pipeline, NULL));
+}
+
+void test_subtitle_pipeline_poll_sof_reports_cleared_flag_and_hal_errors(void)
+{
+    uint8_t sof_seen = 1U;
+    uint32_t control = 0U;
+
+    pipeline.initialized = 1U;
+
+    subtitle_overlay_read_control_ExpectAnyArgsAndReturn(0);
+    subtitle_overlay_read_control_ReturnThruPtr_control(&control);
+    TEST_ASSERT_EQUAL_INT(0, subtitle_pipeline_poll_sof(&pipeline, &sof_seen));
+    TEST_ASSERT_EQUAL_UINT8(0U, sof_seen);
+
+    subtitle_overlay_read_control_ExpectAnyArgsAndReturn(-EIO);
+    TEST_ASSERT_EQUAL_INT(-EIO, subtitle_pipeline_poll_sof(&pipeline, &sof_seen));
+}

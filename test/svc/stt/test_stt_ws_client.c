@@ -787,3 +787,85 @@ void test_stt_ws_client_ignores_a_continuation_without_a_start(void)
     stt_ws_client_stats(&client, &stats);
     TEST_ASSERT_EQUAL_UINT32(1U, stats.protocol_errors);
 }
+
+void test_stt_ws_client_handles_summary_pong_and_unknown_message_kinds(void)
+{
+    uint32_t const protocol_errors_before = client.stats.protocol_errors;
+
+    bring_session_up();
+
+    // A session summary and an unsolicited pong are both accepted silently and
+    // must not be counted as protocol errors.
+    fake_net_tls_push_text("{\"type\":\"session_summary\",\"total_audio_sec\":12.5}");
+    fake_net_tls_push_text("{\"type\":\"pong\"}");
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_service(&client));
+    TEST_ASSERT_EQUAL_UINT32(protocol_errors_before, client.stats.protocol_errors);
+    TEST_ASSERT_EQUAL_INT(STT_WS_STATE_READY, stt_ws_client_state(&client));
+
+    // A message kind the firmware does not know is counted, not fatal.
+    fake_net_tls_push_text("{\"type\":\"some_future_message\"}");
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_service(&client));
+    TEST_ASSERT_EQUAL_UINT32(protocol_errors_before + 1U, client.stats.protocol_errors);
+    TEST_ASSERT_EQUAL_INT(STT_WS_STATE_READY, stt_ws_client_state(&client));
+}
+
+void test_stt_ws_client_evicts_the_oldest_event_when_the_ring_overflows(void)
+{
+    uint32_t i;
+    uint32_t delivered;
+
+    bring_session_up();
+
+    // Push one more transcript than the ring can hold. The oldest must be
+    // evicted so the freshest subtitles survive, since a stale caption is worse
+    // than a missing one for a live viewer.
+    for (i = 0U; i <= STT_WS_EVENT_RING_DEPTH; i++)
+    {
+        char line[256];
+
+        snprintf(line, sizeof(line),
+                 "{\"type\":\"transcript\",\"seq\":%lu,\"is_final\":true,"
+                 "\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"t%lu\"}",
+                 (unsigned long)i, (unsigned long)i);
+        fake_net_tls_push_text(line);
+    }
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_service(&client));
+
+    TEST_ASSERT_GREATER_THAN_UINT32(0U, client.stats.events_dropped_ring);
+    TEST_ASSERT_EQUAL_UINT8(STT_WS_EVENT_RING_DEPTH, client.ring_count);
+
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_WS_EVENT_RING_DEPTH,
+                                                       &delivered));
+    TEST_ASSERT_EQUAL_UINT32(STT_WS_EVENT_RING_DEPTH, delivered);
+    // seq 0 was evicted, so the window now starts at 1 and ends at the newest.
+    TEST_ASSERT_EQUAL_STRING("t1", events[0].text);
+    TEST_ASSERT_EQUAL_STRING("t8", events[STT_WS_EVENT_RING_DEPTH - 1U].text);
+}
+
+void test_stt_ws_client_discards_a_message_larger_than_its_reassembly_buffer(void)
+{
+    // A server line longer than STT_WS_LINE_MAX must be dropped as a protocol
+    // error rather than overflowing the reassembly buffer.
+    char oversized[STT_WS_LINE_MAX + 256U];
+    uint32_t protocol_errors_before;
+    uint32_t delivered = 0U;
+
+    bring_session_up();
+    protocol_errors_before = client.stats.protocol_errors;
+
+    memset(oversized, 'x', sizeof(oversized) - 1U);
+    oversized[sizeof(oversized) - 1U] = '\0';
+    fake_net_tls_push_text(oversized);
+
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_service(&client));
+    TEST_ASSERT_EQUAL_UINT32(protocol_errors_before + 1U, client.stats.protocol_errors);
+    TEST_ASSERT_EQUAL_UINT8(0U, client.msg_active);
+    TEST_ASSERT_EQUAL_INT(STT_WS_STATE_READY, stt_ws_client_state(&client));
+    // Nothing was forwarded to the subtitle path.
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, 4U, &delivered));
+    TEST_ASSERT_EQUAL_UINT32(0U, delivered);
+}
+
+// NOTE: the audio_pop() drain path is reachable only from worker_main(), the
+// real pthread loop, so it is not covered here. It belongs with the threaded
+// usb_audio_stream work rather than with these synchronous service tests.
