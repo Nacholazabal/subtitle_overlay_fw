@@ -65,6 +65,7 @@ typedef struct
     uint32_t total_dropped;
     int32_t fatal_error;
     uint8_t stop_requested;
+    uint8_t worker_done; ///< Set by the capture thread just before it returns.
     uint8_t running;
     uint8_t state_initialized;
 } usb_audio_stream_t;
@@ -83,8 +84,23 @@ int usb_audio_stream_start(usb_audio_stream_t* stream, usb_audio_stream_config_t
 /// @brief Return 0 while workers are healthy, their fatal error, or -APP_ESTATE when not running.
 int usb_audio_stream_get_status(usb_audio_stream_t* stream);
 
-/// @brief Request capture shutdown, join its thread, and release ALSA resources.
-void usb_audio_stream_stop(usb_audio_stream_t* stream);
+/* Shutdown is request/observe/join so a QP/C state handler never blocks on it. */
+
+/// @brief Ask the capture worker to stop and unblock it. Always nonblocking.
+void usb_audio_stream_request_stop(usb_audio_stream_t* stream);
+
+/// @brief Return nonzero once the capture worker has left its loop and can be joined.
+uint8_t usb_audio_stream_stop_complete(usb_audio_stream_t* stream);
+
+/**
+ * @brief Join the stopped worker and release ALSA resources.
+ *
+ * Call once ::usb_audio_stream_stop_complete reports completion; the join is then
+ * immediate.
+ * @param stream Stream service instance.
+ * @return 0 when joined or nothing to join, or -EAGAIN while the worker is live.
+ */
+int usb_audio_stream_finish_stop(usb_audio_stream_t* stream);
 
 // === End of documentation ======================================================================================== //
 

@@ -250,12 +250,17 @@ static uint8_t client_stop_requested(stt_ws_client_t* const client)
     return requested;
 }
 
-/** @brief Sleep until audio/stop arrives, bounded so reconnect timers progress. */
+/**
+ * @brief Sleep until audio/stop arrives, bounded so reconnect timers progress.
+ *
+ * Monotonic, matching the condvar's clock: this board boots with an unset clock,
+ * so an NTP step must not stretch or skip the wait.
+ */
 static void worker_wait(stt_ws_client_t* const client, uint32_t const timeout_ms)
 {
     struct timespec deadline;
 
-    if (clock_gettime(CLOCK_REALTIME, &deadline) != 0)
+    if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0)
     {
         return;
     }
@@ -1088,10 +1093,29 @@ int stt_ws_client_init(stt_ws_client_t* const client, stt_ws_client_config_t con
     {
         return -EIO;
     }
-    if (pthread_cond_init(&client->worker_cond, NULL) != 0)
     {
-        (void)pthread_mutex_destroy(&client->lock);
-        return -EIO;
+        // Monotonic so an NTP step cannot disturb worker_wait().
+        pthread_condattr_t cond_attr;
+        int cond_status;
+
+        if (pthread_condattr_init(&cond_attr) != 0)
+        {
+            (void)pthread_mutex_destroy(&client->lock);
+            return -EIO;
+        }
+        if (pthread_condattr_setclock(&cond_attr, CLOCK_MONOTONIC) != 0)
+        {
+            (void)pthread_condattr_destroy(&cond_attr);
+            (void)pthread_mutex_destroy(&client->lock);
+            return -EIO;
+        }
+        cond_status = pthread_cond_init(&client->worker_cond, &cond_attr);
+        (void)pthread_condattr_destroy(&cond_attr);
+        if (cond_status != 0)
+        {
+            (void)pthread_mutex_destroy(&client->lock);
+            return -EIO;
+        }
     }
     client->session_generation = 1U;
     client->last_event_generation = 1U;

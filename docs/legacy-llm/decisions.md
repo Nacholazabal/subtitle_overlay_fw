@@ -34,6 +34,39 @@ owner releases it. This stops one service's cleanup from pulling the mapping out
 from under another. A failed init releases its reference so it never leaves a
 dangling one.
 
+### SRC-C03 — asynchronous worker shutdown; nothing blocks the QP/C thread
+The runtime rests on one invariant: **no operation that can block runs on the
+QP/C thread.** Three call sites broke it (ARCH-01,
+`docs/arch_tickets/ARCH-01-concurrency-invariants.md`).
+
+- **`USBAudioAO` joined its capture thread inside a state handler.** Combined with
+  an unbounded ALSA recovery loop, a device stuck in permanent overrun could keep
+  the worker alive forever; the join then blocked the cooperative thread, and
+  `SystemAO`'s 16 s shutdown timeout could never fire because the blocked thread is
+  the one that dispatches it. Fail-fast shutdown deadlocked.
+  Fix: `usb_audio_stream` gained the request/complete/finish triple that
+  `stt_ws_client` already had, and the AO gained a `stopping` state that polls for
+  completion on its existing health timer and only then joins. Both AOs now
+  implement the same contract.
+- **The ALSA recovery loop was unbounded.** `usb_audio_capture_read_chunk` now caps
+  recoveries per chunk (`USB_AUDIO_CAPTURE_MAX_RECOVERIES`) and observes an abort
+  flag raised by `usb_audio_capture_abort`, returning `-ECANCELED` on a requested
+  stop. The retry policy lives in `usb_audio_capture_recovery_decision`, kept
+  separate from the ALSA calls so the termination argument is testable on the host
+  where ALSA is compiled out entirely.
+- **Logging blocked the cooperative thread per event.** `stdout` is line buffered
+  at startup, `fflush` is now reserved for errors, and the per-transcript and
+  per-render records moved to `DEBUG`. A bounded ring plus a writer thread was
+  considered and deferred: line buffering removes the syscall-per-record cost, and
+  the remaining exposure is one `fprintf` per event at `DEBUG`. Revisit in ARCH-04,
+  which owns the rest of the logging facility.
+- **`QF_stop()` mutated `QF_readySet_` outside the critical section** (upstream
+  behaviour), racing the ticker thread. Now inside it — the port's second local
+  divergence, recorded in the `qf_port.c` banner alongside SRC-C01. The hardcoded
+  priority `1` is retained but explained: any set bit breaks the `QPSet_isEmpty`
+  predicate that parks the event loop, and the bit is never acted upon because the
+  loop re-tests `l_isRunning` first.
+
 ## High-severity (H-series)
 
 ### SRC-H02 — single-buffer video passthrough (deliberate over triple buffering)

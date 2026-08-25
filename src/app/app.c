@@ -71,10 +71,15 @@ static void bsp_init_placeholder(void)
      */
 }
 
+// Called from the QP/C thread and both workers, so it must not block. stdout is
+// line buffered; only errors are worth forcing out immediately.
 static void app_log_output(log_level_e severity, const char* msg)
 {
     fprintf(stdout, "[%s] %s\n", log_level_to_str(severity), msg);
-    fflush(stdout);
+    if (severity >= LOG_LEVEL_ERROR)
+    {
+        fflush(stdout);
+    }
 }
 
 // Signal handlers may only perform async-signal-safe work. The ticker thread
@@ -168,6 +173,9 @@ static void app_init(void)
 
 int main(void)
 {
+    // One write per log record, even when stdout is a pipe.
+    (void)setvbuf(stdout, NULL, _IOLBF, 0);
+
     log_init();
     (void)log_subscribe(app_log_output, LOG_LEVEL_INFO);
     LOG_INFO("app: starting subtitle overlay firmware");

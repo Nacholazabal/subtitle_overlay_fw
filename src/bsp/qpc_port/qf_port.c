@@ -59,12 +59,16 @@ Q_DEFINE_THIS_MODULE("qf_port")
 // Project-owned copy of the QP/C 8.1.4 posix-qv port
 // (src/qpc/ports/posix-qv/qf_port.c). The vendored `src/qpc` submodule stays
 // pristine at upstream 8.1.4; the build compiles THIS copy instead (see
-// project.yml / Makefile). It carries a local fix over upstream 8.1.4 for a
-// start-up/data race on `l_isRunning`: the flag is accessed via GCC `__atomic_*`
-// builtins (acquire/release, gnu99-safe) and published `true` BEFORE the ticker
-// thread is created, and the ticker is JOINABLE so QF_run joins it before
-// destroying the sync primitives. If you re-sync with upstream, re-apply this fix
-// or adopt a fixed release. Full rationale: docs/legacy-llm/decisions.md, SRC-C01.
+// project.yml / Makefile).
+//
+// TWO local fixes over upstream 8.1.4. If you re-sync, re-apply BOTH or adopt a
+// fixed release. Rationale: docs/legacy-llm/decisions.md, SRC-C01 and SRC-C03.
+//
+//  1. Start-up/data race on `l_isRunning` (SRC-C01): accessed via GCC
+//     `__atomic_*` builtins and published `true` BEFORE the ticker is created;
+//     the ticker is JOINABLE so QF_run joins it before destroying the mutex.
+//  2. `QF_stop()` mutated `QF_readySet_` outside the critical section (SRC-C03),
+//     racing the ticker thread. Now inside it.
 //============================================================================
 
 // Local objects =============================================================
@@ -338,9 +342,18 @@ void QF_stop(void) {
     // Release-store so the ticker and the event loop observe the stop.
     __atomic_store_n(&l_isRunning, false, __ATOMIC_RELEASE);
 
-    // unblock the event-loop so it can terminate
+    // LOCAL FIX (see banner): QF_readySet_ is shared with the ticker thread, so
+    // mutate it inside the critical section. No nesting: QF_run() leaves the
+    // critical section around QASM_DISPATCH.
+    QF_CRIT_STAT
+    QF_CRIT_ENTRY();
+
+    // Any set bit breaks the QPSet_isEmpty() wait; it is never dispatched,
+    // because the loop re-tests l_isRunning first.
     QPSet_insert(&QF_readySet_, 1U);
     pthread_cond_signal(&QF_condVar_);
+
+    QF_CRIT_EXIT();
 }
 //............................................................................
 void QF_setTickRate(uint32_t ticksPerSec, int tickPrio) {

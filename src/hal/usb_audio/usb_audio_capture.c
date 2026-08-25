@@ -288,6 +288,39 @@ static void set_capture_gain(char const* const device)
 // === Public function implementation ============================================================================== //
 
 /**
+ * @brief Decide how a read should proceed after ALSA returned @p err.
+ *
+ * Kept out of the ALSA block below so it stays testable on the host.
+ * @param err Negative errno-style value reported by the ALSA read.
+ * @param attempts Recoveries already made during this chunk read.
+ * @param abort_requested Nonzero once a stop has been requested.
+ * @return The action the read loop must take.
+ */
+usb_audio_capture_recovery_e usb_audio_capture_recovery_decision(int const err,
+                                                                uint32_t const attempts,
+                                                                uint8_t const abort_requested)
+{
+    // A stop request outranks any recovery.
+    if (abort_requested != 0U)
+    {
+        return USB_AUDIO_CAPTURE_RECOVERY_ABORT;
+    }
+
+    // Only an overrun, a suspend, or an empty read are transient.
+    if ((err != -EPIPE) && (err != -ESTRPIPE) && (err != 0))
+    {
+        return USB_AUDIO_CAPTURE_RECOVERY_FAIL;
+    }
+
+    if (attempts >= USB_AUDIO_CAPTURE_MAX_RECOVERIES)
+    {
+        return USB_AUDIO_CAPTURE_RECOVERY_FAIL;
+    }
+
+    return USB_AUDIO_CAPTURE_RECOVERY_RETRY;
+}
+
+/**
  * @brief Initialize USB audio capture through ALSA.
  * @param capture Capture adapter instance.
  * @param config Requested capture configuration.
@@ -346,11 +379,14 @@ int usb_audio_capture_init(usb_audio_capture_t* const capture,
 
 /**
  * @brief Read exactly one configured PCM chunk from ALSA.
+ *
+ * Recovery attempts are capped per call and an abort ends the read, so this
+ * cannot outlive a stop request.
  * @param capture Initialized capture adapter.
  * @param dst Destination buffer.
  * @param dst_size Destination buffer length in bytes.
  * @param bytes_read Written with bytes captured on success.
- * @return 0 on success, or a negative errno-style value on failure.
+ * @return 0 on success, -ECANCELED when aborted, or another negative errno-style value.
  */
 int usb_audio_capture_read_chunk(usb_audio_capture_t* const capture,
                                  uint8_t* const dst,
@@ -367,6 +403,7 @@ int usb_audio_capture_read_chunk(usb_audio_capture_t* const capture,
     size_t const expected_bytes =
         (size_t)capture->config.samples_per_chunk * capture->bytes_per_frame;
     snd_pcm_sframes_t frames_done = 0;
+    uint32_t recoveries = 0U;
 
     if (dst_size < expected_bytes)
     {
@@ -379,27 +416,48 @@ int usb_audio_capture_read_chunk(usb_audio_capture_t* const capture,
         snd_pcm_uframes_t const frames_left = capture->config.samples_per_chunk
                                               - (uint32_t)frames_done;
         snd_pcm_sframes_t got;
+        usb_audio_capture_recovery_e decision;
+
+        // Also checked here so a slow device does not delay an abort.
+        if (capture->abort_requested != 0U)
+        {
+            return -ECANCELED;
+        }
 
         got = snd_pcm_readi(pcm, write_ptr, frames_left);
 
         if (got > 0)
         {
             frames_done += got;
+            continue;
         }
-        else
-        {
-            LOG_WARNING(
-                "usb-audio: ALSA read returned=%ld state=%s err=%s frames_done=%ld frames_left=%ld",
-                (long)got,
-                pcm_state_name(snd_pcm_state(pcm)),
-                snd_strerror((int)got),
-                (long)frames_done,
-                (long)frames_left);
 
-            if (recover_pcm(pcm, (int)got) != 0)
-            {
-                return -EIO;
-            }
+        LOG_WARNING(
+            "usb-audio: ALSA read returned=%ld state=%s err=%s frames_done=%ld frames_left=%ld",
+            (long)got,
+            pcm_state_name(snd_pcm_state(pcm)),
+            snd_strerror((int)got),
+            (long)frames_done,
+            (long)frames_left);
+
+        decision = usb_audio_capture_recovery_decision((int)got,
+                                                       recoveries,
+                                                       capture->abort_requested);
+        if (decision == USB_AUDIO_CAPTURE_RECOVERY_ABORT)
+        {
+            return -ECANCELED;
+        }
+        if (decision == USB_AUDIO_CAPTURE_RECOVERY_FAIL)
+        {
+            LOG_ERROR("usb-audio: giving up after %lu recovery attempts",
+                      (unsigned long)recoveries);
+            return -EIO;
+        }
+
+        recoveries++;
+        if (recover_pcm(pcm, (int)got) != 0)
+        {
+            return -EIO;
         }
     }
 
@@ -416,18 +474,25 @@ int usb_audio_capture_read_chunk(usb_audio_capture_t* const capture,
 
 /**
  * @brief Abort a blocking ALSA read so a service can stop promptly.
+ *
+ * The flag bounds the read loop; the drop unblocks a read already waiting.
  * @param capture Capture adapter instance.
  * @return None.
  */
 void usb_audio_capture_abort(usb_audio_capture_t* const capture)
 {
+    if (capture == NULL)
+    {
+        return;
+    }
+
+    capture->abort_requested = 1U;
+
 #ifdef CONFIG_USB_AUDIO_ALSA
-    if ((capture != NULL) && (capture->pcm_handle != NULL))
+    if (capture->pcm_handle != NULL)
     {
         snd_pcm_drop((snd_pcm_t*)capture->pcm_handle);
     }
-#else
-    (void)capture;
 #endif
 }
 

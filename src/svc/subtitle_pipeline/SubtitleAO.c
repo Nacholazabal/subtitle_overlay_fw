@@ -342,10 +342,11 @@ static int on_subtitle_text(subtitle_ao_t* const me, subtitle_text_evt_t const* 
     me->current_valid = 1U;
     me->current_is_final = (e->is_final != 0U) ? 1U : 0U;
 
-    LOG_INFO("subtitle: rendering %s seq=%lu text=\"%s\"",
-             (e->is_final != 0U) ? "final" : "partial",
-             (unsigned long)e->seq,
-             e->text);
+    // DEBUG: runs per render and carries the whole caption.
+    LOG_DEBUG("subtitle: rendering %s seq=%lu text=\"%s\"",
+              (e->is_final != 0U) ? "final" : "partial",
+              (unsigned long)e->seq,
+              e->text);
 
     status = render_current_state(me);
     if (status != 0)
