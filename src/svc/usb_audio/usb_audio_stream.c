@@ -181,6 +181,12 @@ static void* capture_thread_main(void* const arg)
             {
                 continue;
             }
+            if (status == -ECANCELED)
+            {
+                // A requested stop, not a fault: leave without recording an error
+                // so shutdown does not look like a component failure.
+                break;
+            }
 
             LOG_ERROR("usb-audio: capture read failed, code=%ld", (long)status);
             stream_set_fatal_error(stream, status);
@@ -242,6 +248,12 @@ static void* capture_thread_main(void* const arg)
             first_read_pending = 0U;
         }
     }
+
+    // Publish the exit before returning so the QP/C thread can observe that the
+    // join is safe without ever blocking on it.
+    pthread_mutex_lock(&stream->state_mutex);
+    stream->worker_done = 1U;
+    pthread_mutex_unlock(&stream->state_mutex);
 
     LOG_INFO("usb-audio: capture thread stopped");
     return NULL;
@@ -441,11 +453,11 @@ int usb_audio_stream_get_status(usb_audio_stream_t* const stream)
 }
 
 /**
- * @brief Stop the capture worker and release ALSA resources.
+ * @brief Ask the capture worker to stop and unblock it.
  * @param stream Stream service instance.
  * @return None.
  */
-void usb_audio_stream_stop(usb_audio_stream_t* const stream)
+void usb_audio_stream_request_stop(usb_audio_stream_t* const stream)
 {
     if ((stream == NULL) || (stream->running == 0U))
     {
@@ -453,14 +465,59 @@ void usb_audio_stream_stop(usb_audio_stream_t* const stream)
     }
 
     stream_request_stop(stream);
+    // Raises the abort flag that bounds the read loop and drops the PCM so a
+    // blocking read returns now rather than at the end of its period.
     usb_audio_capture_abort(&stream->capture);
+}
 
-    pthread_join(stream->capture_thread, NULL);
+/**
+ * @brief Report whether the capture worker has left its loop.
+ * @param stream Stream service instance.
+ * @return Nonzero when there is nothing running, or the worker has finished.
+ */
+uint8_t usb_audio_stream_stop_complete(usb_audio_stream_t* const stream)
+{
+    uint8_t complete;
+
+    if ((stream == NULL) || (stream->state_initialized == 0U) || (stream->running == 0U))
+    {
+        return 1U;
+    }
+
+    pthread_mutex_lock(&stream->state_mutex);
+    complete = stream->worker_done;
+    pthread_mutex_unlock(&stream->state_mutex);
+    return complete;
+}
+
+/**
+ * @brief Join the stopped worker and release ALSA resources.
+ * @param stream Stream service instance.
+ * @return 0 when joined or nothing to join, or -EAGAIN while the worker is live.
+ */
+int usb_audio_stream_finish_stop(usb_audio_stream_t* const stream)
+{
+    if (stream == NULL)
+    {
+        return -EINVAL;
+    }
+    if ((stream->state_initialized == 0U) || (stream->running == 0U))
+    {
+        return 0;
+    }
+    if (usb_audio_stream_stop_complete(stream) == 0U)
+    {
+        return -EAGAIN;
+    }
+
+    // Bounded: the worker has already published worker_done, so this returns at once.
+    (void)pthread_join(stream->capture_thread, NULL);
 
     usb_audio_capture_cleanup(&stream->capture);
     stream->running = 0U;
     pthread_mutex_destroy(&stream->state_mutex);
     stream->state_initialized = 0U;
+    return 0;
 }
 
 // === End of documentation ======================================================================================== //

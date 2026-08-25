@@ -40,6 +40,7 @@ static QState usb_audio_ao_top(usb_audio_ao_t* const me, QEvt const* const e);
 static QState usb_audio_ao_idle(usb_audio_ao_t* const me, QEvt const* const e);
 static QState usb_audio_ao_ready(usb_audio_ao_t* const me, QEvt const* const e);
 static QState usb_audio_ao_error(usb_audio_ao_t* const me, QEvt const* const e);
+static QState usb_audio_ao_stopping(usb_audio_ao_t* const me, QEvt const* const e);
 static QState usb_audio_ao_stopped(usb_audio_ao_t* const me, QEvt const* const e);
 
 static int on_component_init(usb_audio_ao_t* const me);
@@ -47,7 +48,9 @@ static int on_stream_poll(usb_audio_ao_t* const me);
 static void post_ready(usb_audio_ao_t* const me);
 static void post_error(usb_audio_ao_t* const me, int32_t code);
 static void post_stopped(usb_audio_ao_t* const me);
-static void quiesce(usb_audio_ao_t* const me);
+static void begin_stop(usb_audio_ao_t* const me);
+static void complete_stop(usb_audio_ao_t* const me);
+static QState leave_running(usb_audio_ao_t* const me);
 static void enter_error(usb_audio_ao_t* const me, int32_t code);
 
 // === Public variable definitions ================================================================================= //
@@ -165,22 +168,51 @@ static int on_stream_poll(usb_audio_ao_t* const me)
     return status;
 }
 
-/**
- * @brief Stop USB audio service and report an error.
- * @param me USB audio active object.
- * @param code Negative errno-style value.
- * @return None.
- */
-// Idempotent teardown of this AO's resources (timer + capture/streaming
-// workers). Shared by the error path and the coordinated-shutdown STOP handler.
-static void quiesce(usb_audio_ao_t* const me)
+// Request-only phase: it runs in a QP/C handler and therefore must not join the
+// capture thread, which may still be inside a blocking ALSA read. The poll timer
+// stays armed so usb_audio_ao_stopping can observe completion.
+static void begin_stop(usb_audio_ao_t* const me)
 {
     if (me->running != 0U)
     {
-        (void)QTimeEvt_disarm(&me->poll_time_evt);
-        usb_audio_stream_stop(&me->stream);
+        usb_audio_stream_request_stop(&me->stream);
+    }
+}
+
+// Completion phase: finish_stop only joins after stop_complete proved the worker
+// has left its loop, so this stays bounded on the cooperative QP/C thread.
+static void complete_stop(usb_audio_ao_t* const me)
+{
+    (void)QTimeEvt_disarm(&me->poll_time_evt);
+    if (me->running != 0U)
+    {
+        (void)usb_audio_stream_finish_stop(&me->stream);
         me->running = 0U;
     }
+}
+
+/**
+ * @brief Leave the running states, finishing the stop now if the worker already exited.
+ * @param me USB audio active object.
+ * @return Transition to the stopped state, or to stopping while the worker winds down.
+ */
+static QState leave_running(usb_audio_ao_t* const me)
+{
+    QState status;
+
+    begin_stop(me);
+    if ((me->running == 0U) || (usb_audio_stream_stop_complete(&me->stream) != 0U))
+    {
+        complete_stop(me);
+        post_stopped(me);
+        status = Q_TRAN(&usb_audio_ao_stopped);
+    }
+    else
+    {
+        status = Q_TRAN(&usb_audio_ao_stopping);
+    }
+
+    return status;
 }
 
 // Acknowledge SYSTEM_STOP to system_ao_t once this AO has quiesced.
@@ -200,9 +232,12 @@ static void post_stopped(usb_audio_ao_t* const me)
     }
 }
 
+// Request the worker to stop and report the fault. The join is deferred: SystemAO
+// answers a component error by broadcasting SYSTEM_STOP, and this AO's STOP handler
+// then drives the stop to completion without blocking here.
 static void enter_error(usb_audio_ao_t* const me, int32_t code)
 {
-    quiesce(me);
+    begin_stop(me);
     post_error(me, code);
 }
 
@@ -233,9 +268,7 @@ static QState usb_audio_ao_top(usb_audio_ao_t* const me, QEvt const* const e)
     switch (e->sig)
     {
     case SYSTEM_STOP_SIG:
-        quiesce(me);
-        post_stopped(me);
-        status = Q_TRAN(&usb_audio_ao_stopped);
+        status = leave_running(me);
         break;
 
     default:
@@ -313,6 +346,51 @@ static QState usb_audio_ao_error(usb_audio_ao_t* const me, QEvt const* const e)
     Q_UNUSED_PAR(e);
 
     return Q_SUPER(&usb_audio_ao_top);
+}
+
+/**
+ * @brief Poll an asynchronously stopping capture worker without joining it.
+ *
+ * Reuses the health-poll time event, so the ack costs at most one poll period.
+ * @param me USB audio active object.
+ * @param e Event dispatched by QP/C.
+ * @return QP/C state handler result.
+ */
+static QState usb_audio_ao_stopping(usb_audio_ao_t* const me, QEvt const* const e)
+{
+    QState status;
+
+    switch (e->sig)
+    {
+    case Q_ENTRY_SIG:
+        LOG_INFO("usb-audio: waiting for capture worker shutdown");
+        status = Q_HANDLED();
+        break;
+
+    case USB_AUDIO_POLL_SIG:
+        if (usb_audio_stream_stop_complete(&me->stream) != 0U)
+        {
+            complete_stop(me);
+            post_stopped(me);
+            status = Q_TRAN(&usb_audio_ao_stopped);
+        }
+        else
+        {
+            status = Q_HANDLED();
+        }
+        break;
+
+    case SYSTEM_STOP_SIG:
+        // Already stopping: the poll above drives it to completion.
+        status = Q_HANDLED();
+        break;
+
+    default:
+        status = Q_SUPER(&usb_audio_ao_top);
+        break;
+    }
+
+    return status;
 }
 
 /**

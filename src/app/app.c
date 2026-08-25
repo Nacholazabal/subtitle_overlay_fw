@@ -71,10 +71,17 @@ static void bsp_init_placeholder(void)
      */
 }
 
+// Runs on the cooperative QP/C thread as well as on the capture and network
+// worker threads, so it must not block. stdout is line buffered at startup, which
+// flushes each record without a syscall per call; only an error is worth forcing
+// out immediately, in case it is the last thing the process gets to say.
 static void app_log_output(log_level_e severity, const char* msg)
 {
     fprintf(stdout, "[%s] %s\n", log_level_to_str(severity), msg);
-    fflush(stdout);
+    if (severity >= LOG_LEVEL_ERROR)
+    {
+        fflush(stdout);
+    }
 }
 
 // Signal handlers may only perform async-signal-safe work. The ticker thread
@@ -168,6 +175,10 @@ static void app_init(void)
 
 int main(void)
 {
+    // Line buffering keeps a log record a single write even when stdout is a pipe,
+    // so no logging call on the cooperative thread waits on a block-buffer flush.
+    (void)setvbuf(stdout, NULL, _IOLBF, 0);
+
     log_init();
     (void)log_subscribe(app_log_output, LOG_LEVEL_INFO);
     LOG_INFO("app: starting subtitle overlay firmware");

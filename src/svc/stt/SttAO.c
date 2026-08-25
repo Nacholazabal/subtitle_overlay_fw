@@ -271,9 +271,11 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
     subtitle_evt->is_final = e->is_final;
     snprintf(subtitle_evt->text, sizeof(subtitle_evt->text), "%s", e->text);
 
-    LOG_INFO("stt: forwarding %s transcript seq=%lu",
-             (e->is_final != 0U) ? "final" : "partial",
-             (unsigned long)e->seq);
+    // Per-transcript, so DEBUG: at partial rate this runs several times a second on
+    // the cooperative thread, and the periodic metrics line already reports volume.
+    LOG_DEBUG("stt: forwarding %s transcript seq=%lu",
+              (e->is_final != 0U) ? "final" : "partial",
+              (unsigned long)e->seq);
     if (!QACTIVE_POST_X(AO_Subtitle, &subtitle_evt->super, margin, &me->super))
     {
         LOG_WARNING("stt: dropping %s transcript seq=%lu, subtitle queue margin=%u",

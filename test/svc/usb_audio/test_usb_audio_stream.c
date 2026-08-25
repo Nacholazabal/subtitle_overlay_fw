@@ -33,7 +33,8 @@ void setUp(void)
 
 void tearDown(void)
 {
-    usb_audio_stream_stop(&stream);
+    usb_audio_stream_request_stop(&stream);
+    (void)usb_audio_stream_finish_stop(&stream);
     unsetenv("USB_AUDIO_PCM_DEVICE");
     unsetenv("SUBTITLE_USB_AUDIO_AGC_ENABLE");
     unsetenv("SUBTITLE_USB_AUDIO_AGC_TARGET_PCT");
@@ -130,7 +131,42 @@ void test_usb_audio_stream_start_reports_capture_unavailable_when_alsa_is_disabl
 
 void test_usb_audio_stream_stop_ignores_null_or_not_running_stream(void)
 {
-    usb_audio_stream_stop(NULL);
-    usb_audio_stream_stop(&stream);
+    usb_audio_stream_request_stop(NULL);
+    usb_audio_stream_request_stop(&stream);
     TEST_ASSERT_EQUAL_UINT8(0U, stream.running);
+
+    TEST_ASSERT_EQUAL_INT(-EINVAL, usb_audio_stream_finish_stop(NULL));
+    TEST_ASSERT_EQUAL_INT(0, usb_audio_stream_finish_stop(&stream));
+}
+
+// The whole point of the three-phase stop: a caller running on the cooperative
+// QP/C thread must be able to ask "may I join yet?" and get an answer, never a
+// block. A stream that was never started is trivially complete.
+void test_usb_audio_stream_stop_complete_is_true_when_nothing_is_running(void)
+{
+    TEST_ASSERT_EQUAL_UINT8(1U, usb_audio_stream_stop_complete(NULL));
+    TEST_ASSERT_EQUAL_UINT8(1U, usb_audio_stream_stop_complete(&stream));
+}
+
+void test_usb_audio_stream_finish_stop_refuses_to_join_a_live_worker(void)
+{
+    usb_audio_stream_t live;
+
+    memset(&live, 0, sizeof(live));
+    TEST_ASSERT_EQUAL_INT(0, pthread_mutex_init(&live.state_mutex, NULL));
+    live.state_initialized = 1U;
+    live.running = 1U;
+    live.worker_done = 0U;
+
+    // Still inside its loop: reported incomplete, and the join is refused rather
+    // than performed, so no state handler can stall on it.
+    TEST_ASSERT_EQUAL_UINT8(0U, usb_audio_stream_stop_complete(&live));
+    TEST_ASSERT_EQUAL_INT(-EAGAIN, usb_audio_stream_finish_stop(&live));
+
+    live.worker_done = 1U;
+    TEST_ASSERT_EQUAL_UINT8(1U, usb_audio_stream_stop_complete(&live));
+
+    live.running = 0U;
+    live.state_initialized = 0U;
+    TEST_ASSERT_EQUAL_INT(0, pthread_mutex_destroy(&live.state_mutex));
 }
