@@ -163,3 +163,80 @@ void test_subtitle_bram_write_bitmap_rejects_overflow_sized_bitmap(void)
         -EINVAL,
         subtitle_bram_write_bitmap(&bram, bitmap, sizeof(bitmap), 0, 0, UINT32_MAX, UINT32_MAX));
 }
+
+void test_subtitle_bram_write_bitmap_uses_fast_path_for_full_frame(void)
+{
+    uint8_t full_bitmap[SUBTITLE_BRAM_SIZE_BYTES];
+    uint32_t i;
+
+    memset(full_bitmap, 0xA5, sizeof(full_bitmap));
+
+    TEST_ASSERT_EQUAL_INT(0, subtitle_bram_clear(&bram));
+    TEST_ASSERT_EQUAL_INT(0,
+                          subtitle_bram_write_bitmap(&bram,
+                                                     full_bitmap,
+                                                     sizeof(full_bitmap),
+                                                     0,
+                                                     0,
+                                                     SUBTITLE_BRAM_MASK_WIDTH,
+                                                     SUBTITLE_BRAM_MASK_HEIGHT));
+
+    for (i = 0U; i < 8U; i++)
+    {
+        TEST_ASSERT_NOT_EQUAL(0U, bram_words[i]);
+    }
+}
+
+void test_subtitle_bram_write_bitmap_full_frame_reverses_bit_order(void)
+{
+    uint8_t full_bitmap[SUBTITLE_BRAM_SIZE_BYTES];
+
+    memset(full_bitmap, 0, sizeof(full_bitmap));
+    full_bitmap[0] = 0x80U;
+    full_bitmap[1] = 0x40U;
+    full_bitmap[2] = 0x20U;
+    full_bitmap[3] = 0x10U;
+
+    TEST_ASSERT_EQUAL_INT(0,
+                          subtitle_bram_write_bitmap(&bram,
+                                                     full_bitmap,
+                                                     sizeof(full_bitmap),
+                                                     0,
+                                                     0,
+                                                     SUBTITLE_BRAM_MASK_WIDTH,
+                                                     SUBTITLE_BRAM_MASK_HEIGHT));
+
+    TEST_ASSERT_EQUAL_UINT32(0x08040201U, bram_words[0]);
+}
+
+void test_subtitle_bram_write_bitmap_slow_path_handles_partial_bytes(void)
+{
+    uint8_t const bitmap[] = {0xE0U};
+
+    TEST_ASSERT_EQUAL_INT(0, subtitle_bram_clear(&bram));
+    TEST_ASSERT_EQUAL_INT(0, subtitle_bram_write_bitmap(&bram, bitmap, sizeof(bitmap), 5, 10, 3, 1));
+
+    TEST_ASSERT_EQUAL_UINT32(0x000000E0U, bram_words[10U * SUBTITLE_BRAM_WORDS_PER_ROW]);
+}
+
+void test_subtitle_bram_write_bitmap_clips_vertically_out_of_bounds(void)
+{
+    uint8_t const bitmap[] = {0xFFU, 0xFFU};
+
+    TEST_ASSERT_EQUAL_INT(0, subtitle_bram_clear(&bram));
+    TEST_ASSERT_EQUAL_INT(
+        0, subtitle_bram_write_bitmap(&bram, bitmap, sizeof(bitmap), 0, -1, 8, 2));
+
+    TEST_ASSERT_EQUAL_UINT32(0x000000FFU, bram_words[0]);
+}
+
+void test_subtitle_bram_write_bitmap_clips_both_axes_simultaneously(void)
+{
+    uint8_t const bitmap[] = {0xF0U, 0x3CU};
+
+    TEST_ASSERT_EQUAL_INT(0, subtitle_bram_clear(&bram));
+    TEST_ASSERT_EQUAL_INT(
+        0, subtitle_bram_write_bitmap(&bram, bitmap, sizeof(bitmap), -2, -1, 8, 2));
+
+    TEST_ASSERT_EQUAL_UINT32(0x0000000FU, bram_words[0]);
+}
