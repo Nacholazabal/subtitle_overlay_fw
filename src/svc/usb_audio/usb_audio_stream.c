@@ -183,9 +183,7 @@ static void* capture_thread_main(void* const arg)
             }
             if (status == -ECANCELED)
             {
-                // A requested stop, not a fault: leave without recording an error
-                // so shutdown does not look like a component failure.
-                break;
+                break; // A requested stop, not a fault.
             }
 
             LOG_ERROR("usb-audio: capture read failed, code=%ld", (long)status);
@@ -249,8 +247,7 @@ static void* capture_thread_main(void* const arg)
         }
     }
 
-    // Publish the exit before returning so the QP/C thread can observe that the
-    // join is safe without ever blocking on it.
+    // Publish the exit so the QP/C thread knows the join is safe.
     pthread_mutex_lock(&stream->state_mutex);
     stream->worker_done = 1U;
     pthread_mutex_unlock(&stream->state_mutex);
@@ -465,9 +462,7 @@ void usb_audio_stream_request_stop(usb_audio_stream_t* const stream)
     }
 
     stream_request_stop(stream);
-    // Raises the abort flag that bounds the read loop and drops the PCM so a
-    // blocking read returns now rather than at the end of its period.
-    usb_audio_capture_abort(&stream->capture);
+    usb_audio_capture_abort(&stream->capture); // Ends any in-flight read.
 }
 
 /**
@@ -510,7 +505,7 @@ int usb_audio_stream_finish_stop(usb_audio_stream_t* const stream)
         return -EAGAIN;
     }
 
-    // Bounded: the worker has already published worker_done, so this returns at once.
+    // Returns at once: the worker has already published worker_done.
     (void)pthread_join(stream->capture_thread, NULL);
 
     usb_audio_capture_cleanup(&stream->capture);

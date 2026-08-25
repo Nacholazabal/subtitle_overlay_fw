@@ -168,8 +168,7 @@ static int on_stream_poll(usb_audio_ao_t* const me)
     return status;
 }
 
-// Request-only phase: it runs in a QP/C handler and therefore must not join the
-// capture thread, which may still be inside a blocking ALSA read. The poll timer
+// Request only: a QP/C handler must not join the capture thread. The poll timer
 // stays armed so usb_audio_ao_stopping can observe completion.
 static void begin_stop(usb_audio_ao_t* const me)
 {
@@ -179,8 +178,7 @@ static void begin_stop(usb_audio_ao_t* const me)
     }
 }
 
-// Completion phase: finish_stop only joins after stop_complete proved the worker
-// has left its loop, so this stays bounded on the cooperative QP/C thread.
+// Joins the worker, which stop_complete has already proved is safe.
 static void complete_stop(usb_audio_ao_t* const me)
 {
     (void)QTimeEvt_disarm(&me->poll_time_evt);
@@ -192,9 +190,9 @@ static void complete_stop(usb_audio_ao_t* const me)
 }
 
 /**
- * @brief Leave the running states, finishing the stop now if the worker already exited.
+ * @brief Leave the running states, finishing now if the worker already exited.
  * @param me USB audio active object.
- * @return Transition to the stopped state, or to stopping while the worker winds down.
+ * @return Transition to stopped, or to stopping while the worker winds down.
  */
 static QState leave_running(usb_audio_ao_t* const me)
 {
@@ -232,9 +230,8 @@ static void post_stopped(usb_audio_ao_t* const me)
     }
 }
 
-// Request the worker to stop and report the fault. The join is deferred: SystemAO
-// answers a component error by broadcasting SYSTEM_STOP, and this AO's STOP handler
-// then drives the stop to completion without blocking here.
+// Requests the stop and reports the fault. The join is left to the SYSTEM_STOP
+// handler, which SystemAO triggers in response to the error event.
 static void enter_error(usb_audio_ao_t* const me, int32_t code)
 {
     begin_stop(me);
@@ -349,9 +346,7 @@ static QState usb_audio_ao_error(usb_audio_ao_t* const me, QEvt const* const e)
 }
 
 /**
- * @brief Poll an asynchronously stopping capture worker without joining it.
- *
- * Reuses the health-poll time event, so the ack costs at most one poll period.
+ * @brief Wait for the capture worker to stop, reusing the health-poll timer.
  * @param me USB audio active object.
  * @param e Event dispatched by QP/C.
  * @return QP/C state handler result.
@@ -381,8 +376,7 @@ static QState usb_audio_ao_stopping(usb_audio_ao_t* const me, QEvt const* const 
         break;
 
     case SYSTEM_STOP_SIG:
-        // Already stopping: the poll above drives it to completion.
-        status = Q_HANDLED();
+        status = Q_HANDLED(); // Already stopping.
         break;
 
     default:

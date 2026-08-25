@@ -84,12 +84,7 @@ int usb_audio_stream_start(usb_audio_stream_t* stream, usb_audio_stream_config_t
 /// @brief Return 0 while workers are healthy, their fatal error, or -APP_ESTATE when not running.
 int usb_audio_stream_get_status(usb_audio_stream_t* stream);
 
-/*
- * Shutdown is split in three so it can be driven from a QP/C state handler
- * without ever blocking the cooperative scheduler: request, observe, then join.
- * Joining the capture thread directly from a handler would stall every active
- * object -- including the shutdown timeout that is supposed to bound the wait.
- */
+/* Shutdown is request/observe/join so a QP/C state handler never blocks on it. */
 
 /// @brief Ask the capture worker to stop and unblock it. Always nonblocking.
 void usb_audio_stream_request_stop(usb_audio_stream_t* stream);
@@ -100,12 +95,10 @@ uint8_t usb_audio_stream_stop_complete(usb_audio_stream_t* stream);
 /**
  * @brief Join the stopped worker and release ALSA resources.
  *
- * Only call once ::usb_audio_stream_stop_complete reports completion; the join is
- * then immediate. Returns -EAGAIN if the worker is still running, so a caller that
- * polls can never block by mistake.
- *
+ * Call once ::usb_audio_stream_stop_complete reports completion; the join is then
+ * immediate.
  * @param stream Stream service instance.
- * @return 0 when the worker was joined or there was nothing to join, or -EAGAIN.
+ * @return 0 when joined or nothing to join, or -EAGAIN while the worker is live.
  */
 int usb_audio_stream_finish_stop(usb_audio_stream_t* stream);
 

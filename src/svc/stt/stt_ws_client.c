@@ -253,10 +253,8 @@ static uint8_t client_stop_requested(stt_ws_client_t* const client)
 /**
  * @brief Sleep until audio/stop arrives, bounded so reconnect timers progress.
  *
- * Monotonic: the condvar is created with CLOCK_MONOTONIC because this board boots
- * with an unset clock and waits for NTP (::STT_WS_STATE_WAIT_CLOCK), so a wall-clock
- * step is normal operation. On CLOCK_REALTIME a backward step would stretch this
- * wait arbitrarily while the bounded audio queue overflowed.
+ * Monotonic, matching the condvar's clock: this board boots with an unset clock,
+ * so an NTP step must not stretch or skip the wait.
  */
 static void worker_wait(stt_ws_client_t* const client, uint32_t const timeout_ms)
 {
@@ -1096,8 +1094,7 @@ int stt_ws_client_init(stt_ws_client_t* const client, stt_ws_client_config_t con
         return -EIO;
     }
     {
-        // The worker's timed wait must use the same monotonic clock as every other
-        // timer here, so an NTP step cannot stretch or skip it. See worker_wait().
+        // Monotonic so an NTP step cannot disturb worker_wait().
         pthread_condattr_t cond_attr;
         int cond_status;
 

@@ -84,10 +84,8 @@ void test_usb_audio_capture_abort_raises_the_flag_the_read_loop_observes(void)
     TEST_ASSERT_EQUAL_UINT8(1U, capture.abort_requested);
 }
 
-// The read loop's termination argument. Recovery is bounded, so a device stuck in
-// a permanent overrun cannot keep the capture worker alive past a stop request --
-// which would deadlock a coordinated shutdown, because the QP/C thread waits to
-// join this worker and is also the thread that dispatches the shutdown timeout.
+// Bounded recovery is what stops a broken device keeping the worker alive past a
+// stop request, which would deadlock the coordinated shutdown.
 void test_usb_audio_capture_recovery_retries_transient_errors_within_budget(void)
 {
     TEST_ASSERT_EQUAL_INT(USB_AUDIO_CAPTURE_RECOVERY_RETRY,
@@ -111,7 +109,7 @@ void test_usb_audio_capture_recovery_fails_once_the_retry_budget_is_spent(void)
 
 void test_usb_audio_capture_recovery_fails_immediately_on_unrecoverable_errors(void)
 {
-    // -EBADFD is what a dropped PCM reports; it must end the read, not retry.
+    // -EBADFD is what a dropped PCM reports.
     TEST_ASSERT_EQUAL_INT(USB_AUDIO_CAPTURE_RECOVERY_FAIL,
                           usb_audio_capture_recovery_decision(-EBADFD, 0U, 0U));
     TEST_ASSERT_EQUAL_INT(USB_AUDIO_CAPTURE_RECOVERY_FAIL,
@@ -120,7 +118,6 @@ void test_usb_audio_capture_recovery_fails_immediately_on_unrecoverable_errors(v
 
 void test_usb_audio_capture_recovery_aborts_outrank_any_retry(void)
 {
-    // Even a transient error with budget to spare yields to a stop request.
     TEST_ASSERT_EQUAL_INT(USB_AUDIO_CAPTURE_RECOVERY_ABORT,
                           usb_audio_capture_recovery_decision(-EPIPE, 0U, 1U));
     TEST_ASSERT_EQUAL_INT(USB_AUDIO_CAPTURE_RECOVERY_ABORT,

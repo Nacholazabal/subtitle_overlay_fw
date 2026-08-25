@@ -290,8 +290,7 @@ static void set_capture_gain(char const* const device)
 /**
  * @brief Decide how a read should proceed after ALSA returned @p err.
  *
- * Compiled unconditionally: the read loop's termination argument must be
- * verifiable on the host, where the ALSA implementation below is compiled out.
+ * Kept out of the ALSA block below so it stays testable on the host.
  * @param err Negative errno-style value reported by the ALSA read.
  * @param attempts Recoveries already made during this chunk read.
  * @param abort_requested Nonzero once a stop has been requested.
@@ -301,22 +300,18 @@ usb_audio_capture_recovery_e usb_audio_capture_recovery_decision(int const err,
                                                                 uint32_t const attempts,
                                                                 uint8_t const abort_requested)
 {
-    // A requested stop outranks any recovery: the caller is waiting to join.
+    // A stop request outranks any recovery.
     if (abort_requested != 0U)
     {
         return USB_AUDIO_CAPTURE_RECOVERY_ABORT;
     }
 
-    // Only an overrun (-EPIPE), a suspend (-ESTRPIPE) or an empty blocking read
-    // are transient. Everything else -- including the -EBADFD a dropped PCM
-    // reports -- means the stream is gone.
+    // Only an overrun, a suspend, or an empty read are transient.
     if ((err != -EPIPE) && (err != -ESTRPIPE) && (err != 0))
     {
         return USB_AUDIO_CAPTURE_RECOVERY_FAIL;
     }
 
-    // Budget spent: a device that needs more than this within one 20 ms chunk is
-    // broken, and retrying forever would let a worker outlive its stop request.
     if (attempts >= USB_AUDIO_CAPTURE_MAX_RECOVERIES)
     {
         return USB_AUDIO_CAPTURE_RECOVERY_FAIL;
@@ -385,8 +380,8 @@ int usb_audio_capture_init(usb_audio_capture_t* const capture,
 /**
  * @brief Read exactly one configured PCM chunk from ALSA.
  *
- * Bounded: recovery attempts are capped per call and an abort request is honoured
- * promptly, so this can never outlive a stop request no matter what the device does.
+ * Recovery attempts are capped per call and an abort ends the read, so this
+ * cannot outlive a stop request.
  * @param capture Initialized capture adapter.
  * @param dst Destination buffer.
  * @param dst_size Destination buffer length in bytes.
@@ -423,8 +418,7 @@ int usb_audio_capture_read_chunk(usb_audio_capture_t* const capture,
         snd_pcm_sframes_t got;
         usb_audio_capture_recovery_e decision;
 
-        // Checked before the read too, so an abort raised while the device is
-        // merely slow is not held until the next non-positive return.
+        // Also checked here so a slow device does not delay an abort.
         if (capture->abort_requested != 0U)
         {
             return -ECANCELED;
@@ -481,9 +475,7 @@ int usb_audio_capture_read_chunk(usb_audio_capture_t* const capture,
 /**
  * @brief Abort a blocking ALSA read so a service can stop promptly.
  *
- * Raises the abort flag before dropping the PCM: the flag is what bounds the read
- * loop, and dropping only unblocks a read that is currently waiting. Callable from
- * a thread other than the reader, which is the whole point.
+ * The flag bounds the read loop; the drop unblocks a read already waiting.
  * @param capture Capture adapter instance.
  * @return None.
  */

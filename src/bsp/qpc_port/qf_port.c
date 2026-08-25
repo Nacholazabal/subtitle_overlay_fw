@@ -61,19 +61,14 @@ Q_DEFINE_THIS_MODULE("qf_port")
 // pristine at upstream 8.1.4; the build compiles THIS copy instead (see
 // project.yml / Makefile).
 //
-// TWO local fixes over upstream 8.1.4. If you re-sync with upstream, re-apply
-// BOTH or adopt a fixed release. Full rationale: docs/legacy-llm/decisions.md,
-// SRC-C01 and SRC-C03.
+// TWO local fixes over upstream 8.1.4. If you re-sync, re-apply BOTH or adopt a
+// fixed release. Rationale: docs/legacy-llm/decisions.md, SRC-C01 and SRC-C03.
 //
-//  1. Start-up/data race on `l_isRunning` (SRC-C01): the flag is accessed via
-//     GCC `__atomic_*` builtins (acquire/release, gnu99-safe) and published
-//     `true` BEFORE the ticker thread is created, and the ticker is JOINABLE so
-//     QF_run joins it before destroying the sync primitives.
-//
-//  2. Unguarded shared-state access in `QF_stop()` (SRC-C03): upstream mutates
-//     `QF_readySet_` and signals the condition variable outside the critical
-//     section, racing the ticker thread and every poster. Both are now inside it.
-//     See the comment at QF_stop() for why no critical-section nesting occurs.
+//  1. Start-up/data race on `l_isRunning` (SRC-C01): accessed via GCC
+//     `__atomic_*` builtins and published `true` BEFORE the ticker is created;
+//     the ticker is JOINABLE so QF_run joins it before destroying the mutex.
+//  2. `QF_stop()` mutated `QF_readySet_` outside the critical section (SRC-C03),
+//     racing the ticker thread. Now inside it.
 //============================================================================
 
 // Local objects =============================================================
@@ -347,17 +342,14 @@ void QF_stop(void) {
     // Release-store so the ticker and the event loop observe the stop.
     __atomic_store_n(&l_isRunning, false, __ATOMIC_RELEASE);
 
-    // LOCAL FIX (see the banner above): QF_readySet_ is shared with the ticker
-    // thread and with every poster, so it is mutated inside the critical section
-    // like every other access to it. Safe to call from a state handler, because
-    // QF_run() leaves the critical section around QASM_DISPATCH -- so no nesting
-    // occurs here, which this port asserts against.
+    // LOCAL FIX (see banner): QF_readySet_ is shared with the ticker thread, so
+    // mutate it inside the critical section. No nesting: QF_run() leaves the
+    // critical section around QASM_DISPATCH.
     QF_CRIT_STAT
     QF_CRIT_ENTRY();
 
-    // Any set bit will do: this only has to break the QPSet_isEmpty() predicate
-    // that parks the event loop in pthread_cond_wait(). The bit is never acted
-    // upon, because the loop re-tests l_isRunning before consulting the ready set.
+    // Any set bit breaks the QPSet_isEmpty() wait; it is never dispatched,
+    // because the loop re-tests l_isRunning first.
     QPSet_insert(&QF_readySet_, 1U);
     pthread_cond_signal(&QF_condVar_);
 

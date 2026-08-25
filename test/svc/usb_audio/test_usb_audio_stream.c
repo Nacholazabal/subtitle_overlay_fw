@@ -139,9 +139,7 @@ void test_usb_audio_stream_stop_ignores_null_or_not_running_stream(void)
     TEST_ASSERT_EQUAL_INT(0, usb_audio_stream_finish_stop(&stream));
 }
 
-// The whole point of the three-phase stop: a caller running on the cooperative
-// QP/C thread must be able to ask "may I join yet?" and get an answer, never a
-// block. A stream that was never started is trivially complete.
+// A stream that was never started is trivially complete.
 void test_usb_audio_stream_stop_complete_is_true_when_nothing_is_running(void)
 {
     TEST_ASSERT_EQUAL_UINT8(1U, usb_audio_stream_stop_complete(NULL));
@@ -158,8 +156,7 @@ void test_usb_audio_stream_finish_stop_refuses_to_join_a_live_worker(void)
     live.running = 1U;
     live.worker_done = 0U;
 
-    // Still inside its loop: reported incomplete, and the join is refused rather
-    // than performed, so no state handler can stall on it.
+    // Still inside its loop: the join is refused, not performed.
     TEST_ASSERT_EQUAL_UINT8(0U, usb_audio_stream_stop_complete(&live));
     TEST_ASSERT_EQUAL_INT(-EAGAIN, usb_audio_stream_finish_stop(&live));
 

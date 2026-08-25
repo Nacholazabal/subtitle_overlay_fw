@@ -271,8 +271,7 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
     subtitle_evt->is_final = e->is_final;
     snprintf(subtitle_evt->text, sizeof(subtitle_evt->text), "%s", e->text);
 
-    // Per-transcript, so DEBUG: at partial rate this runs several times a second on
-    // the cooperative thread, and the periodic metrics line already reports volume.
+    // DEBUG: runs per transcript; the metrics line already reports volume.
     LOG_DEBUG("stt: forwarding %s transcript seq=%lu",
               (e->is_final != 0U) ? "final" : "partial",
               (unsigned long)e->seq);

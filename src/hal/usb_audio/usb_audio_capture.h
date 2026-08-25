@@ -24,9 +24,7 @@ extern "C" {
 
 #define USB_AUDIO_CAPTURE_DEVICE_MAX_LEN (64U)
 
-/// Recovery attempts allowed inside a single chunk read. One chunk is 20 ms of
-/// audio; a device needing more recoveries than this within one chunk is broken,
-/// not glitching, and the read must fail rather than retry forever.
+/// Recovery attempts allowed inside a single 20 ms chunk read.
 #define USB_AUDIO_CAPTURE_MAX_RECOVERIES (4U)
 
 // === Public data type declarations =============================================================================== //
@@ -53,9 +51,7 @@ typedef struct
     void* pcm_handle;
     uint32_t bytes_per_frame;
     uint8_t initialized;
-    /// Set by ::usb_audio_capture_abort from another thread; observed by the
-    /// read loop so a stop request cannot be outlived by a retrying reader.
-    volatile uint8_t abort_requested;
+    volatile uint8_t abort_requested; ///< Set by ::usb_audio_capture_abort, read by the read loop.
 } usb_audio_capture_t;
 
 // === Public variable declarations ================================================================================ //
@@ -65,12 +61,6 @@ int usb_audio_capture_init(usb_audio_capture_t* capture, usb_audio_capture_confi
 
 /**
  * @brief Decide how a read should proceed after ALSA returned @p err.
- *
- * Pure policy, deliberately separate from the ALSA calls it governs: it carries
- * the termination argument for the read loop (bounded retries, prompt abort) and
- * is therefore testable on the host, where the ALSA implementation is compiled
- * out entirely.
- *
  * @param err Negative errno-style value reported by the ALSA read.
  * @param attempts Recoveries already made during this chunk read.
  * @param abort_requested Nonzero once a stop has been requested.
@@ -86,7 +76,7 @@ int usb_audio_capture_read_chunk(usb_audio_capture_t* capture,
                                  size_t dst_size,
                                  size_t* bytes_read);
 
-/// @brief Request that an in-flight read give up, and unblock it. Safe from another thread.
+/// @brief Make an in-flight read give up and unblock it. Safe from another thread.
 void usb_audio_capture_abort(usb_audio_capture_t* capture);
 void usb_audio_capture_cleanup(usb_audio_capture_t* capture);
 

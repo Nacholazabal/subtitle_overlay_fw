@@ -342,8 +342,7 @@ static int on_subtitle_text(subtitle_ao_t* const me, subtitle_text_evt_t const* 
     me->current_valid = 1U;
     me->current_is_final = (e->is_final != 0U) ? 1U : 0U;
 
-    // Per-render, and it carries the whole caption, so DEBUG: emitting this at INFO
-    // put a formatted write of up to 128 bytes on the cooperative thread per partial.
+    // DEBUG: runs per render and carries the whole caption.
     LOG_DEBUG("subtitle: rendering %s seq=%lu text=\"%s\"",
               (e->is_final != 0U) ? "final" : "partial",
               (unsigned long)e->seq,
