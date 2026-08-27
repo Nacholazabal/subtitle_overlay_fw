@@ -1,11 +1,11 @@
 #include <string.h>
 
-#include "unity.h"
 #include "errorno.h"
+#include "mock_hw_platform.h"
 #include "subtitle_bram.h"
 #include "subtitle_font.h"
 #include "subtitle_text_renderer.h"
-#include "mock_hw_platform.h"
+#include "unity.h"
 
 TEST_SOURCE_FILE("subtitle_font.c")
 TEST_SOURCE_FILE("subtitle_text_sanitize.c")
@@ -119,25 +119,41 @@ void tearDown(void)
 
 void test_subtitle_text_renderer_rejects_invalid_arguments(void)
 {
-    TEST_ASSERT_EQUAL_INT(
-        -EINVAL,
-        subtitle_text_renderer_render(NULL, bitmap, sizeof(bitmap), &rendered_width, &rendered_height));
-    TEST_ASSERT_EQUAL_INT(
-        -EINVAL,
-        subtitle_text_renderer_render("hola", NULL, sizeof(bitmap), &rendered_width, &rendered_height));
-    TEST_ASSERT_EQUAL_INT(
-        -EINVAL,
-        subtitle_text_renderer_render("hola",
-                                      bitmap,
-                                      sizeof(bitmap) - 1U,
-                                      &rendered_width,
-                                      &rendered_height));
-    TEST_ASSERT_EQUAL_INT(
-        -EINVAL,
-        subtitle_text_renderer_render("   ", bitmap, sizeof(bitmap), &rendered_width, &rendered_height));
-    TEST_ASSERT_EQUAL_INT(
-        -EINVAL,
-        subtitle_text_renderer_render("", bitmap, sizeof(bitmap), &rendered_width, &rendered_height));
+    TEST_ASSERT_EQUAL_INT(-EINVAL,
+                          subtitle_text_renderer_render_caption(NULL,
+                                                                1U,
+                                                                bitmap,
+                                                                sizeof(bitmap),
+                                                                &rendered_width,
+                                                                &rendered_height));
+    TEST_ASSERT_EQUAL_INT(-EINVAL,
+                          subtitle_text_renderer_render_caption("hola",
+                                                                1U,
+                                                                NULL,
+                                                                sizeof(bitmap),
+                                                                &rendered_width,
+                                                                &rendered_height));
+    TEST_ASSERT_EQUAL_INT(-EINVAL,
+                          subtitle_text_renderer_render_caption("hola",
+                                                                1U,
+                                                                bitmap,
+                                                                sizeof(bitmap) - 1U,
+                                                                &rendered_width,
+                                                                &rendered_height));
+    TEST_ASSERT_EQUAL_INT(-EINVAL,
+                          subtitle_text_renderer_render_caption("   ",
+                                                                1U,
+                                                                bitmap,
+                                                                sizeof(bitmap),
+                                                                &rendered_width,
+                                                                &rendered_height));
+    TEST_ASSERT_EQUAL_INT(-EINVAL,
+                          subtitle_text_renderer_render_caption("",
+                                                                1U,
+                                                                bitmap,
+                                                                sizeof(bitmap),
+                                                                &rendered_width,
+                                                                &rendered_height));
 }
 
 void test_subtitle_text_renderer_keeps_consecutive_c_glyphs_visually_separate(void)
@@ -148,9 +164,13 @@ void test_subtitle_text_renderer_keeps_consecutive_c_glyphs_visually_separate(vo
     uint32_t const second_left = first_left + glyph->advance;
     uint32_t x;
 
-    TEST_ASSERT_EQUAL_INT(
-        0,
-        subtitle_text_renderer_render("cc", bitmap, sizeof(bitmap), &rendered_width, &rendered_height));
+    TEST_ASSERT_EQUAL_INT(0,
+                          subtitle_text_renderer_render_caption("cc",
+                                                                1U,
+                                                                bitmap,
+                                                                sizeof(bitmap),
+                                                                &rendered_width,
+                                                                &rendered_height));
 
     TEST_ASSERT_EQUAL_UINT8(1U, column_has_pixels(first_right));
     TEST_ASSERT_EQUAL_UINT8(1U, column_has_pixels(second_left));
@@ -169,9 +189,13 @@ void test_subtitle_text_renderer_returns_compact_geometry_with_selected_padding(
     uint32_t max_y = 0U;
     uint32_t y;
 
-    TEST_ASSERT_EQUAL_INT(
-        0,
-        subtitle_text_renderer_render("Acción", bitmap, sizeof(bitmap), &rendered_width, &rendered_height));
+    TEST_ASSERT_EQUAL_INT(0,
+                          subtitle_text_renderer_render_caption("Acción",
+                                                                1U,
+                                                                bitmap,
+                                                                sizeof(bitmap),
+                                                                &rendered_width,
+                                                                &rendered_height));
 
     for (y = 0U; y < rendered_height; y++)
     {
@@ -200,13 +224,21 @@ void test_subtitle_text_renderer_uses_proportional_advances(void)
 {
     uint32_t narrow_width;
 
-    TEST_ASSERT_EQUAL_INT(
-        0,
-        subtitle_text_renderer_render("iii", bitmap, sizeof(bitmap), &rendered_width, &rendered_height));
+    TEST_ASSERT_EQUAL_INT(0,
+                          subtitle_text_renderer_render_caption("iii",
+                                                                1U,
+                                                                bitmap,
+                                                                sizeof(bitmap),
+                                                                &rendered_width,
+                                                                &rendered_height));
     narrow_width = rendered_width;
-    TEST_ASSERT_EQUAL_INT(
-        0,
-        subtitle_text_renderer_render("mmm", bitmap, sizeof(bitmap), &rendered_width, &rendered_height));
+    TEST_ASSERT_EQUAL_INT(0,
+                          subtitle_text_renderer_render_caption("mmm",
+                                                                1U,
+                                                                bitmap,
+                                                                sizeof(bitmap),
+                                                                &rendered_width,
+                                                                &rendered_height));
 
     TEST_ASSERT_TRUE(rendered_width > narrow_width);
 }
@@ -217,12 +249,20 @@ void test_subtitle_text_renderer_draws_real_spanish_glyphs(void)
     uint32_t plain_width;
     uint32_t plain_height;
 
-    TEST_ASSERT_EQUAL_INT(
-        0,
-        subtitle_text_renderer_render("n", plain, sizeof(plain), &plain_width, &plain_height));
-    TEST_ASSERT_EQUAL_INT(
-        0,
-        subtitle_text_renderer_render("ñ", bitmap, sizeof(bitmap), &rendered_width, &rendered_height));
+    TEST_ASSERT_EQUAL_INT(0,
+                          subtitle_text_renderer_render_caption("n",
+                                                                1U,
+                                                                plain,
+                                                                sizeof(plain),
+                                                                &plain_width,
+                                                                &plain_height));
+    TEST_ASSERT_EQUAL_INT(0,
+                          subtitle_text_renderer_render_caption("ñ",
+                                                                1U,
+                                                                bitmap,
+                                                                sizeof(bitmap),
+                                                                &rendered_width,
+                                                                &rendered_height));
 
     TEST_ASSERT_TRUE(rendered_height > plain_height);
     TEST_ASSERT_TRUE(memcmp(plain, bitmap, sizeof(bitmap)) != 0);
@@ -235,9 +275,13 @@ void test_subtitle_text_renderer_limits_wrapped_text_to_three_lines(void)
         "dieciseis diecisiete dieciocho diecinueve veinte veintiuno veintidos veintitres "
         "veinticuatro veinticinco veintiseis veintisiete veintiocho";
 
-    TEST_ASSERT_EQUAL_INT(
-        0,
-        subtitle_text_renderer_render(text, bitmap, sizeof(bitmap), &rendered_width, &rendered_height));
+    TEST_ASSERT_EQUAL_INT(0,
+                          subtitle_text_renderer_render_caption(text,
+                                                                1U,
+                                                                bitmap,
+                                                                sizeof(bitmap),
+                                                                &rendered_width,
+                                                                &rendered_height));
 
     TEST_ASSERT_TRUE(ink_bands() <= 3U);
     TEST_ASSERT_TRUE(rendered_width <= SUBTITLE_BRAM_MASK_WIDTH);
@@ -250,9 +294,13 @@ void test_subtitle_text_renderer_hyphenates_oversized_words(void)
     memset(text, 'W', sizeof(text) - 1U);
     text[sizeof(text) - 1U] = '\0';
 
-    TEST_ASSERT_EQUAL_INT(
-        0,
-        subtitle_text_renderer_render(text, bitmap, sizeof(bitmap), &rendered_width, &rendered_height));
+    TEST_ASSERT_EQUAL_INT(0,
+                          subtitle_text_renderer_render_caption(text,
+                                                                1U,
+                                                                bitmap,
+                                                                sizeof(bitmap),
+                                                                &rendered_width,
+                                                                &rendered_height));
 
     TEST_ASSERT_EQUAL_UINT32(3U, ink_bands());
     TEST_ASSERT_TRUE(rendered_width <= SUBTITLE_BRAM_MASK_WIDTH);
@@ -265,17 +313,23 @@ void test_subtitle_text_renderer_dims_only_current_partial_lines(void)
     uint32_t previous_partial;
     uint32_t total_partial;
 
-    TEST_ASSERT_EQUAL_INT(
-        0,
-        subtitle_text_renderer_render_caption(
-            "previo\nactual", 1U, bitmap, sizeof(bitmap), &rendered_width, &rendered_height));
+    TEST_ASSERT_EQUAL_INT(0,
+                          subtitle_text_renderer_render_caption("previo\nactual",
+                                                                1U,
+                                                                bitmap,
+                                                                sizeof(bitmap),
+                                                                &rendered_width,
+                                                                &rendered_height));
     previous_final = first_band_pixels();
     total_final = pixel_count();
 
-    TEST_ASSERT_EQUAL_INT(
-        0,
-        subtitle_text_renderer_render_caption(
-            "previo\nactual", 0U, bitmap, sizeof(bitmap), &rendered_width, &rendered_height));
+    TEST_ASSERT_EQUAL_INT(0,
+                          subtitle_text_renderer_render_caption("previo\nactual",
+                                                                0U,
+                                                                bitmap,
+                                                                sizeof(bitmap),
+                                                                &rendered_width,
+                                                                &rendered_height));
     previous_partial = first_band_pixels();
     total_partial = pixel_count();
 

@@ -35,7 +35,6 @@ typedef char subtitle_bram_mask_fits_window_assert
 
 static int validate_bram(subtitle_bram_t const* bram);
 static volatile uint32_t* bram_words(subtitle_bram_t const* bram);
-static uint8_t pixel_is_in_range(int32_t x, int32_t y);
 static uint8_t reverse_bits_u8(uint8_t value);
 static uint32_t subtitle_bram_pack_word(uint8_t const* src);
 static int subtitle_bram_write_full_bitmap(subtitle_bram_t const* bram,
@@ -74,20 +73,6 @@ static int validate_bram(subtitle_bram_t const* const bram)
 static volatile uint32_t* bram_words(subtitle_bram_t const* const bram)
 {
     return (volatile uint32_t*)bram->base;
-}
-
-/**
- * @brief Check whether a mask pixel coordinate is inside the subtitle BRAM geometry.
- * @param x Pixel x coordinate.
- * @param y Pixel y coordinate.
- * @return Nonzero when in range, zero otherwise.
- */
-static uint8_t pixel_is_in_range(int32_t x, int32_t y)
-{
-    return ((x >= 0) && (y >= 0) && ((uint32_t)x < SUBTITLE_BRAM_MASK_WIDTH)
-            && ((uint32_t)y < SUBTITLE_BRAM_MASK_HEIGHT))
-               ? 1U
-               : 0U;
 }
 
 /**
@@ -186,70 +171,6 @@ int subtitle_bram_clear(subtitle_bram_t* const bram)
     {
         words[i] = 0U;
     }
-
-    return 0;
-}
-
-/**
- * @brief Set one subtitle mask pixel.
- * @param bram Initialized BRAM adapter.
- * @param x Pixel x coordinate.
- * @param y Pixel y coordinate.
- * @return 0 on success or clipped out-of-range pixel, or a negative errno-style value on failure.
- */
-int subtitle_bram_set_pixel(subtitle_bram_t* const bram, int32_t x, int32_t y)
-{
-    volatile uint32_t* words;
-    uint32_t word_index;
-    uint32_t bit_index;
-    int status = validate_bram(bram);
-
-    if (status != 0)
-    {
-        return status;
-    }
-
-    if (!pixel_is_in_range(x, y))
-    {
-        return 0;
-    }
-
-    words = bram_words(bram);
-    word_index = ((uint32_t)y * SUBTITLE_BRAM_WORDS_PER_ROW) + ((uint32_t)x / 32U);
-    bit_index = (uint32_t)x % 32U;
-    words[word_index] |= (1U << bit_index);
-
-    return 0;
-}
-
-/**
- * @brief Clear one subtitle mask pixel.
- * @param bram Initialized BRAM adapter.
- * @param x Pixel x coordinate.
- * @param y Pixel y coordinate.
- * @return 0 on success or clipped out-of-range pixel, or a negative errno-style value on failure.
- */
-int subtitle_bram_clear_pixel(subtitle_bram_t* const bram, int32_t x, int32_t y)
-{
-    volatile uint32_t* words;
-    uint32_t word_index;
-    uint32_t bit_index;
-    int status = validate_bram(bram);
-
-    if (status != 0)
-    {
-        return status;
-    }
-
-    if (!pixel_is_in_range(x, y))
-    {
-        return 0;
-    }
-
-    words = bram_words(bram);
-    word_index = ((uint32_t)y * SUBTITLE_BRAM_WORDS_PER_ROW) + ((uint32_t)x / 32U);
-    bit_index = (uint32_t)x % 32U;
-    words[word_index] &= ~(1U << bit_index);
 
     return 0;
 }

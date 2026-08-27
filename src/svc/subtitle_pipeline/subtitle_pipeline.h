@@ -12,7 +12,6 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 // === Headers files inclusions ==================================================================================== //
 
-#include <stddef.h>
 #include <stdint.h>
 
 #include "subtitle_bram.h"
@@ -40,7 +39,6 @@ typedef struct
     uint32_t display_height;
     uint8_t platform_ready; ///< holds a reference to the shared MMIO platform.
     uint8_t initialized;
-    uint8_t enabled;
 } subtitle_pipeline_t;
 
 // === Public variable declarations ================================================================================ //
@@ -51,16 +49,7 @@ int subtitle_pipeline_init(subtitle_pipeline_t* pipeline,
                            uint32_t display_height);
 void subtitle_pipeline_cleanup(subtitle_pipeline_t* pipeline);
 int subtitle_pipeline_clear(subtitle_pipeline_t* pipeline);
-int subtitle_pipeline_write_bitmap(subtitle_pipeline_t* pipeline,
-                                   uint8_t const* src,
-                                   size_t src_size,
-                                   int32_t x,
-                                   int32_t y,
-                                   uint32_t width,
-                                   uint32_t height);
 int subtitle_pipeline_set_box(subtitle_pipeline_t* pipeline, uint32_t width, uint32_t height);
-/// @brief Render final text, resize the compact subtitle box, clear stale mask pixels, and write it.
-int subtitle_pipeline_write_text(subtitle_pipeline_t* pipeline, char const* text);
 /// @brief Render a final/partial caption and prepare its compact mask region.
 int subtitle_pipeline_write_caption(subtitle_pipeline_t* pipeline,
                                     char const* text,

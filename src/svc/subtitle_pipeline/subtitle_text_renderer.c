@@ -531,24 +531,6 @@ static void draw_visible(uint8_t* const bitmap,
 // === Public function implementation ============================================================================== //
 
 /**
- * @brief Render plain UTF-8 subtitle text as a final caption.
- * @param text Null-terminated subtitle text.
- * @param dst Destination packed MSB-first 1-bpp bitmap.
- * @param dst_size Destination capacity; must hold the complete hardware mask.
- * @param width Rendered compact box width, including 18 px horizontal padding per side.
- * @param height Rendered compact box height, including 10 px vertical padding per side.
- * @return 0 on success, or a negative errno-style value on failure.
- */
-int subtitle_text_renderer_render(char const* const text,
-                                  uint8_t* const dst,
-                                  size_t const dst_size,
-                                  uint32_t* const width,
-                                  uint32_t* const height)
-{
-    return subtitle_text_renderer_render_caption(text, 1U, dst, dst_size, width, height);
-}
-
-/**
  * @brief Render a final/partial broadcast caption using proportional Lato Semibold glyphs.
  *
  * A caption pair reserves one line for the previous final segment and up to two lines for

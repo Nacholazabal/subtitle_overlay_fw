@@ -41,8 +41,6 @@ typedef struct
 
 int subtitle_bram_init(subtitle_bram_t* bram);
 int subtitle_bram_clear(subtitle_bram_t* bram);
-int subtitle_bram_set_pixel(subtitle_bram_t* bram, int32_t x, int32_t y);
-int subtitle_bram_clear_pixel(subtitle_bram_t* bram, int32_t x, int32_t y);
 int subtitle_bram_write_bitmap(subtitle_bram_t* bram,
                                uint8_t const* src,
                                size_t src_size,

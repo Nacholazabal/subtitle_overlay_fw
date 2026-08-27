@@ -171,7 +171,6 @@ int subtitle_pipeline_init(subtitle_pipeline_t* const pipeline,
     }
 
     pipeline->initialized = 1U;
-    pipeline->enabled = 0U;
     return 0;
 }
 
@@ -219,33 +218,6 @@ int subtitle_pipeline_clear(subtitle_pipeline_t* const pipeline)
 }
 
 /**
- * @brief Write a packed MSB-first bitmap into the subtitle mask.
- * @param pipeline Initialized pipeline instance.
- * @param src Source row-major bitmap.
- * @param src_size Source bitmap size in bytes.
- * @param x Destination x coordinate.
- * @param y Destination y coordinate.
- * @param width Source bitmap width in pixels.
- * @param height Source bitmap height in pixels.
- * @return 0 on success, or a negative errno-style value on failure.
- */
-int subtitle_pipeline_write_bitmap(subtitle_pipeline_t* const pipeline,
-                                   uint8_t const* const src,
-                                   size_t src_size,
-                                   int32_t x,
-                                   int32_t y,
-                                   uint32_t width,
-                                   uint32_t height)
-{
-    if (!pipeline_is_initialized(pipeline))
-    {
-        return (pipeline == NULL) ? -EINVAL : -APP_ESTATE;
-    }
-
-    return subtitle_bram_write_bitmap(&pipeline->bram, src, src_size, x, y, width, height);
-}
-
-/**
  * @brief Resize and reposition the black subtitle box around compact mask content.
  * @param pipeline Initialized pipeline instance.
  * @param width Box width in pixels, including horizontal text padding.
@@ -288,17 +260,6 @@ int subtitle_pipeline_set_box(subtitle_pipeline_t* const pipeline,
     }
 
     return status;
-}
-
-/**
- * @brief Render text into a subtitle mask and write it to BRAM.
- * @param pipeline Initialized pipeline instance.
- * @param text Null-terminated subtitle text.
- * @return 0 on success, or a negative errno-style value on failure.
- */
-int subtitle_pipeline_write_text(subtitle_pipeline_t* const pipeline, char const* const text)
-{
-    return subtitle_pipeline_write_caption(pipeline, text, 1U);
 }
 
 /**
@@ -433,20 +394,12 @@ int subtitle_pipeline_poll_sof(subtitle_pipeline_t* const pipeline, uint8_t* con
  */
 int subtitle_pipeline_enable(subtitle_pipeline_t* const pipeline, uint8_t enabled)
 {
-    int status;
-
     if (!pipeline_is_initialized(pipeline))
     {
         return (pipeline == NULL) ? -EINVAL : -APP_ESTATE;
     }
 
-    status = subtitle_overlay_enable(&pipeline->overlay, enabled);
-    if (status == 0)
-    {
-        pipeline->enabled = (enabled != 0U) ? 1U : 0U;
-    }
-
-    return status;
+    return subtitle_overlay_enable(&pipeline->overlay, enabled);
 }
 
 // === End of documentation ======================================================================================== //
