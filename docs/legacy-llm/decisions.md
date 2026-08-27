@@ -212,3 +212,16 @@ undefined — that is the unit-test build only. Both shipping builds (`app` and
 Neither was referenced by the `Makefile` or `project.yml`, so nothing compiled
 them; `src/` should contain only what ships. The `multi-file-workflows` skill
 points at their new location.
+
+### SRC-D08 — where the dead-code guard runs
+`make video-port-check` is a **host-gcc** target. Its final step partial-links the
+tree with `$(CC) -r`, which the ARM cross toolchain cannot do (`cannot find
+-lgcc_s`), so the guard runs on the CI runner and locally, not in the VM. ALSA and
+OpenSSL live in the PetaLinux sysroot, so CI compiles with
+`USB_AUDIO_ENABLE_ALSA=0 USB_AUDIO_ENABLE_TLS=0`.
+
+That leaves a gap: code inside `#ifdef CONFIG_USB_AUDIO_ALSA` is not covered by
+the warning flags in CI. It was checked by hand in the VM when this landed — all
+36 translation units compile warning-free with ALSA and TLS enabled — and
+`make app` (the shipping build) is warning-free there too. If that `#ifdef` grows,
+re-check it in the VM rather than trusting the CI job alone.
