@@ -29,6 +29,34 @@ jobs:
       - name: Run clang-tidy
         run: make clang-tidy
 
+  dead-code:
+    name: dead-code
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      # ALSA and OpenSSL live in the PetaLinux sysroot, not on the runner, so
+      # both are compiled out here. The -Wunused-* flags are what this job is
+      # for; they are wired into VIDEO_PORT_CFLAGS in the Makefile.
+      - name: Compile the tree with the unused-symbol warnings
+        run: |
+          make video-port-check \
+            USB_AUDIO_ENABLE_ALSA=0 \
+            USB_AUDIO_ENABLE_TLS=0 \
+            2>&1 | tee build.log
+          if grep -q 'warning:' build.log; then
+            echo "::error::video-port-check produced warnings"
+            grep 'warning:' build.log
+            exit 1
+          fi
+
+      - name: Sweep for exported symbols with no caller
+        run: scripts/dead_symbols.sh
+
   coverage:
     name: coverage
     runs-on: ubuntu-latest

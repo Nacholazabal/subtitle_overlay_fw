@@ -1,0 +1,13 @@
+# Exported functions with no production caller that are deliberately kept.
+#
+# Format: symbol  # reason
+# An entry without a reason after "#" fails the check, and an entry whose symbol
+# has since gained a caller fails it too — the list cannot silently rot.
+#
+# Every keep here should also appear in docs/legacy-llm/decisions.md.
+
+log_unsubscribe               # subscribe/unsubscribe is a coherent pair; see SRC-D01
+subtitle_pipeline_commit      # frame-sync trio owned by ARCH-03 (F17a): wire in or delete together
+subtitle_pipeline_clear_sof   # frame-sync trio owned by ARCH-03 (F17a): wire in or delete together
+subtitle_pipeline_poll_sof    # frame-sync trio owned by ARCH-03 (F17a): wire in or delete together
+stt_ws_client_cleanup         # self-documented legacy shim; ARCH-05 replaces it
