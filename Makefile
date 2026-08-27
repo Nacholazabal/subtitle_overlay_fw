@@ -60,8 +60,17 @@ APP_LDLIBS += -Wl,-rpath-link,$(OPENSSL_SYSROOT_COMPONENT)/usr/lib
 APP_LDLIBS += -lssl -lcrypto
 endif
 
+# Dead-code guard (ARCH-06): this target compiles the whole non-vendored tree
+# with host gcc, so it is where unused symbols surface. The BSP shims get these
+# three relaxed again below.
+VIDEO_PORT_WARN_FLAGS := \
+	-Wunused-function \
+	-Wunused-but-set-variable \
+	-Wunused-macros
+
 VIDEO_PORT_CFLAGS := \
-	$(COMMON_CFLAGS)
+	$(COMMON_CFLAGS) \
+	$(VIDEO_PORT_WARN_FLAGS)
 
 VIDEO_PORT_SRCS := \
 	src/bsp/platform/linux/hw_platform.c \
@@ -157,7 +166,8 @@ $(VIDEO_PORT_BUILD_DIR)/%.o: %.c
 $(VIDEO_PORT_BUILD_DIR)/src/bsp/vtc_v7_2/src/%.o: VIDEO_PORT_CFLAGS += \
 	-Wno-cast-function-type \
 	-Wno-sign-compare \
-	-Wno-tautological-compare
+	-Wno-tautological-compare \
+	-Wno-unused-macros
 
 $(VIDEO_PORT_BUILD_DIR)/video-port-check.o: $(VIDEO_PORT_OBJS)
 	$(CC) -r -o $@ $^

@@ -51,8 +51,7 @@ mapfile -t SOURCES < <(
         'src/svc/**/*.c' \
         'src/utils/log/*.c' \
         'src/utils/number_parse/*.c' \
-        ':!:src/bsp/**' \
-        ':!:src/utils/template/**' |
+        ':!:src/bsp/**' |
     sort
 )
 
@@ -75,3 +74,7 @@ for src in "${SOURCES[@]}"; do
     printf 'clang-tidy %s\n' "${src}"
     clang-tidy "${src}" -- "${COMMON_FLAGS[@]}"
 done
+
+# ARCH-06 guard: exported symbols with no production caller.
+printf '\n'
+"${SCRIPT_DIR}/dead_symbols.sh"

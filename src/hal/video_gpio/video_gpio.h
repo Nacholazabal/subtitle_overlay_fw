@@ -34,7 +34,6 @@ typedef struct
 // === Public function declarations ================================================================================ //
 
 int video_gpio_init(video_gpio_t* gpio);
-void video_gpio_set_hpd(video_gpio_t* gpio, uint8_t enabled);
 uint8_t video_gpio_is_locked(video_gpio_t const* gpio);
 
 // === End of documentation ======================================================================================== //

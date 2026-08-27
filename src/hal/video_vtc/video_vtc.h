@@ -50,7 +50,6 @@ typedef struct
 typedef struct
 {
     XVtc instance;
-    uint16_t device_id;
     int initialized;
 } video_vtc_t;
 

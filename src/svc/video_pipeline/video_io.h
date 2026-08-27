@@ -34,9 +34,7 @@ typedef struct
     video_gpio_t gpio;
     video_vtc_t vtc;
     video_dma_t* dma;
-    video_vtc_timing_t timing;
     uint32_t stride;
-    uint32_t frame_index;
     uint32_t detector_started_ms;
     uint8_t detector_started;
     uint8_t running;
@@ -49,7 +47,6 @@ typedef struct
     video_dma_t* dma;
     video_pipeline_mode_t const* mode;
     uint32_t stride;
-    uint32_t frame_index;
     uint8_t running;
 } video_output_t;
 

@@ -240,6 +240,35 @@ void test_video_pipeline_poll_reports_unsupported_timing(void)
     TEST_ASSERT_NULL(video_pipeline_get_active_mode(&pipeline));
 }
 
+void test_video_pipeline_poll_rejects_timing_larger_than_the_framebuffer(void)
+{
+    video_vtc_timing_t timing = {0};
+
+    // Taller than VIDEO_PIPELINE_MAX_HEIGHT: rejected before the mode table is
+    // consulted, because the framebuffer geometry could not hold it anyway.
+    timing.width = VIDEO_PIPELINE_MAX_WIDTH;
+    timing.height = VIDEO_PIPELINE_MAX_HEIGHT + 1U;
+    pipeline.state = VIDEO_PIPELINE_ACQUIRING_TIMING;
+
+    video_input_locked_ExpectAnyArgsAndReturn(1U);
+    video_input_read_timing_ExpectAnyArgsAndReturn(XST_SUCCESS);
+    video_input_read_timing_ReturnThruPtr_timing(&timing);
+
+    TEST_ASSERT_EQUAL(VIDEO_PIPELINE_POLL_UNSUPPORTED_INPUT, video_pipeline_poll(&pipeline, 300U));
+    TEST_ASSERT_EQUAL(VIDEO_PIPELINE_UNSUPPORTED_INPUT, video_pipeline_get_state(&pipeline));
+
+    timing.width = VIDEO_PIPELINE_MAX_WIDTH + 1U;
+    timing.height = VIDEO_PIPELINE_MAX_HEIGHT;
+    pipeline.state = VIDEO_PIPELINE_ACQUIRING_TIMING;
+
+    video_input_locked_ExpectAnyArgsAndReturn(1U);
+    video_input_read_timing_ExpectAnyArgsAndReturn(XST_SUCCESS);
+    video_input_read_timing_ReturnThruPtr_timing(&timing);
+
+    TEST_ASSERT_EQUAL(VIDEO_PIPELINE_POLL_UNSUPPORTED_INPUT, video_pipeline_poll(&pipeline, 400U));
+    TEST_ASSERT_EQUAL(VIDEO_PIPELINE_UNSUPPORTED_INPUT, video_pipeline_get_state(&pipeline));
+}
+
 void test_video_pipeline_poll_starts_passthrough_for_supported_timing(void)
 {
     video_vtc_timing_t timing = {0};

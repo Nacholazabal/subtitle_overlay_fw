@@ -12,7 +12,6 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 // === Headers files inclusions ==================================================================================== //
 
-#include <stddef.h>
 #include <stdint.h>
 
 #include "video_vtc.h"
@@ -35,9 +34,7 @@ typedef struct
 // === Public variable declarations ================================================================================ //
 // === Public function declarations ================================================================================ //
 
-video_pipeline_mode_t const* video_modes_default(void);
 video_pipeline_mode_t const* video_modes_find(uint32_t width, uint32_t height);
-video_pipeline_mode_t const* video_modes_all(size_t* count);
 
 // === End of documentation ======================================================================================== //
 

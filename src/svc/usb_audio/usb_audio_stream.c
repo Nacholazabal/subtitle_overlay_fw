@@ -157,6 +157,7 @@ static void* capture_thread_main(void* const arg)
     {
         LOG_ERROR("usb-audio: STT client unavailable; captured PCM will be dropped");
     }
+    LOG_INFO("usb-audio: waiting for first ALSA chunk");
 
     while (stream_stop_requested(stream) == 0U)
     {
@@ -165,11 +166,6 @@ static void* capture_thread_main(void* const arg)
         size_t bytes_read = 0U;
         int status;
 
-        if (first_read_pending != 0U)
-        {
-            LOG_INFO("usb-audio: waiting for first ALSA chunk");
-        }
-
         status = usb_audio_capture_read_chunk(&stream->capture,
                                               chunk.payload,
                                               sizeof(chunk.payload),
@@ -177,10 +173,6 @@ static void* capture_thread_main(void* const arg)
 
         if (status != 0)
         {
-            if (status == -EAGAIN)
-            {
-                continue;
-            }
             if (status == -ECANCELED)
             {
                 break; // A requested stop, not a fault.

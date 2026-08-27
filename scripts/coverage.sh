@@ -23,8 +23,6 @@ if command -v gcovr >/dev/null 2>&1; then
         --filter 'src/' \
         --exclude 'src/bsp/' \
         --exclude 'src/qpc/' \
-        --exclude 'src/utils/template/' \
-        --exclude 'src/utils/template_qpc_AO/' \
         --xml-pretty \
         --output build/coverage/coverage.xml \
         build/ceedling/test/out

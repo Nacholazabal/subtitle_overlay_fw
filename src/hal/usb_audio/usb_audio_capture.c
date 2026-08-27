@@ -25,8 +25,14 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 // === Macros definitions ========================================================================================== //
 
-#define USB_AUDIO_CAPTURE_SAMPLE_BYTES   (2U)
-#define USB_AUDIO_CAPTURE_BUFFER_PERIODS (8U)
+// Only the ALSA build reads these, so they are defined only there: a macro that
+// no translation unit in the current configuration uses is dead code too.
+#ifdef CONFIG_USB_AUDIO_ALSA
+    #define USB_AUDIO_CAPTURE_SAMPLE_BYTES    (2U)
+    #define USB_AUDIO_CAPTURE_BUFFER_PERIODS  (8U)
+    #define USB_AUDIO_CAPTURE_DEFAULT_VOL_PCT (100L)
+#endif
+
 // === Private data type declarations ============================================================================== //
 // === Private variable declarations =============================================================================== //
 // === Private function declarations =============================================================================== //
@@ -37,8 +43,6 @@ static int recover_pcm(snd_pcm_t* pcm, int err);
 static char const* pcm_state_name(snd_pcm_state_t state);
 static void set_capture_gain(char const* device);
 #endif
-
-#define USB_AUDIO_CAPTURE_DEFAULT_VOL_PCT (100L)
 
 // === Public variable definitions ================================================================================= //
 // === Private variable definitions ================================================================================ //

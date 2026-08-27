@@ -10,7 +10,6 @@
 #include "mock_subtitle_text_renderer.h"
 
 static subtitle_pipeline_t pipeline;
-static uint8_t bitmap[2];
 static uint8_t captured_caption_is_final;
 
 static void expect_init_success(void)
@@ -45,7 +44,6 @@ static int renderer_caption_stub(char const* text,
 void setUp(void)
 {
     memset(&pipeline, 0, sizeof(pipeline));
-    memset(bitmap, 0xFF, sizeof(bitmap));
     captured_caption_is_final = 0U;
 }
 
@@ -66,7 +64,6 @@ void test_subtitle_pipeline_init_configures_default_geometry_and_stays_disabled(
     TEST_ASSERT_EQUAL_INT(0, subtitle_pipeline_init(&pipeline, 1280U, 720U));
 
     TEST_ASSERT_EQUAL_UINT8(1U, pipeline.initialized);
-    TEST_ASSERT_EQUAL_UINT8(0U, pipeline.enabled);
     TEST_ASSERT_EQUAL_UINT32(1280U, pipeline.display_width);
     TEST_ASSERT_EQUAL_UINT32(720U, pipeline.display_height);
     TEST_ASSERT_EQUAL_UINT32(1024U, pipeline.config.width);
@@ -139,7 +136,6 @@ void test_subtitle_pipeline_init_returns_eio_when_platform_acquire_fails(void)
 void test_subtitle_pipeline_cleanup_disables_initialized_overlay_and_resets_state(void)
 {
     pipeline.initialized = 1U;
-    pipeline.enabled = 1U;
     pipeline.platform_ready = 1U;
 
     subtitle_overlay_enable_ExpectAnyArgsAndReturn(0);
@@ -148,7 +144,6 @@ void test_subtitle_pipeline_cleanup_disables_initialized_overlay_and_resets_stat
     subtitle_pipeline_cleanup(&pipeline);
 
     TEST_ASSERT_EQUAL_UINT8(0U, pipeline.initialized);
-    TEST_ASSERT_EQUAL_UINT8(0U, pipeline.enabled);
     TEST_ASSERT_EQUAL_UINT8(0U, pipeline.platform_ready);
 }
 
@@ -187,22 +182,6 @@ void test_subtitle_pipeline_clear_requires_initialized_pipeline_and_delegates_to
     TEST_ASSERT_EQUAL_INT(0, subtitle_pipeline_clear(&pipeline));
 }
 
-void test_subtitle_pipeline_write_bitmap_requires_initialized_pipeline_and_delegates_to_bram(void)
-{
-    TEST_ASSERT_EQUAL_INT(-EINVAL,
-                          subtitle_pipeline_write_bitmap(NULL, bitmap, sizeof(bitmap), 1, 2, 3, 4));
-    TEST_ASSERT_EQUAL_INT(
-        -APP_ESTATE,
-        subtitle_pipeline_write_bitmap(&pipeline, bitmap, sizeof(bitmap), 1, 2, 3, 4));
-
-    pipeline.initialized = 1U;
-    subtitle_bram_write_bitmap_ExpectAnyArgsAndReturn(0);
-
-    TEST_ASSERT_EQUAL_INT(
-        0,
-        subtitle_pipeline_write_bitmap(&pipeline, bitmap, sizeof(bitmap), 1, 2, 3, 4));
-}
-
 void test_subtitle_pipeline_set_box_centers_compact_geometry_above_bottom_margin(void)
 {
     pipeline.initialized = 1U;
@@ -232,10 +211,11 @@ void test_subtitle_pipeline_set_box_rejects_invalid_geometry(void)
     pipeline.display_height = 720U;
     TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_pipeline_set_box(&pipeline, 0U, 40U));
     TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_pipeline_set_box(&pipeline, 100U, 0U));
+    TEST_ASSERT_EQUAL_INT(-EINVAL,
+                          subtitle_pipeline_set_box(&pipeline, SUBTITLE_BRAM_MASK_WIDTH + 1U, 40U));
     TEST_ASSERT_EQUAL_INT(
-        -EINVAL, subtitle_pipeline_set_box(&pipeline, SUBTITLE_BRAM_MASK_WIDTH + 1U, 40U));
-    TEST_ASSERT_EQUAL_INT(
-        -EINVAL, subtitle_pipeline_set_box(&pipeline, 100U, SUBTITLE_BRAM_MASK_HEIGHT + 1U));
+        -EINVAL,
+        subtitle_pipeline_set_box(&pipeline, 100U, SUBTITLE_BRAM_MASK_HEIGHT + 1U));
 }
 
 void test_subtitle_pipeline_set_box_preserves_configuration_on_hal_failure(void)
@@ -276,7 +256,7 @@ void test_subtitle_pipeline_write_caption_passes_current_final_state_to_renderer
     TEST_ASSERT_EQUAL_UINT8(0U, captured_caption_is_final);
 }
 
-void test_subtitle_pipeline_write_text_treats_text_as_final_caption(void)
+void test_subtitle_pipeline_write_caption_renders_final_text_solid(void)
 {
     pipeline.initialized = 1U;
     pipeline.display_width = 1280U;
@@ -286,7 +266,7 @@ void test_subtitle_pipeline_write_text_treats_text_as_final_caption(void)
     subtitle_bram_clear_ExpectAnyArgsAndReturn(0);
     subtitle_bram_write_bitmap_ExpectAnyArgsAndReturn(0);
 
-    TEST_ASSERT_EQUAL_INT(0, subtitle_pipeline_write_text(&pipeline, "manual"));
+    TEST_ASSERT_EQUAL_INT(0, subtitle_pipeline_write_caption(&pipeline, "manual", 1U));
     TEST_ASSERT_EQUAL_UINT8(1U, captured_caption_is_final);
 }
 
@@ -338,17 +318,15 @@ void test_subtitle_pipeline_nonblocking_sof_helpers_delegate_to_overlay(void)
     TEST_ASSERT_EQUAL_UINT8(1U, sof_seen);
 }
 
-void test_subtitle_pipeline_enable_updates_enabled_flag(void)
+void test_subtitle_pipeline_enable_delegates_to_overlay(void)
 {
     pipeline.initialized = 1U;
 
     subtitle_overlay_enable_ExpectAnyArgsAndReturn(0);
     TEST_ASSERT_EQUAL_INT(0, subtitle_pipeline_enable(&pipeline, 1));
-    TEST_ASSERT_EQUAL_UINT8(1U, pipeline.enabled);
 
     subtitle_overlay_enable_ExpectAnyArgsAndReturn(0);
     TEST_ASSERT_EQUAL_INT(0, subtitle_pipeline_enable(&pipeline, 0));
-    TEST_ASSERT_EQUAL_UINT8(0U, pipeline.enabled);
 }
 
 void test_subtitle_pipeline_enable_rejects_uninitialized_or_returns_hal_failure(void)
@@ -360,7 +338,6 @@ void test_subtitle_pipeline_enable_rejects_uninitialized_or_returns_hal_failure(
     subtitle_overlay_enable_ExpectAnyArgsAndReturn(-EIO);
 
     TEST_ASSERT_EQUAL_INT(-EIO, subtitle_pipeline_enable(&pipeline, 1));
-    TEST_ASSERT_EQUAL_UINT8(0U, pipeline.enabled);
 }
 
 void test_subtitle_pipeline_write_caption_propagates_renderer_failure(void)
