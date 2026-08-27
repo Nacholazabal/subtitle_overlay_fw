@@ -403,7 +403,7 @@ void test_stt_ws_client_defers_tls_until_the_clock_is_plausible(void)
     client.state = STT_WS_STATE_IDLE;
     client.next_attempt_ms = 0U;
 
-    TEST_ASSERT_EQUAL_INT(-EAGAIN, 0 /* service() is now static - cannot call directly */);
+    TEST_ASSERT_EQUAL_INT(-EAGAIN, stt_ws_client_service(&client));
     TEST_ASSERT_EQUAL_INT(STT_WS_STATE_WAIT_CLOCK, stt_ws_client_state(&client));
     // Nothing was dialled: the guard runs before any transport call.
     TEST_ASSERT_EQUAL_UINT32(0U, fake_net_tls_open_count());
@@ -423,7 +423,7 @@ void test_stt_ws_client_skips_the_clock_guard_for_plaintext_endpoints(void)
     // No certificate is involved over ws://, so a wrong clock is not a reason
     // to refuse to connect. Connecting is expected to fail here instead.
     fake_net_tls_fail_open(1U);
-    TEST_ASSERT_EQUAL_INT(-EAGAIN, 0 /* service() is now static - cannot call directly */);
+    TEST_ASSERT_EQUAL_INT(-EAGAIN, stt_ws_client_service(&client));
     TEST_ASSERT_EQUAL_INT(STT_WS_STATE_BACKOFF, stt_ws_client_state(&client));
 }
 
@@ -440,11 +440,11 @@ void test_stt_ws_client_backs_off_and_grows_the_delay_after_failures(void)
     client.state = STT_WS_STATE_IDLE;
     fake_net_tls_fail_open(1U);
 
-    TEST_ASSERT_EQUAL_INT(-EAGAIN, 0 /* service() is now static - cannot call directly */);
+    TEST_ASSERT_EQUAL_INT(-EAGAIN, stt_ws_client_service(&client));
     first_wait = client.backoff_ms;
 
     client.next_attempt_ms = 0U;
-    TEST_ASSERT_EQUAL_INT(-EAGAIN, 0 /* service() is now static - cannot call directly */);
+    TEST_ASSERT_EQUAL_INT(-EAGAIN, stt_ws_client_service(&client));
     second_wait = client.backoff_ms;
 
     TEST_ASSERT_EQUAL_UINT64(config.backoff_min_ms, first_wait);
@@ -461,12 +461,12 @@ void test_stt_ws_client_waits_for_the_scheduled_retry_instant(void)
     client.state = STT_WS_STATE_IDLE;
     fake_net_tls_fail_open(1U);
 
-    TEST_ASSERT_EQUAL_INT(-EAGAIN, 0 /* service() is now static - cannot call directly */);
+    TEST_ASSERT_EQUAL_INT(-EAGAIN, stt_ws_client_service(&client));
 
     TEST_ASSERT_EQUAL_UINT32(1U, fake_net_tls_open_count());
 
     // Still inside the backoff window: no second attempt yet.
-    TEST_ASSERT_EQUAL_INT(-EAGAIN, 0 /* service() is now static - cannot call directly */);
+    TEST_ASSERT_EQUAL_INT(-EAGAIN, stt_ws_client_service(&client));
     TEST_ASSERT_EQUAL_UINT32(1U, fake_net_tls_open_count());
 }
 
@@ -565,7 +565,7 @@ static void bring_session_up(void)
                            "\"sample_rate_hz\":48000,\"run_engine\":\"nemotron_3_5_nemo\","
                            "\"run_config\":{\"config_latency_ms\":560}}");
 
-    TEST_ASSERT_EQUAL_INT(0, 0 /* service() is now static - cannot call directly */);
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_service(&client));
     TEST_ASSERT_EQUAL_INT(STT_WS_STATE_READY, stt_ws_client_state(&client));
 }
 
@@ -633,7 +633,7 @@ void test_stt_ws_client_receives_a_transcript_over_a_live_session(void)
                            "\"start_sec\":0.0,\"end_sec\":1.5,\"text\":\"hola mundo\","
                            "\"att_context_size\":[56,6],\"final_reason\":\"model_eou\"}");
 
-    TEST_ASSERT_EQUAL_INT(0, 0 /* service() is now static - cannot call directly */);
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_service(&client));
     TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_EVENT_RING_DEPTH,
                                                        &count));
     TEST_ASSERT_EQUAL_UINT32(1U, count);
@@ -654,7 +654,7 @@ void test_stt_ws_client_answers_a_server_ping_with_a_pong(void)
     // uvicorn pings every 20 s and closes after 20 s without a pong, so this
     // is what keeps an idle session alive between utterances.
     fake_net_tls_push_frame(0x9U, "hb", 2U);
-    TEST_ASSERT_EQUAL_INT(0, 0 /* service() is now static - cannot call directly */);
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_service(&client));
 
     sent = fake_net_tls_tx(&sent_len);
     TEST_ASSERT_GREATER_OR_EQUAL_UINT32(8U, (uint32_t)sent_len);
@@ -711,7 +711,7 @@ void test_stt_ws_client_reconnects_after_the_server_closes(void)
     bring_session_up();
     fake_net_tls_push_frame(0x8U, NULL, 0U); // server CLOSE
 
-    TEST_ASSERT_EQUAL_INT(-EAGAIN, 0 /* service() is now static - cannot call directly */);
+    TEST_ASSERT_EQUAL_INT(-EAGAIN, stt_ws_client_service(&client));
     TEST_ASSERT_EQUAL_INT(STT_WS_STATE_BACKOFF, stt_ws_client_state(&client));
     TEST_ASSERT_EQUAL_UINT32(1U, fake_net_tls_close_count());
 
@@ -727,7 +727,7 @@ void test_stt_ws_client_treats_a_busy_server_as_retryable(void)
     // One GPU session at a time; a reconnect that lands too early gets this.
     fake_net_tls_push_text("{\"type\":\"error\",\"message\":\"server busy\",\"busy\":true}");
 
-    TEST_ASSERT_EQUAL_INT(-EAGAIN, 0 /* service() is now static - cannot call directly */);
+    TEST_ASSERT_EQUAL_INT(-EAGAIN, stt_ws_client_service(&client));
     TEST_ASSERT_EQUAL_INT(STT_WS_STATE_BACKOFF, stt_ws_client_state(&client));
 
     stt_ws_client_stats(&client, &stats);
@@ -746,7 +746,7 @@ void test_stt_ws_client_refuses_a_session_ready_with_a_newer_protocol_version(vo
     // A newer server could change the audio framing; refusing beats guessing.
     fake_net_tls_push_text("{\"type\":\"session_ready\",\"version\":2}");
 
-    TEST_ASSERT_EQUAL_INT(-EAGAIN, 0 /* service() is now static - cannot call directly */);
+    TEST_ASSERT_EQUAL_INT(-EAGAIN, stt_ws_client_service(&client));
     TEST_ASSERT_NOT_EQUAL_INT(STT_WS_STATE_READY, stt_ws_client_state(&client));
 }
 
@@ -763,7 +763,7 @@ void test_stt_ws_client_reassembles_a_fragmented_transcript(void)
     fake_net_tls_push_fragment(0x1U, 0U, head, strlen(head));
     fake_net_tls_push_fragment(0x0U, 1U, tail, strlen(tail));
 
-    TEST_ASSERT_EQUAL_INT(0, 0 /* service() is now static - cannot call directly */);
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_service(&client));
     TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_EVENT_RING_DEPTH,
                                                        &count));
     TEST_ASSERT_EQUAL_UINT32(1U, count);
@@ -778,7 +778,7 @@ void test_stt_ws_client_ignores_a_continuation_without_a_start(void)
     bring_session_up();
     fake_net_tls_push_fragment(0x0U, 1U, "orphan", 6U);
 
-    TEST_ASSERT_EQUAL_INT(0, 0 /* service() is now static - cannot call directly */);
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_service(&client));
     TEST_ASSERT_EQUAL_INT(STT_WS_STATE_READY, stt_ws_client_state(&client));
     stt_ws_client_stats(&client, &stats);
     TEST_ASSERT_EQUAL_UINT32(1U, stats.protocol_errors);
@@ -794,13 +794,13 @@ void test_stt_ws_client_handles_summary_pong_and_unknown_message_kinds(void)
     // must not be counted as protocol errors.
     fake_net_tls_push_text("{\"type\":\"session_summary\",\"total_audio_sec\":12.5}");
     fake_net_tls_push_text("{\"type\":\"pong\"}");
-    TEST_ASSERT_EQUAL_INT(0, 0 /* service() is now static - cannot call directly */);
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_service(&client));
     TEST_ASSERT_EQUAL_UINT32(protocol_errors_before, client.stats.protocol_errors);
     TEST_ASSERT_EQUAL_INT(STT_WS_STATE_READY, stt_ws_client_state(&client));
 
     // A message kind the firmware does not know is counted, not fatal.
     fake_net_tls_push_text("{\"type\":\"some_future_message\"}");
-    TEST_ASSERT_EQUAL_INT(0, 0 /* service() is now static - cannot call directly */);
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_service(&client));
     TEST_ASSERT_EQUAL_UINT32(protocol_errors_before + 1U, client.stats.protocol_errors);
     TEST_ASSERT_EQUAL_INT(STT_WS_STATE_READY, stt_ws_client_state(&client));
 }
@@ -825,7 +825,7 @@ void test_stt_ws_client_evicts_the_oldest_event_when_the_ring_overflows(void)
                  (unsigned long)i, (unsigned long)i);
         fake_net_tls_push_text(line);
     }
-    TEST_ASSERT_EQUAL_INT(0, 0 /* service() is now static - cannot call directly */);
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_service(&client));
 
     TEST_ASSERT_GREATER_THAN_UINT32(0U, stt_event_ring_get_dropped_count(&client.event_ring));
     // Ring is now full (internal to event_ring module)
@@ -853,7 +853,7 @@ void test_stt_ws_client_discards_a_message_larger_than_its_reassembly_buffer(voi
     oversized[sizeof(oversized) - 1U] = '\0';
     fake_net_tls_push_text(oversized);
 
-    TEST_ASSERT_EQUAL_INT(0, 0 /* service() is now static - cannot call directly */);
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_service(&client));
     TEST_ASSERT_EQUAL_UINT32(protocol_errors_before + 1U, client.stats.protocol_errors);
     TEST_ASSERT_EQUAL_UINT8(0U, client.msg_active);
     TEST_ASSERT_EQUAL_INT(STT_WS_STATE_READY, stt_ws_client_state(&client));

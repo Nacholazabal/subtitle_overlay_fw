@@ -154,3 +154,11 @@ uint32_t stt_event_ring_get_rejected_count(stt_event_ring_t* ring);
 #ifdef __cplusplus
 }
 #endif
+
+/**
+ * @brief Get current event count in ring (for stats tracking).
+ * @param ring Ring instance.
+ * @return Current count, or 0 if ring is NULL.
+ */
+uint32_t stt_event_ring_get_count(stt_event_ring_t const* ring);
+

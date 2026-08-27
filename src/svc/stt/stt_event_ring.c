@@ -255,3 +255,16 @@ uint32_t stt_event_ring_get_rejected_count(stt_event_ring_t* const ring)
     pthread_mutex_unlock(&ring->lock);
     return rejected;
 }
+
+uint32_t stt_event_ring_get_count(stt_event_ring_t const* const ring)
+{
+    uint32_t count = 0U;
+
+    if (ring != NULL)
+    {
+        pthread_mutex_lock((pthread_mutex_t*)&ring->lock);
+        count = ring->count;
+        pthread_mutex_unlock((pthread_mutex_t*)&ring->lock);
+    }
+    return count;
+}

@@ -1096,13 +1096,37 @@ int stt_ws_client_poll_events(stt_ws_client_t* const client,
                               uint32_t max_events,
                               uint32_t* const event_count)
 {
+    uint32_t taken_before;
+    uint32_t taken_after;
+    int status;
+
     if ((client == NULL) || (client->initialized == 0U) || (events == NULL) || (max_events == 0U)
         || (event_count == NULL))
     {
         return -EINVAL;
     }
 
-    return stt_event_ring_drain(&client->event_ring, events, max_events, event_count);
+    taken_before = stt_event_ring_get_count(&client->event_ring);
+    status = stt_event_ring_drain(&client->event_ring, events, max_events, event_count);
+    taken_after = stt_event_ring_get_count(&client->event_ring);
+
+    // Track parse errors: events removed from ring but not successfully parsed
+    if (taken_before > taken_after)
+    {
+        uint32_t const removed = taken_before - taken_after;
+        uint32_t const parsed = *event_count;
+
+        if (removed > parsed)
+        {
+            uint32_t const parse_errors = removed - parsed;
+
+            pthread_mutex_lock(&client->lock);
+            client->stats.protocol_errors += parse_errors;
+            pthread_mutex_unlock(&client->lock);
+        }
+    }
+
+    return status;
 }
 
 /**
@@ -1244,3 +1268,21 @@ void stt_ws_client_cleanup(stt_ws_client_t* const client)
 }
 
 // === End of documentation ======================================================================================== //
+
+#ifdef TEST
+/** @brief Test-only wrapper to call the now-static service() function. */
+int stt_ws_client_service(stt_ws_client_t* const client)
+{
+    return service(client);
+}
+
+/** @brief Test-only wrapper to call the now-static send_audio_chunk() function. */
+int stt_ws_client_send_audio(stt_ws_client_t* const client,
+                             void const* const pcm,
+                             size_t size,
+                             uint64_t timestamp_ns,
+                             uint32_t dropped)
+{
+    return send_audio_chunk(client, pcm, size, timestamp_ns, dropped);
+}
+#endif
