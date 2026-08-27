@@ -4,6 +4,7 @@
 
 #include "app.h"
 #include "mock_stt_ws_client.h"
+#include "mock_stt_ws_config.h"
 #include "mock_subtitle_pipeline.h"
 #include "qpc_test_harness.h"
 #include "stt_ws_client.h"
@@ -61,7 +62,10 @@ static stt_ws_client_t fake_client;
 
 static void expect_stt_init_success(void)
 {
-    stt_ws_client_shared_IgnoreAndReturn(&fake_client);
+    stt_ws_config_default_IgnoreAndReturn(0);
+    stt_ws_config_parse_url_IgnoreAndReturn(0);
+    stt_ws_client_init_IgnoreAndReturn(0);
+    stt_ws_client_set_active_Ignore();
     stt_ws_client_start_IgnoreAndReturn(0);
     stt_ws_client_request_stop_Ignore();
     stt_ws_client_finish_stop_IgnoreAndReturn(0);

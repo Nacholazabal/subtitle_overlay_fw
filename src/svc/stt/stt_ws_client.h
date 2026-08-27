@@ -124,19 +124,17 @@ typedef struct
 // === Public variable declarations ================================================================================ //
 // === Public function declarations ================================================================================ //
 
+/**
+ * @brief Register the active client instance (called by SttAO after init).
+ * @param client The client instance to register, or NULL to clear.
+ */
+void stt_ws_client_set_active(stt_ws_client_t* client);
 
 /**
- * @brief The one client instance shared by the audio sender and by `SttAO`.
- *
- * There is exactly one outbound session. The USB-audio capture thread submits
- * chunks to its bounded queue, its owned worker performs all network I/O, and
- * the QP/C thread drains transcripts. Initialization is lazy and startup-order
- * independent.
- *
- * @return The shared client, or NULL when configuration failed (typically a
- *         missing `SUBTITLE_STT_WS_URL`), in which case the STT link stays down.
+ * @brief Get the active client (for USB audio capture handoff).
+ * @return The active client, or NULL if not yet initialized.
  */
-stt_ws_client_t* stt_ws_client_shared(void);
+stt_ws_client_t* stt_ws_client_get_active(void);
 
 /**
  * @brief Initialize the client without touching the network.

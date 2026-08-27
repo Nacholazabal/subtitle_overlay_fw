@@ -21,6 +21,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include "app.h"
 #include "log.h"
 #include "stt_ws_client.h"
+#include "stt_ws_config.h"
 #include "SubtitleAO.h"
 
 // === Macros definitions ========================================================================================== //
@@ -41,7 +42,8 @@ typedef struct
     QActive super;
     QTimeEvt poll_time_evt;
 
-    stt_ws_client_t* client;
+    stt_ws_client_t client_instance;  // Owned instance (no more singleton)
+    stt_ws_client_t* client;          // Pointer to client_instance
     uint32_t polls_since_metrics;
     uint8_t running;
 } stt_ao_t;
@@ -139,14 +141,34 @@ static void post_error(stt_ao_t* const me, int32_t code)
  */
 static int on_component_init(stt_ao_t* const me)
 {
-    me->client = stt_ws_client_shared();
-    if (me->client == NULL)
+    stt_ws_config_t config;
+    int status;
+
+    // Initialize the client owned by this AO (no more singleton)
+    if (stt_ws_config_default(&config) != 0)
     {
-        // Configuration failed; the client already logged why.
-        LOG_ERROR("stt: no STT WebSocket client available");
+        LOG_ERROR("stt: configuration failed (SUBTITLE_STT_WS_URL not set?)");
         enter_error(me, -EINVAL);
         return -EINVAL;
     }
+    if (stt_ws_config_parse_url(config.url, &config) != 0)
+    {
+        LOG_ERROR("stt: URL parsing failed");
+        enter_error(me, -EINVAL);
+        return -EINVAL;
+    }
+
+    status = stt_ws_client_init(&me->client_instance, &config);
+    if (status != 0)
+    {
+        LOG_ERROR("stt: client init failed: %d", status);
+        enter_error(me, status);
+        return status;
+    }
+
+    me->client = &me->client_instance;
+    stt_ws_client_set_active(me->client);  // Register for USB audio handoff
+
     if (stt_ws_client_start(me->client) != 0)
     {
         LOG_ERROR("stt: failed to start the STT network worker");

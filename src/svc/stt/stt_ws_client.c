@@ -68,10 +68,8 @@ static void maybe_ping(stt_ws_client_t* client);
 // === Public variable definitions ================================================================================= //
 // === Private variable definitions ================================================================================ //
 
-/// One outbound session shared by the capture handoff, its network worker and QP/C.
-static stt_ws_client_t shared_instance;
-static pthread_once_t shared_once = PTHREAD_ONCE_INIT;
-static uint8_t shared_ready;
+/// Global pointer to the active client (set by SttAO after init, used by USB audio).
+static stt_ws_client_t* g_active_client = NULL;
 
 // === Private function implementation ============================================================================= //
 
@@ -724,33 +722,24 @@ static void maybe_ping(stt_ws_client_t* const client)
     (void)send_frame(client, STT_WS_OPCODE_TEXT, ping, sizeof(ping) - 1U);
 }
 
-/** @brief One-time construction of the shared client from the environment. */
-static void shared_init(void)
-{
-    stt_ws_config_t config;
-
-    if (stt_ws_config_default(&config) != 0)
-    {
-        return;
-    }
-    if (stt_ws_config_parse_url(config.url, &config) != 0)
-    {
-        return;
-    }
-    shared_ready = (stt_ws_client_init(&shared_instance, &config) == 0) ? 1U : 0U;
-}
-
 // === Public function implementation ============================================================================== //
 
 /**
- * @brief The one client instance shared by the audio sender and by `SttAO`.
- * @return The shared client, or NULL when configuration failed.
+ * @brief Register the active client instance (called by SttAO after init).
+ * @param client The client instance to register, or NULL to clear.
  */
-stt_ws_client_t* stt_ws_client_shared(void)
+void stt_ws_client_set_active(stt_ws_client_t* const client)
 {
-    (void)pthread_once(&shared_once, shared_init);
+    g_active_client = client;
+}
 
-    return (shared_ready != 0U) ? &shared_instance : NULL;
+/**
+ * @brief Get the active client (for USB audio capture handoff).
+ * @return The active client, or NULL if not yet initialized.
+ */
+stt_ws_client_t* stt_ws_client_get_active(void)
+{
+    return g_active_client;
 }
 
 /**
