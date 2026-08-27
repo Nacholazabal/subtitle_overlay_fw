@@ -233,11 +233,21 @@ static int connect_tcp(struct net_tls* const conn,
 
 /**
  * @brief Create the SSL context with verification switched on.
+ *
+ * The SSL_CTX is cached: building it parses the entire CA bundle (several hundred certs
+ * from /etc/ssl/certs/ca-certificates.crt), which on a Cortex-A9 is measurable. With the
+ * reconnect backoff schedule that would be once every 0.5s at the start of an outage.
+ * Only the per-connection SSL object is rebuilt on each retry.
+ *
  * @return 0 on success, or a negative errno-style value.
  */
 static int build_context(struct net_tls* const conn, net_tls_config_t const* const config)
 {
     static uint8_t initialized = 0U;
+    static SSL_CTX* cached_ctx = NULL;
+    static char cached_ca_file[256] = {0};
+    static char cached_ca_dir[256] = {0};
+    uint8_t config_changed = 0U;
     long options;
 
     if (initialized == 0U)
@@ -249,40 +259,68 @@ static int build_context(struct net_tls* const conn, net_tls_config_t const* con
         initialized = 1U;
     }
 
-    conn->ctx = SSL_CTX_new(SSLv23_client_method());
-    if (conn->ctx == NULL)
+    // Check if we can reuse the cached SSL_CTX (keyed on CA configuration)
+    if (cached_ctx != NULL)
     {
-        set_error(conn, "tls: context allocation failed");
-        return -ENOMEM;
-    }
+        char const* const ca_file = (config->ca_file != NULL) ? config->ca_file : "";
+        char const* const ca_dir = (config->ca_dir != NULL) ? config->ca_dir : "";
 
-    // SSLv23_client_method() means "best available"; disable everything below
-    // TLS 1.2 explicitly, which is how 1.0.2 expresses a minimum version.
-    options = SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1
-              | SSL_OP_NO_COMPRESSION;
-    (void)SSL_CTX_set_options(conn->ctx, options);
-    SSL_CTX_set_verify(conn->ctx, SSL_VERIFY_PEER, NULL);
-
-    if ((config->ca_file != NULL) || (config->ca_dir != NULL))
-    {
-        if (SSL_CTX_load_verify_locations(conn->ctx, config->ca_file, config->ca_dir) != 1)
+        if ((strcmp(cached_ca_file, ca_file) != 0) || (strcmp(cached_ca_dir, ca_dir) != 0))
         {
-            set_error(conn, "tls: cannot load CA store (file=%s dir=%s)",
-                      (config->ca_file != NULL) ? config->ca_file : "-",
-                      (config->ca_dir != NULL) ? config->ca_dir : "-");
-            return -ENOENT;
+            config_changed = 1U;
+            SSL_CTX_free(cached_ctx);
+            cached_ctx = NULL;
         }
     }
-    else if (SSL_CTX_set_default_verify_paths(conn->ctx) != 1)
+
+    // Build new SSL_CTX if we don't have a cached one or config changed
+    if (cached_ctx == NULL)
     {
-        set_error(conn, "tls: cannot load the default CA store");
-        return -ENOENT;
-    }
-    else
-    {
-        // Default store loaded.
+        cached_ctx = SSL_CTX_new(SSLv23_client_method());
+        if (cached_ctx == NULL)
+        {
+            set_error(conn, "tls: context allocation failed");
+            return -ENOMEM;
+        }
+
+        // SSLv23_client_method() means "best available"; disable everything below
+        // TLS 1.2 explicitly, which is how 1.0.2 expresses a minimum version.
+        options = SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1
+                  | SSL_OP_NO_COMPRESSION;
+        (void)SSL_CTX_set_options(cached_ctx, options);
+        SSL_CTX_set_verify(cached_ctx, SSL_VERIFY_PEER, NULL);
+
+        if ((config->ca_file != NULL) || (config->ca_dir != NULL))
+        {
+            if (SSL_CTX_load_verify_locations(cached_ctx, config->ca_file, config->ca_dir) != 1)
+            {
+                set_error(conn, "tls: cannot load CA store (file=%s dir=%s)",
+                          (config->ca_file != NULL) ? config->ca_file : "-",
+                          (config->ca_dir != NULL) ? config->ca_dir : "-");
+                SSL_CTX_free(cached_ctx);
+                cached_ctx = NULL;
+                return -ENOENT;
+            }
+            snprintf(cached_ca_file, sizeof(cached_ca_file), "%s",
+                     (config->ca_file != NULL) ? config->ca_file : "");
+            snprintf(cached_ca_dir, sizeof(cached_ca_dir), "%s",
+                     (config->ca_dir != NULL) ? config->ca_dir : "");
+        }
+        else if (SSL_CTX_set_default_verify_paths(cached_ctx) != 1)
+        {
+            set_error(conn, "tls: cannot load the default CA store");
+            SSL_CTX_free(cached_ctx);
+            cached_ctx = NULL;
+            return -ENOENT;
+        }
+        else
+        {
+            cached_ca_file[0] = '\0';
+            cached_ca_dir[0] = '\0';
+        }
     }
 
+    conn->ctx = cached_ctx;
     return 0;
 }
 
@@ -385,11 +423,10 @@ static void release(struct net_tls* const conn)
         SSL_free(conn->ssl);
         conn->ssl = NULL;
     }
-    if (conn->ctx != NULL)
-    {
-        SSL_CTX_free(conn->ctx);
-        conn->ctx = NULL;
-    }
+    // DO NOT free conn->ctx - it's now a cached static in build_context()
+    // that gets reused across reconnects. Only the SSL object is per-connection.
+    conn->ctx = NULL;
+
     if (conn->fd >= 0)
     {
         close(conn->fd);
