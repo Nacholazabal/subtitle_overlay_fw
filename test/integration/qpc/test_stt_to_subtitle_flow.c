@@ -35,7 +35,7 @@ QActive* const AO_System = &system_fake.super;
 static char captured_text[SUBTITLE_TEXT_MAX_LEN * 2U];
 static uint8_t captured_current_is_final;
 static int write_text_status;
-static subtitle_text_evt_t poll_events[STT_WS_EVENT_RING_DEPTH];
+static subtitle_text_evt_t poll_events[STT_EVENT_RING_DEPTH];
 static uint32_t poll_event_count;
 static int poll_status;
 
@@ -108,7 +108,7 @@ static int stt_ws_client_poll_events_stub(stt_ws_client_t* client,
 
     if (poll_status == 0)
     {
-        TEST_ASSERT_LESS_OR_EQUAL_UINT32(STT_WS_EVENT_RING_DEPTH, max_events);
+        TEST_ASSERT_LESS_OR_EQUAL_UINT32(STT_EVENT_RING_DEPTH, max_events);
         TEST_ASSERT_LESS_OR_EQUAL_UINT32(max_events, poll_event_count);
         for (i = 0U; i < poll_event_count; i++)
         {

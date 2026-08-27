@@ -261,7 +261,7 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
                     (e->is_final != 0U) ? "final" : "partial",
                     (unsigned long)e->seq,
                     (unsigned)margin);
-        stt_ws_client_report_delivery(me->client, STT_EVENT_RX_DELIVERY_DROPPED_EVENT_POOL);
+        stt_ws_client_report_delivery(me->client, STT_TRANSCRIPT_DELIVERY_DROPPED_EVENT_POOL);
         return -EAGAIN;
     }
 
@@ -281,13 +281,13 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
                     (e->is_final != 0U) ? "final" : "partial",
                     (unsigned long)e->seq,
                     (unsigned)margin);
-        stt_ws_client_report_delivery(me->client, STT_EVENT_RX_DELIVERY_DROPPED_SUBTITLE_QUEUE);
+        stt_ws_client_report_delivery(me->client, STT_TRANSCRIPT_DELIVERY_DROPPED_SUBTITLE_QUEUE);
         return -EAGAIN;
     }
 
     // "Delivered" now means "posted to the subtitle AO": with the PC bridge
     // gone there is no peer to acknowledge to, so the outcome is a counter.
-    stt_ws_client_report_delivery(me->client, STT_EVENT_RX_DELIVERY_ACCEPTED);
+    stt_ws_client_report_delivery(me->client, STT_TRANSCRIPT_DELIVERY_ACCEPTED);
 
     return 0;
 }
