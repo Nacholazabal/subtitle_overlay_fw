@@ -136,3 +136,79 @@ the STOP handler.
 - **SRC-L06** (`log.h`): a disabled `LOG(...)` expands to `do { } while (0)` so it
   stays a single statement — safe after a brace-less `if`, before an `else`, and
   when followed by a semicolon.
+
+## Dead-code audit (D-series)
+
+From ARCH-06 (`docs/arch_tickets/ARCH-06-dead-code-audit.md`). The rule the
+ticket establishes: **every exported symbol has a production caller, or it does
+not exist.** These are the entries that were deliberately *not* deleted, plus the
+two judgement calls the ticket asked to be recorded rather than decided silently.
+`scripts/dead_symbols.sh` enforces the rule; `scripts/dead_symbols.ignore` is the
+machine-readable half of this section.
+
+### SRC-D01 — `log_unsubscribe` kept without a production caller
+`src/utils/log/log.h`. Subscribe and unsubscribe are a coherent pair, and the
+asymmetry of shipping only half of it is worse than the unused half. There is one
+production subscriber today and it never detaches. Kept deliberately, listed in
+`scripts/dead_symbols.ignore`.
+
+### SRC-D02 — no CPU mapping of the framebuffer; the compositor stays in PL
+`src/hal/video_dma/video_dma.c`, `src/svc/video_pipeline/video_pipeline.h`.
+`video_dma_init` used to `mmap` every framebuffer slot and hand the pointers back
+through a `uint8_t* frames[]` out-parameter, which `video_pipeline` stored and
+**nothing ever dereferenced** — roughly 6 MB of coherent DMA memory mapped into
+userspace at every init for no consumer.
+
+Decided: **the CPU never touches pixels.** Passthrough is VDMA-to-VDMA and
+subtitle composition happens in the PL (`axis_video_overlay` reads the mask from
+BRAM), so there is no software compositor planned and no reason to keep
+scaffolding for one. The kernel client `dma_alloc_coherent`s the buffers at probe
+and `mmap` is only a userspace view of them, so dropping it changes nothing on
+the wire; if a software path is ever added, the mapping comes back with it.
+
+Removing the mapping removed the awkward out-parameter (`video_dma_init` is now
+`(dma, frame_count)`) and both duplicate size fields with it. The ticket asked
+for `video_dma_t` to end up with *one* size field; it ends up with none, because
+`frame_size`/`mmap_size` existed only to serve the mapping. `frame_count` stays —
+it bounds `frame_index` in configure/select.
+
+### SRC-D03 — `video_dma_status` deleted rather than wired into the poll loop
+`src/hal/video_dma/video_dma.c`. The ticket offered a health check in `VideoAO`'s
+poll as the alternative to deleting it. Deleted, because giving `POLL_ERROR` a
+transport cause changes the pipeline's error model, and the error model belongs
+to **ARCH-02**. ARCH-06 removes and documents; it does not change behaviour. If
+ARCH-02 wants the check, the kernel's `HDMI_VDMA_*_STATUS` ioctls are still
+there and `git log` has the wrapper.
+
+### SRC-D04 — the frame-sync trio is ARCH-03's to resolve
+`subtitle_pipeline_commit` / `_clear_sof` / `_poll_sof` have no production caller
+and are the subject of ARCH-03's F17a: wire `_poll_sof` into the caption flush or
+delete all three. Kept unchanged here so the two tickets do not collide, listed
+in `scripts/dead_symbols.ignore` with that reason.
+
+### SRC-D05 — detected timing is bounded by the framebuffer geometry
+`src/svc/video_pipeline/video_pipeline.c`. `VIDEO_PIPELINE_MAX_HEIGHT` had no
+uses; only `MAX_WIDTH` fed `VIDEO_PIPELINE_STRIDE`. Detected timing is now
+checked against both before the mode table is consulted, so the buffer bound is
+stated where it matters. No behaviour change today: every mode in the table fits,
+and a timing past the bound had no matching mode either.
+
+### SRC-D06 — two write-only fields became measurements instead of deletions
+- `video_dynclk_t.actual_frequency_mhz` is the clock the MMCM actually
+  synthesised. It is now logged at mode start next to the frequency the mode
+  table requested (`video_io.c`), which quantifies the pixel clock error — a
+  number the thesis wants, and one that was previously computed and thrown away.
+- `video_pipeline_t.input_timing` is now read to name the resolution in the
+  `unsupported input timing` warning. `active_mode` is NULL in that state, so the
+  detected timing is the only thing that can say *which* resolution was rejected;
+  ARCH-02 asks for exactly that log line.
+
+Both readers are `LOG_*` calls, which compile out when `CONFIG_LOG_ENABLED` is
+undefined — that is the unit-test build only. Both shipping builds (`app` and
+`video-port-check`) define it.
+
+### SRC-D07 — code templates moved out of `src/`
+`tools/templates/` now holds `template.{c,h}` and `template_qpc_AO.{c,h}`.
+Neither was referenced by the `Makefile` or `project.yml`, so nothing compiled
+them; `src/` should contain only what ships. The `multi-file-workflows` skill
+points at their new location.
