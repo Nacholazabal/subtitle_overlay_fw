@@ -14,6 +14,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 #include <string.h>
 
+#include "log.h"
 #include "xparameters.h"
 #include "xstatus.h"
 
@@ -148,20 +149,12 @@ void video_input_reset_detector(video_input_t* const input)
  */
 int video_input_read_timing(video_input_t* const input, video_vtc_timing_t* const timing)
 {
-    int status;
-
     if ((input == NULL) || (timing == NULL))
     {
         return XST_INVALID_PARAM;
     }
 
-    status = video_vtc_read_detector_timing(&input->vtc, timing);
-    if (status == XST_SUCCESS)
-    {
-        input->timing = *timing;
-    }
-
-    return status;
+    return video_vtc_read_detector_timing(&input->vtc, timing);
 }
 
 /**
@@ -204,7 +197,6 @@ int video_input_start_capture(video_input_t* const input,
         return status;
     }
 
-    input->frame_index = frame_index;
     input->running = 1U;
 
     return XST_SUCCESS;
@@ -229,7 +221,6 @@ int video_input_stop(video_input_t* const input)
 
     input->running = 0U;
     input->detector_started = 0U;
-    memset(&input->timing, 0, sizeof(input->timing));
 
     return XST_SUCCESS;
 }
@@ -298,6 +289,13 @@ int video_output_start(video_output_t* const output,
         return status;
     }
 
+    // Report the clock the MMCM actually synthesised next to the one the mode
+    // table asked for: the difference is the pixel clock error.
+    LOG_INFO("video: %s pixel clock requested=%.3f MHz synthesised=%.3f MHz",
+             mode->label,
+             mode->timing.pixel_clock_mhz,
+             output->dynclk.actual_frequency_mhz);
+
     status = video_vtc_configure_generator(&output->vtc, &mode->timing);
     if (status != XST_SUCCESS)
     {
@@ -330,7 +328,6 @@ int video_output_start(video_output_t* const output,
     }
 
     output->mode = mode;
-    output->frame_index = frame_index;
     output->running = 1U;
 
     return XST_SUCCESS;

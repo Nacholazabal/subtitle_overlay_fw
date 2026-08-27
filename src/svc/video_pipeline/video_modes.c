@@ -106,16 +106,6 @@ static const video_pipeline_mode_t modes[] = {
 // === Public function implementation ============================================================================== //
 
 /**
- * @brief Return the default display mode used by the video pipeline.
- * @param None.
- * @return Pointer to the default mode.
- */
-video_pipeline_mode_t const* video_modes_default(void)
-{
-    return &modes[0];
-}
-
-/**
  * @brief Find a supported mode by exact active resolution.
  * @param width Active width in pixels.
  * @param height Active height in lines.
@@ -134,21 +124,6 @@ video_pipeline_mode_t const* video_modes_find(uint32_t width, uint32_t height)
     }
 
     return NULL;
-}
-
-/**
- * @brief Return the full supported mode table.
- * @param count Optional output receiving the number of modes.
- * @return Pointer to the first mode in the static table.
- */
-video_pipeline_mode_t const* video_modes_all(size_t* const count)
-{
-    if (count != NULL)
-    {
-        *count = sizeof(modes) / sizeof(modes[0]);
-    }
-
-    return modes;
 }
 
 // === End of documentation ======================================================================================== //

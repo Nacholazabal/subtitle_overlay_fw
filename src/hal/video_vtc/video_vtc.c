@@ -60,7 +60,6 @@ int video_vtc_init(video_vtc_t* const vtc, uint16_t device_id)
         return XST_FAILURE;
     }
 
-    vtc->device_id = device_id;
     vtc->initialized = 1;
     return XST_SUCCESS;
 }

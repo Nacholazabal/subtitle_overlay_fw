@@ -64,7 +64,6 @@ typedef enum
 typedef struct
 {
     video_dma_t dma;
-    uint8_t* frames[VIDEO_PIPELINE_FRAME_COUNT];
     video_output_t output;
     video_input_t input;
     video_pipeline_mode_t const* active_mode;

@@ -60,22 +60,6 @@ int video_gpio_init(video_gpio_t* const gpio)
 }
 
 /**
- * @brief Drive the HDMI hot-plug detect output.
- * @param gpio Initialized GPIO adapter.
- * @param enabled Nonzero asserts HPD, zero deasserts it.
- * @return None.
- */
-void video_gpio_set_hpd(video_gpio_t* const gpio, uint8_t enabled)
-{
-    if ((gpio == NULL) || (gpio->base == (uintptr_t)0))
-    {
-        return;
-    }
-
-    Xil_Out32(gpio->base + XGPIO_DATA_OFFSET, (enabled != 0U) ? HPD_MASK : 0U);
-}
-
-/**
  * @brief Read the HDMI input lock signal.
  * @param gpio Initialized GPIO adapter.
  * @return Nonzero when the input clock is locked, zero otherwise.

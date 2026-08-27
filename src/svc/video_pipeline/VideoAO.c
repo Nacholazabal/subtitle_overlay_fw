@@ -167,7 +167,9 @@ static int on_video_poll(video_ao_t* const me)
         poll_result = video_pipeline_poll(&me->pipeline, me->now_ms);
         if (poll_result == VIDEO_PIPELINE_POLL_ERROR)
         {
-            LOG_ERROR("video: pipeline poll failed at %lu ms", (unsigned long)me->now_ms);
+            LOG_ERROR("video: pipeline poll failed at %lu ms in state %d",
+                      (unsigned long)me->now_ms,
+                      (int)video_pipeline_get_state(&me->pipeline));
             enter_error(me, -EIO);
             status = -EIO;
         }
@@ -240,7 +242,9 @@ static void enter_error(video_ao_t* const me, int32_t code)
     }
     else
     {
-        LOG_ERROR("video: entering error state before pipeline was running, code=%ld", (long)code);
+        LOG_ERROR("video: entering error state before pipeline was running, code=%ld state=%d",
+                  (long)code,
+                  (int)video_pipeline_get_state(&me->pipeline));
     }
 
     post_error(me, code);

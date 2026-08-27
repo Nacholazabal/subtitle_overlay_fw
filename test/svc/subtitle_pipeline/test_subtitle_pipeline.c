@@ -211,10 +211,11 @@ void test_subtitle_pipeline_set_box_rejects_invalid_geometry(void)
     pipeline.display_height = 720U;
     TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_pipeline_set_box(&pipeline, 0U, 40U));
     TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_pipeline_set_box(&pipeline, 100U, 0U));
+    TEST_ASSERT_EQUAL_INT(-EINVAL,
+                          subtitle_pipeline_set_box(&pipeline, SUBTITLE_BRAM_MASK_WIDTH + 1U, 40U));
     TEST_ASSERT_EQUAL_INT(
-        -EINVAL, subtitle_pipeline_set_box(&pipeline, SUBTITLE_BRAM_MASK_WIDTH + 1U, 40U));
-    TEST_ASSERT_EQUAL_INT(
-        -EINVAL, subtitle_pipeline_set_box(&pipeline, 100U, SUBTITLE_BRAM_MASK_HEIGHT + 1U));
+        -EINVAL,
+        subtitle_pipeline_set_box(&pipeline, 100U, SUBTITLE_BRAM_MASK_HEIGHT + 1U));
 }
 
 void test_subtitle_pipeline_set_box_preserves_configuration_on_hal_failure(void)

@@ -17,7 +17,6 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
-#include <sys/mman.h>
 #include <unistd.h>
 
 #include "hdmi_vdma.h"
@@ -39,7 +38,6 @@ static int select_channel(video_dma_t* dma,
                           unsigned long request,
                           const char* name,
                           uint32_t frame_index);
-static uint32_t channel_status(video_dma_t* dma, unsigned long request);
 
 // === Public variable definitions ================================================================================= //
 // === Private variable definitions ================================================================================ //
@@ -139,48 +137,19 @@ static int select_channel(video_dma_t* const dma,
     return XST_SUCCESS;
 }
 
-/**
- * @brief Read one VDMA channel status through the kernel client.
- * @param dma Initialized DMA adapter.
- * @param request Channel-specific status ioctl request.
- * @return VIDEO_DMA_STATUS_IDLE when stopped, 0 when running, or VIDEO_DMA_STATUS_HALTED on invalid input/failure.
- */
-static uint32_t channel_status(video_dma_t* const dma, unsigned long request)
-{
-    struct hdmi_vdma_channel_status status;
-
-    if ((dma == NULL) || !dma->is_open)
-    {
-        return VIDEO_DMA_STATUS_HALTED;
-    }
-
-    memset(&status, 0, sizeof(status));
-    if (ioctl(dma->fd, request, &status) != 0)
-    {
-        return VIDEO_DMA_STATUS_HALTED;
-    }
-
-    return (status.running != 0U) ? 0U : VIDEO_DMA_STATUS_IDLE;
-}
-
 // === Public function implementation ============================================================================== //
 
 /**
- * @brief Open /dev/hdmi-vdma and map coherent framebuffer slots.
+ * @brief Open /dev/hdmi-vdma and claim the requested framebuffer slots.
  * @param dma DMA adapter to initialize.
- * @param frames Output array filled with mapped framebuffer pointers.
- * @param frame_count Number of framebuffers to map.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or XST_FAILURE on open/ioctl/mmap failure.
+ * @param frame_count Number of framebuffers to claim.
+ * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or XST_FAILURE on open/ioctl failure.
  */
-int video_dma_init(video_dma_t* const dma,
-                   uint8_t* frames[VIDEO_DMA_MAX_FRAMES],
-                   uint32_t frame_count)
+int video_dma_init(video_dma_t* const dma, uint32_t frame_count)
 {
     struct hdmi_vdma_info info;
-    uint32_t i;
 
-    if ((dma == NULL) || (frames == NULL) || (frame_count == 0U)
-        || (frame_count > VIDEO_DMA_MAX_FRAMES))
+    if ((dma == NULL) || (frame_count == 0U) || (frame_count > VIDEO_DMA_MAX_FRAMES))
     {
         return XST_INVALID_PARAM;
     }
@@ -229,38 +198,16 @@ int video_dma_init(video_dma_t* const dma,
     }
 
     dma->frame_count = frame_count;
-    dma->frame_size = info.frame_size;
-    dma->mmap_size = info.frame_size;
-
-    for (i = 0U; i < frame_count; i++)
-    {
-        off_t const offset = (off_t)((uintptr_t)i * dma->frame_size);
-        void* const mapped =
-            mmap(NULL, dma->frame_size, PROT_READ | PROT_WRITE, MAP_SHARED, dma->fd, offset);
-
-        if (mapped == MAP_FAILED)
-        {
-            fprintf(stderr, "[video_dma] mmap frame %u failed: %s\n", (unsigned)i, strerror(errno));
-            video_dma_cleanup(dma);
-            return XST_FAILURE;
-        }
-
-        frames[i] = (uint8_t*)mapped;
-        dma->frames[i] = frames[i];
-    }
-
     return XST_SUCCESS;
 }
 
 /**
- * @brief Stop DMA channels, unmap framebuffers, and close the hdmi-vdma device.
+ * @brief Stop DMA channels and close the hdmi-vdma device.
  * @param dma DMA adapter to clean up.
  * @return None.
  */
 void video_dma_cleanup(video_dma_t* const dma)
 {
-    uint32_t i;
-
     if (dma == NULL)
     {
         return;
@@ -270,17 +217,6 @@ void video_dma_cleanup(video_dma_t* const dma)
     {
         (void)ioctl(dma->fd, HDMI_VDMA_S2MM_STOP);
         (void)ioctl(dma->fd, HDMI_VDMA_MM2S_STOP);
-    }
-
-    if (dma->mmap_size != 0U)
-    {
-        for (i = 0U; i < dma->frame_count; i++)
-        {
-            if (dma->frames[i] != NULL)
-            {
-                (void)munmap(dma->frames[i], dma->mmap_size);
-            }
-        }
     }
 
     if (dma->is_open)
@@ -398,27 +334,6 @@ int video_dma_select_frame(video_dma_t* const dma,
     }
 
     return XST_INVALID_PARAM;
-}
-
-/**
- * @brief Read the current status of one DMA channel.
- * @param dma Initialized DMA adapter.
- * @param channel DMA channel to query.
- * @return VIDEO_DMA_STATUS_IDLE when stopped, 0 when running, or VIDEO_DMA_STATUS_HALTED on invalid input/failure.
- */
-uint32_t video_dma_status(video_dma_t* const dma, video_dma_channel_e channel)
-{
-    if (channel == VIDEO_DMA_CHANNEL_MM2S)
-    {
-        return channel_status(dma, HDMI_VDMA_MM2S_STATUS);
-    }
-
-    if (channel == VIDEO_DMA_CHANNEL_S2MM)
-    {
-        return channel_status(dma, HDMI_VDMA_S2MM_STATUS);
-    }
-
-    return VIDEO_DMA_STATUS_HALTED;
 }
 
 // === End of documentation ======================================================================================== //

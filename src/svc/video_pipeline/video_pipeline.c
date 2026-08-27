@@ -108,7 +108,7 @@ int video_pipeline_init(video_pipeline_t* const pipeline)
     }
     pipeline->platform_ready = 1U;
 
-    status = video_dma_init(&pipeline->dma, pipeline->frames, VIDEO_PIPELINE_FRAME_COUNT);
+    status = video_dma_init(&pipeline->dma, VIDEO_PIPELINE_FRAME_COUNT);
     if (status != XST_SUCCESS)
     {
         video_pipeline_cleanup(pipeline);
