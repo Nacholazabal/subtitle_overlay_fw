@@ -17,7 +17,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 ///    single-GPU-session rejection, which is retryable.
 ///
 /// Transcript payloads are **not** handled here: they keep going through
-/// `stt_event_rx_parse_line()` so both paths share one parser.
+/// stt_transcript_parse_line() so both paths share one parser.
 ///
 
 // === Headers files inclusions ==================================================================================== //

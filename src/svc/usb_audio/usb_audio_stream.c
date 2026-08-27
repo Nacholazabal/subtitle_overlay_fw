@@ -149,7 +149,7 @@ static void stream_add_dropped(usb_audio_stream_t* const stream, uint32_t droppe
 static void* capture_thread_main(void* const arg)
 {
     usb_audio_stream_t* const stream = (usb_audio_stream_t*)arg;
-    stt_ws_client_t* const client = stt_ws_client_shared();
+    stt_ws_client_t* const client = stt_ws_client_get_active();
     uint8_t first_read_pending = 1U;
 
     LOG_INFO("usb-audio: capture thread started");

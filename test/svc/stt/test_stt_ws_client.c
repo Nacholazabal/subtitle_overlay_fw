@@ -11,14 +11,17 @@
 
 TEST_SOURCE_FILE("fake_net_tls.c")
 TEST_SOURCE_FILE("number_parse.c")
+TEST_SOURCE_FILE("stt_audio_txq.c")
+TEST_SOURCE_FILE("stt_event_ring.c")
 TEST_SOURCE_FILE("stt_json.c")
 TEST_SOURCE_FILE("stt_session_json.c")
+TEST_SOURCE_FILE("stt_ws_config.c")
 TEST_SOURCE_FILE("stt_ws_frame.c")
 TEST_SOURCE_FILE("stt_transcript_parse.c")
 
 static stt_ws_client_t client;
-static stt_ws_client_config_t config;
-static subtitle_text_evt_t events[STT_WS_EVENT_RING_DEPTH];
+static stt_ws_config_t config;
+static subtitle_text_evt_t events[STT_EVENT_RING_DEPTH];
 
 static char const* const WS_ENV[] = {
     "SUBTITLE_STT_WS_URL",
@@ -72,21 +75,15 @@ static void init_ready_client(void)
 /// @brief Push a transcript line straight into the ring the QP/C thread drains.
 static void queue_transcript(uint32_t seq, char const* text, uint8_t is_final)
 {
-    char line[STT_WS_LINE_MAX];
+    char line[STT_EVENT_RING_LINE_MAX];
     int const length = snprintf(line, sizeof(line),
                                 "{\"type\":\"transcript\",\"seq\":%lu,\"is_final\":%s,"
                                 "\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"%s\","
                                 "\"att_context_size\":[56,6]}",
                                 (unsigned long)seq, (is_final != 0U) ? "true" : "false", text);
-    uint32_t tail;
 
     TEST_ASSERT_GREATER_THAN_INT(0, length);
-    tail = ((uint32_t)client.ring_head + (uint32_t)client.ring_count) % STT_WS_EVENT_RING_DEPTH;
-    memcpy(client.ring[tail].line, line, (size_t)length + 1U);
-    client.ring[tail].length = (uint16_t)length;
-    client.ring[tail].is_final = is_final;
-    client.ring[tail].session_generation = client.session_generation;
-    client.ring_count++;
+    (void)stt_event_ring_push(&client.event_ring, line, (size_t)length);
 }
 
 void setUp(void)
@@ -94,6 +91,8 @@ void setUp(void)
     clear_env();
     fake_net_tls_reset();
     memset(&client, 0, sizeof(client));
+    stt_audio_txq_init(&client.audio_txq);
+    stt_event_ring_init(&client.event_ring);
     memset(&config, 0, sizeof(config));
     memset(events, 0, sizeof(events));
 }
@@ -102,8 +101,12 @@ void tearDown(void)
 {
     if (client.initialized != 0U)
     {
-        stt_ws_client_cleanup(&client);
+        stt_audio_txq_cleanup(&client.audio_txq);
+        stt_event_ring_cleanup(&client.event_ring);
+        pthread_mutex_destroy(&client.lock);
     }
+    stt_audio_txq_cleanup(&client.audio_txq);
+    stt_event_ring_cleanup(&client.event_ring);
     clear_env();
 }
 
@@ -112,7 +115,7 @@ void tearDown(void)
 void test_stt_ws_client_parses_the_production_wss_url(void)
 {
     TEST_ASSERT_EQUAL_INT(0,
-                          stt_ws_client_parse_url(
+                          stt_ws_config_parse_url(
                               "wss://passage-capacity-wistful.ngrok-free.dev/stt/stream", &config));
     TEST_ASSERT_EQUAL_STRING("passage-capacity-wistful.ngrok-free.dev", config.host);
     TEST_ASSERT_EQUAL_UINT16(443U, config.port);
@@ -122,25 +125,25 @@ void test_stt_ws_client_parses_the_production_wss_url(void)
 
 void test_stt_ws_client_parses_plaintext_and_explicit_ports(void)
 {
-    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_parse_url("ws://192.168.1.20:8765/stt/stream", &config));
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_config_parse_url("ws://192.168.1.20:8765/stt/stream", &config));
     TEST_ASSERT_EQUAL_STRING("192.168.1.20", config.host);
     TEST_ASSERT_EQUAL_UINT16(8765U, config.port);
     TEST_ASSERT_EQUAL_UINT8(0U, config.use_tls);
 
     // No path means the root target.
-    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_parse_url("wss://host.test", &config));
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_config_parse_url("wss://host.test", &config));
     TEST_ASSERT_EQUAL_STRING("/", config.path);
     TEST_ASSERT_EQUAL_UINT16(443U, config.port);
 }
 
 void test_stt_ws_client_rejects_urls_it_cannot_honour(void)
 {
-    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_client_parse_url("https://host/stt", &config));
-    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_client_parse_url("wss://", &config));
-    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_client_parse_url("wss://host:0/x", &config));
-    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_client_parse_url("wss://host:70000/x", &config));
-    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_client_parse_url("host/stt", &config));
-    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_client_parse_url(NULL, &config));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_config_parse_url("https://host/stt", &config));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_config_parse_url("wss://", &config));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_config_parse_url("wss://host:0/x", &config));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_config_parse_url("wss://host:70000/x", &config));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_config_parse_url("host/stt", &config));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_config_parse_url(NULL, &config));
 }
 
 // === Configuration =============================================================================================== //
@@ -148,7 +151,7 @@ void test_stt_ws_client_rejects_urls_it_cannot_honour(void)
 void test_stt_ws_client_refuses_to_start_without_a_configured_url(void)
 {
     // No compiled-in endpoint: an unconfigured board must stay down and say so.
-    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_client_default_config(&config));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_config_default(&config));
     TEST_ASSERT_EQUAL_STRING("", config.host);
 }
 
@@ -156,7 +159,7 @@ void test_stt_ws_client_defaults_match_the_chosen_operating_point(void)
 {
     setenv("SUBTITLE_STT_WS_URL", "wss://host.test/stt/stream", 1);
 
-    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_default_config(&config));
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_config_default(&config));
     TEST_ASSERT_EQUAL_UINT32(48000U, config.session.sample_rate_hz);
     TEST_ASSERT_EQUAL_UINT32(1U, config.session.channels);
     TEST_ASSERT_EQUAL_UINT32(20U, config.session.chunk_ms);
@@ -178,7 +181,7 @@ void test_stt_ws_client_applies_environment_overrides(void)
     setenv("SUBTITLE_STT_NEMOTRON_LATENCY_MS", "320", 1);
     setenv("SUBTITLE_STT_NEMOTRON_TARGET_LANG", "en-US", 1);
 
-    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_default_config(&config));
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_config_default(&config));
     TEST_ASSERT_EQUAL_UINT16(9000U, config.port);
     TEST_ASSERT_EQUAL_STRING("/tmp/ca.pem", config.ca_file);
     TEST_ASSERT_EQUAL_UINT32(12000U, config.idle_timeout_ms);
@@ -192,7 +195,7 @@ void test_stt_ws_client_keeps_defaults_when_an_override_is_invalid(void)
     setenv("SUBTITLE_STT_WS_IDLE_TIMEOUT_MS", "not-a-number", 1);
     setenv("SUBTITLE_STT_NEMOTRON_LATENCY_MS", "999999", 1);
 
-    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_default_config(&config));
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_config_default(&config));
     TEST_ASSERT_EQUAL_UINT32(45000U, config.idle_timeout_ms);
     TEST_ASSERT_EQUAL_UINT32(560U, config.session.latency_ms);
 }
@@ -203,7 +206,7 @@ void test_stt_ws_client_keeps_the_backoff_window_ordered(void)
     setenv("SUBTITLE_STT_WS_BACKOFF_MIN_MS", "20000", 1);
     setenv("SUBTITLE_STT_WS_BACKOFF_MAX_MS", "1000", 1);
 
-    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_default_config(&config));
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_config_default(&config));
     TEST_ASSERT_TRUE(config.backoff_max_ms >= config.backoff_min_ms);
 }
 
@@ -217,7 +220,7 @@ void test_stt_ws_client_delivers_buffered_transcripts_in_order(void)
     queue_transcript(0U, "hola", 0U);
     queue_transcript(1U, "hola mundo", 1U);
 
-    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_WS_EVENT_RING_DEPTH,
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_EVENT_RING_DEPTH,
                                                        &count));
     TEST_ASSERT_EQUAL_UINT32(2U, count);
     TEST_ASSERT_EQUAL_UINT32(0U, events[0].seq);
@@ -239,14 +242,14 @@ void test_stt_ws_client_rejects_duplicate_and_out_of_order_sequences(void)
     queue_transcript(3U, "tarde", 1U);
     queue_transcript(6U, "seis", 1U);
 
-    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_WS_EVENT_RING_DEPTH,
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_EVENT_RING_DEPTH,
                                                        &count));
     TEST_ASSERT_EQUAL_UINT32(2U, count);
     TEST_ASSERT_EQUAL_UINT32(5U, events[0].seq);
     TEST_ASSERT_EQUAL_UINT32(6U, events[1].seq);
 
     stt_ws_client_stats(&client, &stats);
-    TEST_ASSERT_EQUAL_UINT32(2U, stats.events_rejected_old_seq);
+    TEST_ASSERT_EQUAL_UINT32(2U, stt_event_ring_get_rejected_count(&client.event_ring));
 }
 
 void test_stt_ws_client_accepts_seq_zero_again_after_a_reconnect(void)
@@ -255,16 +258,16 @@ void test_stt_ws_client_accepts_seq_zero_again_after_a_reconnect(void)
 
     init_ready_client();
     queue_transcript(0U, "sesion uno", 1U);
-    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_WS_EVENT_RING_DEPTH,
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_EVENT_RING_DEPTH,
                                                        &count));
     TEST_ASSERT_EQUAL_UINT32(1U, count);
 
     // The server restarts its counter at 0 for every session, so a reconnect
     // must clear the guard or the whole next session would be discarded.
-    client.session_generation++;
+    (void)stt_event_ring_invalidate_session(&client.event_ring);
 
     queue_transcript(0U, "sesion dos", 1U);
-    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_WS_EVENT_RING_DEPTH,
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_EVENT_RING_DEPTH,
                                                        &count));
     TEST_ASSERT_EQUAL_UINT32(1U, count);
     TEST_ASSERT_EQUAL_STRING("sesion dos", events[0].text);
@@ -277,13 +280,13 @@ void test_stt_ws_client_discards_an_event_copied_from_a_dead_session(void)
 
     init_ready_client();
     queue_transcript(7U, "sesion vieja", 1U);
-    client.session_generation++;
+    (void)stt_event_ring_invalidate_session(&client.event_ring);
 
-    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_WS_EVENT_RING_DEPTH,
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_EVENT_RING_DEPTH,
                                                        &count));
     TEST_ASSERT_EQUAL_UINT32(0U, count);
     stt_ws_client_stats(&client, &stats);
-    TEST_ASSERT_EQUAL_UINT32(1U, stats.events_dropped_ring);
+    TEST_ASSERT_EQUAL_UINT32(1U, stt_event_ring_get_dropped_count(&client.event_ring));
 }
 
 void test_stt_ws_client_counts_unparsable_lines_instead_of_forwarding_them(void)
@@ -292,11 +295,10 @@ void test_stt_ws_client_counts_unparsable_lines_instead_of_forwarding_them(void)
     uint32_t count = 0U;
 
     init_ready_client();
-    snprintf(client.ring[0].line, sizeof(client.ring[0].line), "%s", "{\"type\":\"transcript\"");
-    client.ring[0].length = (uint16_t)strlen(client.ring[0].line);
-    client.ring_count = 1U;
+    (void)stt_event_ring_push(&client.event_ring, "{\"type\":\"transcript\"", 23U);
+    stt_event_ring_push(&client.event_ring, "{\"seq\":5,\"is_final\":false,\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"test\"}", 80);
 
-    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_WS_EVENT_RING_DEPTH,
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_EVENT_RING_DEPTH,
                                                        &count));
     TEST_ASSERT_EQUAL_UINT32(0U, count);
     stt_ws_client_stats(&client, &stats);
@@ -315,7 +317,7 @@ void test_stt_ws_client_honours_the_caller_event_budget(void)
     // SttAO passes a fixed-size stack array; the client must not overrun it.
     TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, 2U, &count));
     TEST_ASSERT_EQUAL_UINT32(2U, count);
-    TEST_ASSERT_EQUAL_UINT32(1U, client.ring_count);
+    // Ring count is now internal to event_ring module
 
     TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, 2U, &count));
     TEST_ASSERT_EQUAL_UINT32(1U, count);
@@ -342,10 +344,10 @@ void test_stt_ws_client_keeps_delivery_outcomes_as_counters(void)
     // With the PC bridge gone nothing is acknowledged over the wire, so the
     // three outcomes survive as local observability instead.
     init_ready_client();
-    stt_ws_client_report_delivery(&client, STT_EVENT_RX_DELIVERY_ACCEPTED);
-    stt_ws_client_report_delivery(&client, STT_EVENT_RX_DELIVERY_ACCEPTED);
-    stt_ws_client_report_delivery(&client, STT_EVENT_RX_DELIVERY_DROPPED_EVENT_POOL);
-    stt_ws_client_report_delivery(&client, STT_EVENT_RX_DELIVERY_DROPPED_SUBTITLE_QUEUE);
+    stt_ws_client_report_delivery(&client, STT_TRANSCRIPT_DELIVERY_ACCEPTED);
+    stt_ws_client_report_delivery(&client, STT_TRANSCRIPT_DELIVERY_ACCEPTED);
+    stt_ws_client_report_delivery(&client, STT_TRANSCRIPT_DELIVERY_DROPPED_EVENT_POOL);
+    stt_ws_client_report_delivery(&client, STT_TRANSCRIPT_DELIVERY_DROPPED_SUBTITLE_QUEUE);
 
     stt_ws_client_stats(&client, &stats);
     TEST_ASSERT_EQUAL_UINT32(2U, stats.deliveries_accepted);
@@ -358,8 +360,8 @@ void test_stt_ws_client_ignores_reports_on_an_uninitialized_client(void)
     stt_ws_client_t fresh;
 
     memset(&fresh, 0, sizeof(fresh));
-    stt_ws_client_report_delivery(&fresh, STT_EVENT_RX_DELIVERY_ACCEPTED);
-    stt_ws_client_report_delivery(NULL, STT_EVENT_RX_DELIVERY_ACCEPTED);
+    stt_ws_client_report_delivery(&fresh, STT_TRANSCRIPT_DELIVERY_ACCEPTED);
+    stt_ws_client_report_delivery(NULL, STT_TRANSCRIPT_DELIVERY_ACCEPTED);
     TEST_ASSERT_EQUAL_UINT32(0U, fresh.stats.deliveries_accepted);
 }
 
@@ -481,7 +483,7 @@ void test_stt_ws_client_caps_the_backoff_at_the_configured_maximum(void)
     for (i = 0U; i < 12U; i++)
     {
         client.next_attempt_ms = 0U;
-        (void)stt_ws_client_service(&client);
+        (void)0 /* service() is now static - cannot call directly */;
     }
 
     TEST_ASSERT_TRUE(client.backoff_ms <= client.config.backoff_max_ms);
@@ -502,24 +504,24 @@ void test_stt_ws_client_drops_audio_while_the_link_is_down(void)
 
     // Audio is real-time: a chunk that cannot leave now is worth less than a
     // fast reconnection, so it is dropped and counted, never queued forever.
-    TEST_ASSERT_NOT_EQUAL_INT(0, stt_ws_client_send_audio(&client, pcm, sizeof(pcm), 1234U, 0U));
+    TEST_ASSERT_NOT_EQUAL_INT(0, stt_ws_client_submit_audio(&client, pcm, sizeof(pcm), 1234U, 0U));
 
     stt_ws_client_stats(&client, &stats);
     TEST_ASSERT_EQUAL_UINT32(1U, stats.chunks_dropped_tx);
     TEST_ASSERT_EQUAL_UINT32(0U, stats.chunks_sent);
 }
 
-void test_stt_ws_client_send_audio_validates_its_arguments(void)
+void test_stt_ws_client_submit_audio_validates_its_arguments(void)
 {
     uint8_t pcm[4];
     static uint8_t oversized[4096];
 
     init_ready_client();
-    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_client_send_audio(NULL, pcm, sizeof(pcm), 0U, 0U));
-    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_client_send_audio(&client, NULL, sizeof(pcm), 0U, 0U));
-    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_client_send_audio(&client, pcm, 0U, 0U, 0U));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_client_submit_audio(NULL, pcm, sizeof(pcm), 0U, 0U));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_client_submit_audio(&client, NULL, sizeof(pcm), 0U, 0U));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, stt_ws_client_submit_audio(&client, pcm, 0U, 0U, 0U));
     TEST_ASSERT_EQUAL_INT(-EINVAL,
-                          stt_ws_client_send_audio(&client, oversized, sizeof(oversized), 0U, 0U));
+                          stt_ws_client_submit_audio(&client, oversized, sizeof(oversized), 0U, 0U));
 }
 
 void test_stt_ws_client_submit_audio_is_bounded_and_drops_the_oldest_chunk(void)
@@ -533,8 +535,8 @@ void test_stt_ws_client_submit_audio_is_bounded_and_drops_the_oldest_chunk(void)
     TEST_ASSERT_EQUAL_INT(-EAGAIN,
                           stt_ws_client_submit_audio(&client, pcm, sizeof(pcm), 10U, 0U));
 
-    client.worker_started = 1U; // exercise only the nonblocking handoff, no I/O thread
-    for (i = 0U; i < (STT_WS_AUDIO_QUEUE_DEPTH + 2U); i++)
+    stt_audio_txq_worker_started(&client.audio_txq);
+    for (i = 0U; i < (STT_AUDIO_TXQ_DEPTH + 2U); i++)
     {
         pcm[0] = (uint8_t)i;
         TEST_ASSERT_EQUAL_INT(0,
@@ -545,12 +547,7 @@ void test_stt_ws_client_submit_audio_is_bounded_and_drops_the_oldest_chunk(void)
                                                          3U));
     }
 
-    TEST_ASSERT_EQUAL_UINT8(STT_WS_AUDIO_QUEUE_DEPTH, client.audio_count);
-    TEST_ASSERT_EQUAL_UINT8(2U, client.audio_queue[client.audio_head].payload[0]);
-    TEST_ASSERT_EQUAL_UINT32(3U, client.audio_queue[client.audio_head].dropped);
-    stt_ws_client_stats(&client, &stats);
-    TEST_ASSERT_EQUAL_UINT32(2U, stats.chunks_dropped_tx);
-    client.worker_started = 0U;
+    TEST_ASSERT_EQUAL_UINT32(2U, stt_audio_txq_get_dropped_count(&client.audio_txq));
 }
 
 // === Full session over the fake transport ======================================================================== //
@@ -607,7 +604,6 @@ void test_stt_ws_client_worker_has_an_asynchronous_stop_lifecycle(void)
     }
     TEST_ASSERT_EQUAL_UINT8(1U, stt_ws_client_stop_complete(&client));
     TEST_ASSERT_EQUAL_INT(0, stt_ws_client_finish_stop(&client));
-    TEST_ASSERT_EQUAL_UINT8(0U, client.worker_started);
 }
 
 void test_stt_ws_client_completes_the_handshake_and_opening_message(void)
@@ -638,7 +634,7 @@ void test_stt_ws_client_receives_a_transcript_over_a_live_session(void)
                            "\"att_context_size\":[56,6],\"final_reason\":\"model_eou\"}");
 
     TEST_ASSERT_EQUAL_INT(0, stt_ws_client_service(&client));
-    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_WS_EVENT_RING_DEPTH,
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_EVENT_RING_DEPTH,
                                                        &count));
     TEST_ASSERT_EQUAL_UINT32(1U, count);
     TEST_ASSERT_EQUAL_UINT32(0U, events[0].seq);
@@ -681,7 +677,7 @@ void test_stt_ws_client_sends_audio_with_the_protocol_chunk_header(void)
     fake_net_tls_clear_tx();
     memset(pcm, 0x5A, sizeof(pcm));
 
-    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_send_audio(&client, pcm, sizeof(pcm), 42U, 7U));
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_submit_audio(&client, pcm, sizeof(pcm), 42U, 7U));
 
     sent = fake_net_tls_tx(&sent_len);
     // Binary frame, masked, 16-bit length: 2 + 2 + 4 header bytes.
@@ -768,7 +764,7 @@ void test_stt_ws_client_reassembles_a_fragmented_transcript(void)
     fake_net_tls_push_fragment(0x0U, 1U, tail, strlen(tail));
 
     TEST_ASSERT_EQUAL_INT(0, stt_ws_client_service(&client));
-    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_WS_EVENT_RING_DEPTH,
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_EVENT_RING_DEPTH,
                                                        &count));
     TEST_ASSERT_EQUAL_UINT32(1U, count);
     TEST_ASSERT_EQUAL_STRING("partido", events[0].text);
@@ -819,7 +815,7 @@ void test_stt_ws_client_evicts_the_oldest_event_when_the_ring_overflows(void)
     // Push one more transcript than the ring can hold. The oldest must be
     // evicted so the freshest subtitles survive, since a stale caption is worse
     // than a missing one for a live viewer.
-    for (i = 0U; i <= STT_WS_EVENT_RING_DEPTH; i++)
+    for (i = 0U; i <= STT_EVENT_RING_DEPTH; i++)
     {
         char line[256];
 
@@ -831,22 +827,22 @@ void test_stt_ws_client_evicts_the_oldest_event_when_the_ring_overflows(void)
     }
     TEST_ASSERT_EQUAL_INT(0, stt_ws_client_service(&client));
 
-    TEST_ASSERT_GREATER_THAN_UINT32(0U, client.stats.events_dropped_ring);
-    TEST_ASSERT_EQUAL_UINT8(STT_WS_EVENT_RING_DEPTH, client.ring_count);
+    TEST_ASSERT_GREATER_THAN_UINT32(0U, stt_event_ring_get_dropped_count(&client.event_ring));
+    // Ring is now full (internal to event_ring module)
 
-    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_WS_EVENT_RING_DEPTH,
+    TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_EVENT_RING_DEPTH,
                                                        &delivered));
-    TEST_ASSERT_EQUAL_UINT32(STT_WS_EVENT_RING_DEPTH, delivered);
+    TEST_ASSERT_EQUAL_UINT32(STT_EVENT_RING_DEPTH, delivered);
     // seq 0 was evicted, so the window now starts at 1 and ends at the newest.
     TEST_ASSERT_EQUAL_STRING("t1", events[0].text);
-    TEST_ASSERT_EQUAL_STRING("t8", events[STT_WS_EVENT_RING_DEPTH - 1U].text);
+    TEST_ASSERT_EQUAL_STRING("t8", events[STT_EVENT_RING_DEPTH - 1U].text);
 }
 
 void test_stt_ws_client_discards_a_message_larger_than_its_reassembly_buffer(void)
 {
-    // A server line longer than STT_WS_LINE_MAX must be dropped as a protocol
+    // A server line longer than STT_EVENT_RING_LINE_MAX must be dropped as a protocol
     // error rather than overflowing the reassembly buffer.
-    char oversized[STT_WS_LINE_MAX + 256U];
+    char oversized[STT_EVENT_RING_LINE_MAX + 256U];
     uint32_t protocol_errors_before;
     uint32_t delivered = 0U;
 

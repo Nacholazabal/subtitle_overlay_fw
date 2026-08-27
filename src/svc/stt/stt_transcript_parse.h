@@ -50,10 +50,10 @@ extern "C" {
 /// outcomes survive as counters and log lines instead.
 typedef enum
 {
-    STT_EVENT_RX_DELIVERY_ACCEPTED = 0,
-    STT_EVENT_RX_DELIVERY_DROPPED_EVENT_POOL,
-    STT_EVENT_RX_DELIVERY_DROPPED_SUBTITLE_QUEUE,
-} stt_event_rx_delivery_status_t;
+    STT_TRANSCRIPT_DELIVERY_ACCEPTED = 0,
+    STT_TRANSCRIPT_DELIVERY_DROPPED_EVENT_POOL,
+    STT_TRANSCRIPT_DELIVERY_DROPPED_SUBTITLE_QUEUE,
+} stt_transcript_delivery_status_t;
 
 // === Public variable declarations ================================================================================ //
 // === Public function declarations ================================================================================ //

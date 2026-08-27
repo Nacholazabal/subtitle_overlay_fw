@@ -4,6 +4,7 @@
 
 #include "app.h"
 #include "mock_stt_ws_client.h"
+#include "mock_stt_ws_config.h"
 #include "mock_subtitle_pipeline.h"
 #include "qpc_test_harness.h"
 #include "stt_ws_client.h"
@@ -35,7 +36,7 @@ QActive* const AO_System = &system_fake.super;
 static char captured_text[SUBTITLE_TEXT_MAX_LEN * 2U];
 static uint8_t captured_current_is_final;
 static int write_text_status;
-static subtitle_text_evt_t poll_events[STT_WS_EVENT_RING_DEPTH];
+static subtitle_text_evt_t poll_events[STT_EVENT_RING_DEPTH];
 static uint32_t poll_event_count;
 static int poll_status;
 
@@ -61,7 +62,10 @@ static stt_ws_client_t fake_client;
 
 static void expect_stt_init_success(void)
 {
-    stt_ws_client_shared_IgnoreAndReturn(&fake_client);
+    stt_ws_config_default_IgnoreAndReturn(0);
+    stt_ws_config_parse_url_IgnoreAndReturn(0);
+    stt_ws_client_init_IgnoreAndReturn(0);
+    stt_ws_client_set_active_Ignore();
     stt_ws_client_start_IgnoreAndReturn(0);
     stt_ws_client_request_stop_Ignore();
     stt_ws_client_finish_stop_IgnoreAndReturn(0);
@@ -108,7 +112,7 @@ static int stt_ws_client_poll_events_stub(stt_ws_client_t* client,
 
     if (poll_status == 0)
     {
-        TEST_ASSERT_LESS_OR_EQUAL_UINT32(STT_WS_EVENT_RING_DEPTH, max_events);
+        TEST_ASSERT_LESS_OR_EQUAL_UINT32(STT_EVENT_RING_DEPTH, max_events);
         TEST_ASSERT_LESS_OR_EQUAL_UINT32(max_events, poll_event_count);
         for (i = 0U; i < poll_event_count; i++)
         {
