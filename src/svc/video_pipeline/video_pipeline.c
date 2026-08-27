@@ -15,6 +15,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include <string.h>
 
 #include "hw_platform.h"
+#include "log.h"
 #include "xstatus.h"
 
 // === Macros definitions ========================================================================================== //
@@ -221,9 +222,18 @@ video_pipeline_poll_result_e video_pipeline_poll(video_pipeline_t* const pipelin
         }
 
         pipeline->input_timing = timing;
-        mode = video_modes_find(timing.width, timing.height);
+
+        // The framebuffer geometry is fixed, so a larger source cannot be
+        // captured even if the mode table grew an entry for it.
+        mode = ((timing.width > VIDEO_PIPELINE_MAX_WIDTH)
+                || (timing.height > VIDEO_PIPELINE_MAX_HEIGHT))
+                   ? NULL
+                   : video_modes_find(timing.width, timing.height);
         if (mode == NULL)
         {
+            LOG_WARNING("video: unsupported input timing %lux%lu",
+                        (unsigned long)pipeline->input_timing.width,
+                        (unsigned long)pipeline->input_timing.height);
             pipeline->state = VIDEO_PIPELINE_UNSUPPORTED_INPUT;
             result = VIDEO_PIPELINE_POLL_UNSUPPORTED_INPUT;
             break;

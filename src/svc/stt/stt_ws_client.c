@@ -27,7 +27,6 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 #define STT_WS_AUDIO_HEADER_BYTES (20U)
 #define STT_WS_TX_MAX             (STT_WS_FRAME_HEADER_MAX + STT_WS_AUDIO_HEADER_BYTES + 2048U)
-#define STT_WS_READ_SLICE         (2048U)
 #define STT_WS_SEND_TIMEOUT_MS    (2000U)
 #define STT_WS_HEALTHY_SESSION_MS (60000U)
 #define STT_WS_PORT_MAX           (65535U)
