@@ -51,8 +51,7 @@ mapfile -t SOURCES < <(
         'src/svc/**/*.c' \
         'src/utils/log/*.c' \
         'src/utils/number_parse/*.c' \
-        ':!:src/bsp/**' \
-        ':!:src/utils/template/**' |
+        ':!:src/bsp/**' |
     sort
 )
 
