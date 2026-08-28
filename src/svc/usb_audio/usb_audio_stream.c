@@ -328,7 +328,9 @@ void usb_audio_stream_default_config(usb_audio_stream_config_t* const config)
  */
 int usb_audio_stream_start(usb_audio_stream_t* const stream,
                            usb_audio_stream_config_t const* const config,
-                           audio_sink_t const* const sink)
+                           audio_sink_t const* const sink,
+                           uint8_t agc_enabled,
+                           uint32_t agc_target_pct)
 {
     usb_audio_capture_config_t capture_config;
     int status;
@@ -349,39 +351,9 @@ int usb_audio_stream_start(usb_audio_stream_t* const stream,
     }
     stream->state_initialized = 1U;
     usb_audio_agc_init(&stream->agc);
-    stream->agc_enabled = 0U;
-    {
-        char const* const enabled = getenv("SUBTITLE_USB_AUDIO_AGC_ENABLE");
-        if ((enabled != NULL) && (enabled[0] != '\0'))
-        {
-            uint32_t value;
-            if (number_parse_u32(enabled, strlen(enabled), 0U, 1U, &value) == 0)
-            {
-                stream->agc_enabled = (uint8_t)value;
-            }
-            else
-            {
-                LOG_WARNING("usb-audio: ignoring invalid SUBTITLE_USB_AUDIO_AGC_ENABLE='%s'",
-                            enabled);
-            }
-        }
-    }
-    {
-        char const* const target = getenv("SUBTITLE_USB_AUDIO_AGC_TARGET_PCT");
-        if ((target != NULL) && (target[0] != '\0'))
-        {
-            uint32_t pct;
-            if (number_parse_u32(target, strlen(target), 1U, 100U, &pct) == 0)
-            {
-                stream->agc.target_peak = (float)pct / 100.0f;
-            }
-            else
-            {
-                LOG_WARNING("usb-audio: ignoring invalid SUBTITLE_USB_AUDIO_AGC_TARGET_PCT='%s'",
-                            target);
-            }
-        }
-    }
+    // AGC settings come from app_config (no getenv here)
+    stream->agc_enabled = agc_enabled;
+    stream->agc.target_peak = (float)agc_target_pct / 100.0f;
     if (stream->agc_enabled == 0U)
     {
         LOG_INFO("usb-audio: digital AGC disabled; streaming raw PCM");

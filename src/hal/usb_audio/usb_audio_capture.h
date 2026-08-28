@@ -43,6 +43,10 @@ typedef struct
     uint32_t sample_rate_hz;
     uint32_t channels;
     uint32_t samples_per_chunk;
+    // Mixer configuration (previously read via getenv in usb_audio_capture.c)
+    char mixer_control[USB_AUDIO_CAPTURE_DEVICE_MAX_LEN]; // "Mic", "Line", etc.
+    char mixer_device[USB_AUDIO_CAPTURE_DEVICE_MAX_LEN];  // explicit mixer, or "" to auto-derive
+    uint32_t volume_pct;                                  // 0-100
 } usb_audio_capture_config_t;
 
 typedef struct

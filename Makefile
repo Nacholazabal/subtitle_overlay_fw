@@ -90,6 +90,7 @@ VIDEO_PORT_SRCS := \
 	src/utils/log/log.c \
 	src/utils/number_parse/number_parse.c \
 	src/app/app.c \
+	src/app/app_config.c \
 	src/svc/system/SystemAO.c \
 	src/svc/stt/SttAO.c \
 	src/svc/stt/stt_transcript_parse.c \

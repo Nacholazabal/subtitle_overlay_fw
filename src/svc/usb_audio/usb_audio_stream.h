@@ -83,8 +83,14 @@ void usb_audio_stream_default_config(usb_audio_stream_config_t* config);
 /// @param stream Stream service instance.
 /// @param config Capture configuration.
 /// @param sink Audio data sink (injected dependency).
+/// @param agc_enabled Nonzero to enable automatic gain control.
+/// @param agc_target_pct Target peak level percentage (10-95).
 /// @return 0 on success or a negative errno-style status. The instance must remain alive until stopped.
-int usb_audio_stream_start(usb_audio_stream_t* stream, usb_audio_stream_config_t const* config, audio_sink_t const* sink);
+int usb_audio_stream_start(usb_audio_stream_t* stream,
+                           usb_audio_stream_config_t const* config,
+                           audio_sink_t const* sink,
+                           uint8_t agc_enabled,
+                           uint32_t agc_target_pct);
 
 /// @brief Return 0 while workers are healthy, their fatal error, or -APP_ESTATE when not running.
 int usb_audio_stream_get_status(usb_audio_stream_t* stream);
