@@ -27,7 +27,7 @@ extern "C" {
 
 // Maximum length of the formatted log messages
 #ifndef LOG_MAX_MESSAGE_LENGTH
-    #define LOG_MAX_MESSAGE_LENGTH (128U)
+    #define LOG_MAX_MESSAGE_LENGTH (256U)
 #endif
 
 // Helper macros for printing log messages

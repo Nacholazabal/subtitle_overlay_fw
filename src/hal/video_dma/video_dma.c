@@ -14,12 +14,12 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 #include <errno.h>
 #include <fcntl.h>
-#include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
 #include "hdmi_vdma.h"
+#include "log.h"
 
 // === Macros definitions ========================================================================================== //
 // === Private data type declarations ============================================================================== //
@@ -48,22 +48,22 @@ static int select_channel(video_dma_t* dma,
  * @param dma Initialized DMA adapter.
  * @param request ioctl request code.
  * @param name Human-readable operation name used in error logs.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or XST_FAILURE on ioctl failure.
+ * @return 0 on success, -EINVAL for bad input, or -EIO on ioctl failure.
  */
 static int ioctl_noarg(video_dma_t* const dma, unsigned long request, const char* const name)
 {
     if ((dma == NULL) || !dma->is_open)
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     if (ioctl(dma->fd, request) != 0)
     {
-        fprintf(stderr, "[video_dma] %s failed: %s\n", name, strerror(errno));
-        return XST_FAILURE;
+        LOG_ERROR("video_dma: %s failed: %s", name, strerror(errno));
+        return -EIO;
     }
 
-    return XST_SUCCESS;
+    return 0;
 }
 
 /**
@@ -75,7 +75,7 @@ static int ioctl_noarg(video_dma_t* const dma, unsigned long request, const char
  * @param height Active video height in lines.
  * @param stride Framebuffer line stride in bytes.
  * @param frame_index Framebuffer index to use.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or XST_FAILURE on ioctl failure.
+ * @return 0 on success, -EINVAL for bad input, or -EIO on ioctl failure.
  */
 static int configure_channel(video_dma_t* const dma,
                              unsigned long request,
@@ -90,7 +90,7 @@ static int configure_channel(video_dma_t* const dma,
     if ((dma == NULL) || !dma->is_open || (width == 0U) || (height == 0U) || (stride == 0U)
         || (frame_index >= dma->frame_count))
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     memset(&cfg, 0, sizeof(cfg));
@@ -101,11 +101,11 @@ static int configure_channel(video_dma_t* const dma,
 
     if (ioctl(dma->fd, request, &cfg) != 0)
     {
-        fprintf(stderr, "[video_dma] %s failed: %s\n", name, strerror(errno));
-        return XST_FAILURE;
+        LOG_ERROR("video_dma: %s failed: %s", name, strerror(errno));
+        return -EIO;
     }
 
-    return XST_SUCCESS;
+    return 0;
 }
 
 /**
@@ -114,7 +114,7 @@ static int configure_channel(video_dma_t* const dma,
  * @param request Channel-specific select ioctl request.
  * @param name Human-readable operation name used in error logs.
  * @param frame_index Framebuffer index to select.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or XST_FAILURE on ioctl failure.
+ * @return 0 on success, -EINVAL for bad input, or -EIO on ioctl failure.
  */
 static int select_channel(video_dma_t* const dma,
                           unsigned long request,
@@ -125,16 +125,16 @@ static int select_channel(video_dma_t* const dma,
 
     if ((dma == NULL) || !dma->is_open || (frame_index >= dma->frame_count))
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     if (ioctl(dma->fd, request, &kernel_frame) != 0)
     {
-        fprintf(stderr, "[video_dma] %s failed: %s\n", name, strerror(errno));
-        return XST_FAILURE;
+        LOG_ERROR("video_dma: %s failed: %s", name, strerror(errno));
+        return -EIO;
     }
 
-    return XST_SUCCESS;
+    return 0;
 }
 
 // === Public function implementation ============================================================================== //
@@ -143,7 +143,7 @@ static int select_channel(video_dma_t* const dma,
  * @brief Open /dev/hdmi-vdma and claim the requested framebuffer slots.
  * @param dma DMA adapter to initialize.
  * @param frame_count Number of framebuffers to claim.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or XST_FAILURE on open/ioctl failure.
+ * @return 0 on success, -EINVAL for bad input, -ENODEV for device open failure, or -EIO on ioctl/validation failure.
  */
 int video_dma_init(video_dma_t* const dma, uint32_t frame_count)
 {
@@ -151,7 +151,7 @@ int video_dma_init(video_dma_t* const dma, uint32_t frame_count)
 
     if ((dma == NULL) || (frame_count == 0U) || (frame_count > VIDEO_DMA_MAX_FRAMES))
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     memset(dma, 0, sizeof(*dma));
@@ -160,27 +160,24 @@ int video_dma_init(video_dma_t* const dma, uint32_t frame_count)
     dma->fd = open("/dev/" HDMI_VDMA_DEVICE_NAME, O_RDWR | O_SYNC);
     if (dma->fd < 0)
     {
-        fprintf(stderr,
-                "[video_dma] open /dev/%s failed: %s\n",
-                HDMI_VDMA_DEVICE_NAME,
-                strerror(errno));
-        return XST_FAILURE;
+        LOG_ERROR("video_dma: open /dev/%s failed: %s", HDMI_VDMA_DEVICE_NAME, strerror(errno));
+        return -ENODEV;
     }
     dma->is_open = 1;
 
     memset(&info, 0, sizeof(info));
     if (ioctl(dma->fd, HDMI_VDMA_GET_INFO, &info) != 0)
     {
-        fprintf(stderr, "[video_dma] HDMI_VDMA_GET_INFO failed: %s\n", strerror(errno));
+        LOG_ERROR("video_dma: HDMI_VDMA_GET_INFO failed: %s", strerror(errno));
         video_dma_cleanup(dma);
-        return XST_FAILURE;
+        return -EIO;
     }
 
     if ((info.frame_count == 0U) || (info.frame_size == 0U))
     {
-        fprintf(stderr, "[video_dma] /dev/%s reported invalid buffers\n", HDMI_VDMA_DEVICE_NAME);
+        LOG_ERROR("video_dma: /dev/%s reported invalid buffers", HDMI_VDMA_DEVICE_NAME);
         video_dma_cleanup(dma);
-        return XST_FAILURE;
+        return -EIO;
     }
 
     // Never advertise more frames than the kernel actually exposes. Mapping
@@ -188,17 +185,16 @@ int video_dma_init(video_dma_t* const dma, uint32_t frame_count)
     // dma->frame_count claiming buffers a later *_SELECT/config would reject.
     if (info.frame_count < frame_count)
     {
-        fprintf(stderr,
-                "[video_dma] /dev/%s exposes %u frames, %u requested\n",
-                HDMI_VDMA_DEVICE_NAME,
-                (unsigned)info.frame_count,
-                (unsigned)frame_count);
+        LOG_ERROR("video_dma: /dev/%s exposes %u frames, %u requested",
+                  HDMI_VDMA_DEVICE_NAME,
+                  (unsigned)info.frame_count,
+                  (unsigned)frame_count);
         video_dma_cleanup(dma);
-        return XST_FAILURE;
+        return -EINVAL;
     }
 
     dma->frame_count = frame_count;
-    return XST_SUCCESS;
+    return 0;
 }
 
 /**
@@ -236,7 +232,7 @@ void video_dma_cleanup(video_dma_t* const dma)
  * @param height Active video height in lines.
  * @param stride Framebuffer line stride in bytes.
  * @param frame_index Framebuffer index to use.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or XST_FAILURE on ioctl failure.
+ * @return 0 on success, -EINVAL for bad input, or -EIO on ioctl failure.
  */
 int video_dma_configure(video_dma_t* const dma,
                         video_dma_channel_e channel,
@@ -267,14 +263,14 @@ int video_dma_configure(video_dma_t* const dma,
                                  frame_index);
     }
 
-    return XST_INVALID_PARAM;
+    return -EINVAL;
 }
 
 /**
  * @brief Start one DMA channel.
  * @param dma Initialized DMA adapter.
  * @param channel DMA channel to start.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or XST_FAILURE on ioctl failure.
+ * @return 0 on success, -EINVAL for bad input, or -EIO on ioctl failure.
  */
 int video_dma_start(video_dma_t* const dma, video_dma_channel_e channel)
 {
@@ -288,14 +284,14 @@ int video_dma_start(video_dma_t* const dma, video_dma_channel_e channel)
         return ioctl_noarg(dma, HDMI_VDMA_S2MM_START, "HDMI_VDMA_S2MM_START");
     }
 
-    return XST_INVALID_PARAM;
+    return -EINVAL;
 }
 
 /**
  * @brief Stop one DMA channel.
  * @param dma Initialized DMA adapter.
  * @param channel DMA channel to stop.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or XST_FAILURE on ioctl failure.
+ * @return 0 on success, -EINVAL for bad input, or -EIO on ioctl failure.
  */
 int video_dma_stop(video_dma_t* const dma, video_dma_channel_e channel)
 {
@@ -309,7 +305,7 @@ int video_dma_stop(video_dma_t* const dma, video_dma_channel_e channel)
         return ioctl_noarg(dma, HDMI_VDMA_S2MM_STOP, "HDMI_VDMA_S2MM_STOP");
     }
 
-    return XST_INVALID_PARAM;
+    return -EINVAL;
 }
 
 /**
@@ -317,7 +313,7 @@ int video_dma_stop(video_dma_t* const dma, video_dma_channel_e channel)
  * @param dma Initialized DMA adapter.
  * @param channel DMA channel to update.
  * @param frame_index Framebuffer index to select.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or XST_FAILURE on ioctl failure.
+ * @return 0 on success, -EINVAL for bad input, or -EIO on ioctl failure.
  */
 int video_dma_select_frame(video_dma_t* const dma,
                            video_dma_channel_e channel,
@@ -333,7 +329,7 @@ int video_dma_select_frame(video_dma_t* const dma,
         return select_channel(dma, HDMI_VDMA_S2MM_SELECT, "HDMI_VDMA_S2MM_SELECT", frame_index);
     }
 
-    return XST_INVALID_PARAM;
+    return -EINVAL;
 }
 
 // === End of documentation ======================================================================================== //

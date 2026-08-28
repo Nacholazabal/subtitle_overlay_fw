@@ -12,10 +12,10 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include "video_dynclk.h"
 
 #include <math.h>
-#include <stdio.h>
 #include <time.h>
 
 #include "hw_platform.h"
+#include "log.h"
 #include "xil_io.h"
 
 // === Macros definitions ========================================================================================== //
@@ -323,7 +323,7 @@ static int clk_start(uintptr_t base)
 
         if ((dynclk_now_ns(&now_ns) != XST_SUCCESS) || ((now_ns - start_ns) >= CLK_TIMEOUT_NS))
         {
-            fprintf(stderr, "[video_dynclk] PLL lock timeout\n");
+            LOG_ERROR("video_dynclk: PLL lock timeout");
             return XST_FAILURE;
         }
     }
@@ -377,7 +377,7 @@ int video_dynclk_stop(video_dynclk_t* const dynclk)
 
         if ((dynclk_now_ns(&now_ns) != XST_SUCCESS) || ((now_ns - start_ns) >= CLK_TIMEOUT_NS))
         {
-            fprintf(stderr, "[video_dynclk] clock stop timeout\n");
+            LOG_ERROR("video_dynclk: clock stop timeout");
             return XST_FAILURE;
         }
     }
