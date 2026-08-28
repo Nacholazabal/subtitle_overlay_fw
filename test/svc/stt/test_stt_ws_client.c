@@ -83,7 +83,7 @@ static void queue_transcript(uint32_t seq, char const* text, uint8_t is_final)
                                 (unsigned long)seq, (is_final != 0U) ? "true" : "false", text);
 
     TEST_ASSERT_GREATER_THAN_INT(0, length);
-    (void)stt_event_ring_push(&client.event_ring, line, (size_t)length);
+    (void)stt_event_ring_push(&client.event_ring, line, (size_t)length, NULL);
 }
 
 void setUp(void)
@@ -295,8 +295,8 @@ void test_stt_ws_client_counts_unparsable_lines_instead_of_forwarding_them(void)
     uint32_t count = 0U;
 
     init_ready_client();
-    (void)stt_event_ring_push(&client.event_ring, "{\"type\":\"transcript\"", 23U);
-    stt_event_ring_push(&client.event_ring, "{\"seq\":5,\"is_final\":false,\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"test\"}", 80);
+    (void)stt_event_ring_push(&client.event_ring, "{\"type\":\"transcript\"", 23U, NULL);
+    stt_event_ring_push(&client.event_ring, "{\"seq\":5,\"is_final\":false,\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"test\"}", 80, NULL);
 
     TEST_ASSERT_EQUAL_INT(0, stt_ws_client_poll_events(&client, events, STT_EVENT_RING_DEPTH,
                                                        &count));

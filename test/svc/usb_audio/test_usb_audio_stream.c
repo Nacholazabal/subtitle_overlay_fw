@@ -3,11 +3,19 @@
 #include <stdio.h>
 
 #include "unity.h"
+#include "app_config.h"
 #include "errorno.h"
 #include "usb_audio_stream.h"
 
 #include "mock_stt_ws_client.h"
 #include "mock_usb_audio_capture.h"
+
+// Stub for global config used by usb_audio_stream
+app_config_t g_app_config = {
+    .audio_capture.mixer_control = "Mic",
+    .audio_capture.mixer_device = "",
+    .audio_capture.volume_pct = 100U,
+};
 
 // usb_audio_stream pulls in the real AGC (not mocked); link it explicitly.
 TEST_SOURCE_FILE("usb_audio_agc.c")
@@ -15,6 +23,18 @@ TEST_SOURCE_FILE("number_parse.c")
 
 static usb_audio_stream_t stream;
 static usb_audio_stream_config_t config;
+static audio_sink_t test_sink;
+
+static int test_sink_submit(void* ctx, const void* pcm, size_t size,
+                            uint64_t timestamp_ns, uint32_t dropped)
+{
+    (void)ctx;
+    (void)pcm;
+    (void)size;
+    (void)timestamp_ns;
+    (void)dropped;
+    return 0;
+}
 
 static void init_valid_config(void)
 {
@@ -25,6 +45,9 @@ static void init_valid_config(void)
 void setUp(void)
 {
     memset(&stream, 0, sizeof(stream));
+    memset(&test_sink, 0, sizeof(test_sink));
+    test_sink.ctx = NULL;
+    test_sink.submit = test_sink_submit;
     init_valid_config();
     unsetenv("USB_AUDIO_PCM_DEVICE");
     unsetenv("SUBTITLE_USB_AUDIO_AGC_ENABLE");
@@ -60,11 +83,11 @@ void test_usb_audio_stream_default_config_reads_environment_overrides(void)
 
 void test_usb_audio_stream_start_rejects_invalid_arguments(void)
 {
-    TEST_ASSERT_EQUAL_INT(-EINVAL, usb_audio_stream_start(NULL, &config));
-    TEST_ASSERT_EQUAL_INT(-EINVAL, usb_audio_stream_start(&stream, NULL));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, usb_audio_stream_start(NULL, &config, &test_sink, 0U, 50U));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, usb_audio_stream_start(&stream, NULL, &test_sink, 0U, 50U));
 
     config.pcm_device[0] = '\0';
-    TEST_ASSERT_EQUAL_INT(-EINVAL, usb_audio_stream_start(&stream, &config));
+    TEST_ASSERT_EQUAL_INT(-EINVAL, usb_audio_stream_start(&stream, &config, &test_sink, 0U, 50U));
 }
 
 void test_usb_audio_stream_invalid_agc_override_retains_default(void)
@@ -72,7 +95,7 @@ void test_usb_audio_stream_invalid_agc_override_retains_default(void)
     setenv("SUBTITLE_USB_AUDIO_AGC_TARGET_PCT", "not-a-number", 1);
     usb_audio_capture_init_ExpectAnyArgsAndReturn(-EIO);
 
-    TEST_ASSERT_EQUAL_INT(-EIO, usb_audio_stream_start(&stream, &config));
+    TEST_ASSERT_EQUAL_INT(-EIO, usb_audio_stream_start(&stream, &config, &test_sink, 0U, 50U));
     TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.35f, stream.agc.target_peak);
 }
 
@@ -81,7 +104,7 @@ void test_usb_audio_stream_agc_enable_override_can_disable_digital_agc(void)
     setenv("SUBTITLE_USB_AUDIO_AGC_ENABLE", "0", 1);
     usb_audio_capture_init_ExpectAnyArgsAndReturn(-EIO);
 
-    TEST_ASSERT_EQUAL_INT(-EIO, usb_audio_stream_start(&stream, &config));
+    TEST_ASSERT_EQUAL_INT(-EIO, usb_audio_stream_start(&stream, &config, &test_sink, 0U, 50U));
     TEST_ASSERT_EQUAL_UINT8(0U, stream.agc_enabled);
 }
 
@@ -90,7 +113,7 @@ void test_usb_audio_stream_agc_enable_override_can_enable_digital_agc(void)
     setenv("SUBTITLE_USB_AUDIO_AGC_ENABLE", "1", 1);
     usb_audio_capture_init_ExpectAnyArgsAndReturn(-EIO);
 
-    TEST_ASSERT_EQUAL_INT(-EIO, usb_audio_stream_start(&stream, &config));
+    TEST_ASSERT_EQUAL_INT(-EIO, usb_audio_stream_start(&stream, &config, &test_sink, 0U, 50U));
     TEST_ASSERT_EQUAL_UINT8(1U, stream.agc_enabled);
 }
 
@@ -99,7 +122,7 @@ void test_usb_audio_stream_invalid_agc_enable_override_keeps_default_disabled(vo
     setenv("SUBTITLE_USB_AUDIO_AGC_ENABLE", "off", 1);
     usb_audio_capture_init_ExpectAnyArgsAndReturn(-EIO);
 
-    TEST_ASSERT_EQUAL_INT(-EIO, usb_audio_stream_start(&stream, &config));
+    TEST_ASSERT_EQUAL_INT(-EIO, usb_audio_stream_start(&stream, &config, &test_sink, 0U, 50U));
     TEST_ASSERT_EQUAL_UINT8(0U, stream.agc_enabled);
 }
 
@@ -125,7 +148,7 @@ void test_usb_audio_stream_start_reports_capture_unavailable_when_alsa_is_disabl
 {
     usb_audio_capture_init_ExpectAnyArgsAndReturn(-EIO);
 
-    TEST_ASSERT_EQUAL_INT(-EIO, usb_audio_stream_start(&stream, &config));
+    TEST_ASSERT_EQUAL_INT(-EIO, usb_audio_stream_start(&stream, &config, &test_sink, 0U, 50U));
     TEST_ASSERT_EQUAL_UINT8(0U, stream.running);
 }
 

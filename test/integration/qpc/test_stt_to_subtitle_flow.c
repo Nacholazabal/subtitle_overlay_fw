@@ -3,6 +3,7 @@
 #include "unity.h"
 
 #include "app.h"
+#include "app_config.h"
 #include "mock_stt_ws_client.h"
 #include "mock_stt_ws_config.h"
 #include "mock_subtitle_pipeline.h"
@@ -10,6 +11,12 @@
 #include "stt_ws_client.h"
 #include "SttAO.h"
 #include "SubtitleAO.h"
+
+// Stub for global config used by SubtitleAO
+app_config_t g_app_config = {
+    .subtitle_clear_timeout_ms = 5000U,
+    .subtitle_partial_timeout_ms = 1500U,
+};
 
 TEST_SOURCE_FILE("qpc_test_harness.c")
 TEST_SOURCE_FILE("SttAO.c")

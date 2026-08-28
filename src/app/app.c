@@ -16,7 +16,9 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
+#include "app_config.h"
 #include "log.h"
 #include "SttAO.h"
 #include "SubtitleAO.h"
@@ -62,6 +64,9 @@ static void app_install_signal_handlers(void);
 static void app_shutdown_signal_handler(int signal_number);
 
 // === Public variable definitions ================================================================================= //
+
+app_config_t g_app_config;
+
 // === Private variable definitions ================================================================================ //
 // === Private function implementation ============================================================================= //
 
@@ -78,7 +83,25 @@ static void bsp_init_placeholder(void)
 // line buffered; only errors are worth forcing out immediately.
 static void app_log_output(log_level_e severity, const char* msg)
 {
-    fprintf(stdout, "[%s] %s\n", log_level_to_str(severity), msg);
+    static struct timespec start_time;
+    static int start_time_initialized = 0;
+    struct timespec now;
+    uint64_t elapsed_ms;
+
+    if (!start_time_initialized)
+    {
+        clock_gettime(CLOCK_MONOTONIC, &start_time);
+        start_time_initialized = 1;
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    elapsed_ms = (uint64_t)(now.tv_sec - start_time.tv_sec) * 1000ULL +
+                 (uint64_t)(now.tv_nsec - start_time.tv_nsec) / 1000000ULL;
+
+    fprintf(stdout, "[%6llu.%03llu] [%s] %s\n",
+            (unsigned long long)(elapsed_ms / 1000ULL),
+            (unsigned long long)(elapsed_ms % 1000ULL),
+            log_level_to_str(severity), msg);
     if (severity >= LOG_LEVEL_ERROR)
     {
         fflush(stdout);
@@ -185,6 +208,13 @@ int main(void)
     log_init();
     (void)log_subscribe(app_log_output, LOG_LEVEL_INFO);
     LOG_INFO("app: starting subtitle overlay firmware");
+
+    // Read and validate configuration before starting active objects
+    if (app_config_init(&g_app_config) != 0)
+    {
+        LOG_ERROR("app: configuration initialization failed");
+        return 1;
+    }
 
     QF_init();
     app_install_signal_handlers();

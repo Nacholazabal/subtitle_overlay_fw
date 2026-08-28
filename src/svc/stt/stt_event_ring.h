@@ -95,9 +95,10 @@ void stt_event_ring_cleanup(stt_event_ring_t* ring);
  * @param ring Ring instance.
  * @param line Transcript line (JSON text).
  * @param length Line length.
- * @return 0 on success, or -EINVAL when line is too long.
+ * @param out_is_final Output: whether the transcript is final (may be NULL).
+ * @return 0 on success, -EINVAL for parse/length error.
  */
-int stt_event_ring_push(stt_event_ring_t* ring, char const* line, size_t length);
+int stt_event_ring_push(stt_event_ring_t* ring, char const* line, size_t length, uint8_t* out_is_final);
 
 /**
  * @brief Drain buffered transcripts into caller-owned events.

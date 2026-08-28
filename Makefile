@@ -90,6 +90,7 @@ VIDEO_PORT_SRCS := \
 	src/utils/log/log.c \
 	src/utils/number_parse/number_parse.c \
 	src/app/app.c \
+	src/app/app_config.c \
 	src/svc/system/SystemAO.c \
 	src/svc/stt/SttAO.c \
 	src/svc/stt/stt_transcript_parse.c \
@@ -97,6 +98,7 @@ VIDEO_PORT_SRCS := \
 	src/svc/stt/stt_session_json.c \
 	src/svc/stt/stt_audio_txq.c \
 	src/svc/stt/stt_event_ring.c \
+	src/svc/stt/stt_audio_sink.c \
 	src/svc/stt/stt_ws_client.c \
 	src/svc/stt/stt_ws_config.c \
 	src/svc/stt/stt_ws_frame.c \

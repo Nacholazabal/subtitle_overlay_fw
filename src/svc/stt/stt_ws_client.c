@@ -496,9 +496,9 @@ static int ensure_connected(stt_ws_client_t* const client)
 /** @brief Buffer one transcript line for the QP/C thread, shedding partials first. */
 static void push_event(stt_ws_client_t* const client, char const* const line, size_t length)
 {
-    uint8_t const is_final = (strstr(line, "\"is_final\":true") != NULL) ? 1U : 0U;
+    uint8_t is_final = 0U;
 
-    stt_event_ring_push(&client->event_ring, line, length);
+    stt_event_ring_push(&client->event_ring, line, length, &is_final);
 
     client_stats_inc(client, &client->stats.transcripts_received);
     if (is_final != 0U)

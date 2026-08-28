@@ -12,11 +12,10 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 #include "video_io.h"
 
+#include <errno.h>
 #include <string.h>
 
 #include "log.h"
-#include "xparameters.h"
-#include "xstatus.h"
 
 // === Macros definitions ========================================================================================== //
 // === Private data type declarations ============================================================================== //
@@ -32,7 +31,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
  * @param input Input helper to initialize.
  * @param dma Shared DMA adapter used for S2MM.
  * @param stride Framebuffer line stride in bytes.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or a HAL error code on failure.
+ * @return 0 on success, -EINVAL for bad input, or a HAL error code on failure.
  */
 int video_input_init(video_input_t* const input, video_dma_t* const dma, uint32_t stride)
 {
@@ -40,7 +39,7 @@ int video_input_init(video_input_t* const input, video_dma_t* const dma, uint32_
 
     if ((input == NULL) || (dma == NULL) || (stride == 0U))
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     memset(input, 0, sizeof(*input));
@@ -48,18 +47,18 @@ int video_input_init(video_input_t* const input, video_dma_t* const dma, uint32_
     input->stride = stride;
 
     status = video_gpio_init(&input->gpio);
-    if (status != XST_SUCCESS)
+    if (status != 0)
     {
         return status;
     }
 
-    status = video_vtc_init(&input->vtc, XPAR_V_TC_1_DEVICE_ID);
-    if (status != XST_SUCCESS)
+    status = video_vtc_init_detector(&input->vtc);
+    if (status != 0)
     {
         return status;
     }
 
-    return XST_SUCCESS;
+    return 0;
 }
 
 /**
@@ -81,7 +80,7 @@ uint8_t video_input_locked(video_input_t const* const input)
  * @brief Start input timing detection if it has not already started.
  * @param input Initialized input helper.
  * @param now_ms Current monotonic time in milliseconds, stored for future timeout policy.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or a HAL error code on failure.
+ * @return 0 on success, -EINVAL for bad input, or a HAL error code on failure.
  */
 int video_input_start_detector(video_input_t* const input, uint32_t now_ms)
 {
@@ -89,16 +88,16 @@ int video_input_start_detector(video_input_t* const input, uint32_t now_ms)
 
     if (input == NULL)
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     if (input->detector_started)
     {
-        return XST_SUCCESS;
+        return 0;
     }
 
     status = video_vtc_start_detector(&input->vtc);
-    if (status == XST_SUCCESS)
+    if (status == 0)
     {
         input->detector_started = 1U;
         input->detector_started_ms = now_ms;
@@ -145,13 +144,13 @@ void video_input_reset_detector(video_input_t* const input)
  * @brief Read detected HDMI input timing.
  * @param input Initialized input helper.
  * @param timing Output active width and height.
- * @return XST_SUCCESS on valid timing, XST_NO_DATA when timing is not ready, or an error code on bad input/failure.
+ * @return 0 on valid timing, XST_NO_DATA when timing is not ready, or an error code on bad input/failure.
  */
 int video_input_read_timing(video_input_t* const input, video_vtc_timing_t* const timing)
 {
     if ((input == NULL) || (timing == NULL))
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     return video_vtc_read_detector_timing(&input->vtc, timing);
@@ -162,7 +161,7 @@ int video_input_read_timing(video_input_t* const input, video_vtc_timing_t* cons
  * @param input Initialized input helper.
  * @param mode Supported mode that matches the detected input timing.
  * @param frame_index Framebuffer index to capture into.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or a HAL error code on failure.
+ * @return 0 on success, -EINVAL for bad input, or a HAL error code on failure.
  */
 int video_input_start_capture(video_input_t* const input,
                               video_pipeline_mode_t const* const mode,
@@ -172,7 +171,7 @@ int video_input_start_capture(video_input_t* const input,
 
     if ((input == NULL) || (mode == NULL) || (input->dma == NULL))
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     if (input->running)
@@ -186,32 +185,32 @@ int video_input_start_capture(video_input_t* const input,
                                  mode->timing.height,
                                  input->stride,
                                  frame_index);
-    if (status != XST_SUCCESS)
+    if (status != 0)
     {
         return status;
     }
 
     status = video_dma_start(input->dma, VIDEO_DMA_CHANNEL_S2MM);
-    if (status != XST_SUCCESS)
+    if (status != 0)
     {
         return status;
     }
 
     input->running = 1U;
 
-    return XST_SUCCESS;
+    return 0;
 }
 
 /**
  * @brief Stop S2MM capture and reset input detection state.
  * @param input Initialized input helper.
- * @return XST_SUCCESS on success, or XST_INVALID_PARAM for bad input.
+ * @return 0 on success, or -EINVAL for bad input.
  */
 int video_input_stop(video_input_t* const input)
 {
     if (input == NULL)
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     if (input->dma != NULL)
@@ -222,7 +221,7 @@ int video_input_stop(video_input_t* const input)
     input->running = 0U;
     input->detector_started = 0U;
 
-    return XST_SUCCESS;
+    return 0;
 }
 
 /**
@@ -230,7 +229,7 @@ int video_input_stop(video_input_t* const input)
  * @param output Output helper to initialize.
  * @param dma Shared DMA adapter used for MM2S.
  * @param stride Framebuffer line stride in bytes.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or a HAL error code on failure.
+ * @return 0 on success, -EINVAL for bad input, or a HAL error code on failure.
  */
 int video_output_init(video_output_t* const output, video_dma_t* const dma, uint32_t stride)
 {
@@ -238,7 +237,7 @@ int video_output_init(video_output_t* const output, video_dma_t* const dma, uint
 
     if ((output == NULL) || (dma == NULL) || (stride == 0U))
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     memset(output, 0, sizeof(*output));
@@ -246,18 +245,18 @@ int video_output_init(video_output_t* const output, video_dma_t* const dma, uint
     output->stride = stride;
 
     status = video_dynclk_init(&output->dynclk);
-    if (status != XST_SUCCESS)
+    if (status != 0)
     {
         return status;
     }
 
-    status = video_vtc_init(&output->vtc, XPAR_V_TC_0_DEVICE_ID);
-    if (status != XST_SUCCESS)
+    status = video_vtc_init_generator(&output->vtc);
+    if (status != 0)
     {
         return status;
     }
 
-    return XST_SUCCESS;
+    return 0;
 }
 
 /**
@@ -265,7 +264,7 @@ int video_output_init(video_output_t* const output, video_dma_t* const dma, uint
  * @param output Initialized output helper.
  * @param mode Supported video mode to generate.
  * @param frame_index Framebuffer index to display.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or a HAL error code on failure.
+ * @return 0 on success, -EINVAL for bad input, or a HAL error code on failure.
  */
 int video_output_start(video_output_t* const output,
                        video_pipeline_mode_t const* const mode,
@@ -275,7 +274,7 @@ int video_output_start(video_output_t* const output,
 
     if ((output == NULL) || (mode == NULL) || (output->dma == NULL))
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     if (output->running)
@@ -284,7 +283,7 @@ int video_output_start(video_output_t* const output,
     }
 
     status = video_dynclk_configure(&output->dynclk, mode->timing.pixel_clock_mhz);
-    if (status != XST_SUCCESS)
+    if (status != 0)
     {
         return status;
     }
@@ -297,7 +296,7 @@ int video_output_start(video_output_t* const output,
              output->dynclk.actual_frequency_mhz);
 
     status = video_vtc_configure_generator(&output->vtc, &mode->timing);
-    if (status != XST_SUCCESS)
+    if (status != 0)
     {
         return status;
     }
@@ -310,19 +309,19 @@ int video_output_start(video_output_t* const output,
                                  mode->timing.height,
                                  output->stride,
                                  frame_index);
-    if (status != XST_SUCCESS)
+    if (status != 0)
     {
         return status;
     }
 
     status = video_dma_start(output->dma, VIDEO_DMA_CHANNEL_MM2S);
-    if (status != XST_SUCCESS)
+    if (status != 0)
     {
         return status;
     }
 
     status = video_dma_select_frame(output->dma, VIDEO_DMA_CHANNEL_MM2S, frame_index);
-    if (status != XST_SUCCESS)
+    if (status != 0)
     {
         return status;
     }
@@ -330,19 +329,19 @@ int video_output_start(video_output_t* const output,
     output->mode = mode;
     output->running = 1U;
 
-    return XST_SUCCESS;
+    return 0;
 }
 
 /**
  * @brief Stop HDMI output timing and MM2S transfer.
  * @param output Initialized output helper.
- * @return XST_SUCCESS on success, or XST_INVALID_PARAM for bad input.
+ * @return 0 on success, or -EINVAL for bad input.
  */
 int video_output_stop(video_output_t* const output)
 {
     if (output == NULL)
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     video_vtc_stop_generator(&output->vtc);
@@ -354,7 +353,7 @@ int video_output_stop(video_output_t* const output)
 
     output->running = 0U;
     output->mode = NULL;
-    return XST_SUCCESS;
+    return 0;
 }
 
 // === End of documentation ======================================================================================== //

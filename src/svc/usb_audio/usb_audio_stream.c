@@ -19,10 +19,14 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include <time.h>
 #include <unistd.h>
 
+#include "app_config.h"
 #include "errorno.h"
 #include "log.h"
 #include "number_parse.h"
-#include "stt_ws_client.h"
+
+// === External references ========================================================================================= //
+
+extern app_config_t g_app_config;
 
 // === Macros definitions ========================================================================================== //
 
@@ -149,14 +153,9 @@ static void stream_add_dropped(usb_audio_stream_t* const stream, uint32_t droppe
 static void* capture_thread_main(void* const arg)
 {
     usb_audio_stream_t* const stream = (usb_audio_stream_t*)arg;
-    stt_ws_client_t* const client = stt_ws_client_get_active();
     uint8_t first_read_pending = 1U;
 
     LOG_INFO("usb-audio: capture thread started");
-    if (client == NULL)
-    {
-        LOG_ERROR("usb-audio: STT client unavailable; captured PCM will be dropped");
-    }
     LOG_INFO("usb-audio: waiting for first ALSA chunk");
 
     while (stream_stop_requested(stream) == 0U)
@@ -208,13 +207,12 @@ static void* capture_thread_main(void* const arg)
         }
         chunk.sequence = stream_next_sequence(stream);
         chunk.bytes_used = (uint32_t)bytes_read;
-        if ((client == NULL)
-            || (stt_ws_client_submit_audio(client,
-                                           chunk.payload,
-                                           chunk.bytes_used,
-                                           chunk.timestamp_ns,
-                                           stream_get_total_dropped(stream))
-                != 0))
+        if (stream->sink.submit(stream->sink.ctx,
+                                chunk.payload,
+                                chunk.bytes_used,
+                                chunk.timestamp_ns,
+                                stream_get_total_dropped(stream))
+            != 0)
         {
             stream_add_dropped(stream, 1U);
         }
@@ -228,13 +226,10 @@ static void* capture_thread_main(void* const arg)
                      (double)(metrics.raw_peak * 100.0f),
                      (double)metrics.applied_gain,
                      (double)(metrics.out_peak * 100.0f));
-            LOG_DEBUG("usb-audio: submitted chunk seq=%lu bytes=%lu dropped=%lu link=%s",
+            LOG_DEBUG("usb-audio: submitted chunk seq=%lu bytes=%lu dropped=%lu",
                       (unsigned long)chunk.sequence,
                       (unsigned long)chunk.bytes_used,
-                      (unsigned long)stream_get_total_dropped(stream),
-                      (client != NULL)
-                          ? stt_ws_client_state_name(stt_ws_client_state(client))
-                          : "unavailable");
+                      (unsigned long)stream_get_total_dropped(stream));
             first_read_pending = 0U;
         }
     }
@@ -325,9 +320,9 @@ void usb_audio_stream_default_config(usb_audio_stream_config_t* const config)
         return;
     }
 
+    // Default config now populated by app_config; this function kept for compatibility
     memset(config, 0, sizeof(*config));
     snprintf(config->pcm_device, sizeof(config->pcm_device), "%s", USB_AUDIO_STREAM_DEFAULT_DEVICE);
-    copy_env_string(config->pcm_device, sizeof(config->pcm_device), getenv("USB_AUDIO_PCM_DEVICE"));
 }
 
 /**
@@ -337,18 +332,23 @@ void usb_audio_stream_default_config(usb_audio_stream_config_t* const config)
  * @return 0 on success, or a negative errno-style value on failure.
  */
 int usb_audio_stream_start(usb_audio_stream_t* const stream,
-                           usb_audio_stream_config_t const* const config)
+                           usb_audio_stream_config_t const* const config,
+                           audio_sink_t const* const sink,
+                           uint8_t agc_enabled,
+                           uint32_t agc_target_pct)
 {
     usb_audio_capture_config_t capture_config;
     int status;
 
-    if ((stream == NULL) || (config == NULL) || (config->pcm_device[0] == '\0'))
+    if ((stream == NULL) || (config == NULL) || (config->pcm_device[0] == '\0') || (sink == NULL)
+        || (sink->submit == NULL))
     {
         return -EINVAL;
     }
 
     memset(stream, 0, sizeof(*stream));
     stream->config = *config;
+    stream->sink = *sink;
     status = pthread_mutex_init(&stream->state_mutex, NULL);
     if (status != 0)
     {
@@ -356,49 +356,16 @@ int usb_audio_stream_start(usb_audio_stream_t* const stream,
     }
     stream->state_initialized = 1U;
     usb_audio_agc_init(&stream->agc);
-    stream->agc_enabled = 0U;
-    {
-        char const* const enabled = getenv("SUBTITLE_USB_AUDIO_AGC_ENABLE");
-        if ((enabled != NULL) && (enabled[0] != '\0'))
-        {
-            uint32_t value;
-            if (number_parse_u32(enabled, strlen(enabled), 0U, 1U, &value) == 0)
-            {
-                stream->agc_enabled = (uint8_t)value;
-            }
-            else
-            {
-                LOG_WARNING("usb-audio: ignoring invalid SUBTITLE_USB_AUDIO_AGC_ENABLE='%s'",
-                            enabled);
-            }
-        }
-    }
-    {
-        char const* const target = getenv("SUBTITLE_USB_AUDIO_AGC_TARGET_PCT");
-        if ((target != NULL) && (target[0] != '\0'))
-        {
-            uint32_t pct;
-            if (number_parse_u32(target, strlen(target), 1U, 100U, &pct) == 0)
-            {
-                stream->agc.target_peak = (float)pct / 100.0f;
-            }
-            else
-            {
-                LOG_WARNING("usb-audio: ignoring invalid SUBTITLE_USB_AUDIO_AGC_TARGET_PCT='%s'",
-                            target);
-            }
-        }
-    }
+    // AGC settings come from app_config (no getenv here)
+    stream->agc_enabled = agc_enabled;
+    stream->agc.target_peak = (float)agc_target_pct / 100.0f;
     if (stream->agc_enabled == 0U)
     {
         LOG_INFO("usb-audio: digital AGC disabled; streaming raw PCM");
     }
 
-    memset(&capture_config, 0, sizeof(capture_config));
-    snprintf(capture_config.device, sizeof(capture_config.device), "%s", config->pcm_device);
-    capture_config.sample_rate_hz = USB_AUDIO_STREAM_SAMPLE_RATE_HZ;
-    capture_config.channels = USB_AUDIO_STREAM_CHANNELS;
-    capture_config.samples_per_chunk = USB_AUDIO_STREAM_SAMPLES_PER_CHUNK;
+    // Use capture config from app_config (includes mixer settings)
+    capture_config = g_app_config.audio_capture;
 
     status = usb_audio_capture_init(&stream->capture, &capture_config);
     if (status != 0)

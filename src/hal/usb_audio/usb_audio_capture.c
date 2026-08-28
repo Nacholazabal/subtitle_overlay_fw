@@ -41,7 +41,10 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 static int configure_pcm(snd_pcm_t* pcm, usb_audio_capture_config_t const* config);
 static int recover_pcm(snd_pcm_t* pcm, int err);
 static char const* pcm_state_name(snd_pcm_state_t state);
-static void set_capture_gain(char const* device);
+static void set_capture_gain(char const* device,
+                             char const* control_name,
+                             char const* mixer_device,
+                             uint32_t volume_pct);
 #endif
 
 // === Public variable definitions ================================================================================= //
@@ -201,44 +204,31 @@ static char const* pcm_state_name(snd_pcm_state_t const state)
  *
  * Sets the capture volume control toward its maximum so the ADC uses more of its
  * range (better SNR) before any digital gain. Best-effort: a missing control or
- * mixer only logs a warning. The control name, card, and percent are overridable
- * via SUBTITLE_USB_AUDIO_CAPTURE_CONTROL / _MIXER / _CAPTURE_VOL_PCT.
+ * mixer only logs a warning. The control name, card, and percent come from
+ * app_config (no getenv in HAL).
  * @param device ALSA PCM device string (used to derive the mixer card).
+ * @param control_name Mixer control name ("Mic", "Line", etc.).
+ * @param mixer_device Explicit mixer device name (empty string to auto-derive from device).
+ * @param volume_pct Target volume percentage (0-100).
  * @return None.
  */
-static void set_capture_gain(char const* const device)
+static void set_capture_gain(char const* const device,
+                             char const* const control_name,
+                             char const* const mixer_device,
+                             uint32_t volume_pct)
 {
-    char const* const control = getenv("SUBTITLE_USB_AUDIO_CAPTURE_CONTROL");
-    char const* const mixer_env = getenv("SUBTITLE_USB_AUDIO_MIXER");
-    char const* const pct_env = getenv("SUBTITLE_USB_AUDIO_CAPTURE_VOL_PCT");
-    char const* const control_name = ((control != NULL) && (control[0] != '\0')) ? control : "Mic";
     char card[16];
     snd_mixer_t* mixer = NULL;
     snd_mixer_selem_id_t* sid;
     snd_mixer_elem_t* elem;
-    long pct = USB_AUDIO_CAPTURE_DEFAULT_VOL_PCT;
+    long const pct = (long)volume_pct;
     long vmin = 0;
     long vmax = 0;
     long value;
 
-    if ((pct_env != NULL) && (pct_env[0] != '\0'))
+    if ((mixer_device != NULL) && (mixer_device[0] != '\0'))
     {
-        uint32_t parsed_pct;
-
-        if (number_parse_u32(pct_env, strlen(pct_env), 0U, 100U, &parsed_pct) == 0)
-        {
-            pct = (long)parsed_pct;
-        }
-        else
-        {
-            LOG_WARNING("usb-audio: ignoring invalid SUBTITLE_USB_AUDIO_CAPTURE_VOL_PCT='%s'",
-                        pct_env);
-        }
-    }
-
-    if ((mixer_env != NULL) && (mixer_env[0] != '\0'))
-    {
-        snprintf(card, sizeof(card), "%s", mixer_env);
+        snprintf(card, sizeof(card), "%s", mixer_device);
     }
     else
     {
@@ -366,7 +356,7 @@ int usb_audio_capture_init(usb_audio_capture_t* const capture,
         return status;
     }
 
-    set_capture_gain(config->device);
+    set_capture_gain(config->device, config->mixer_control, config->mixer_device, config->volume_pct);
 
     capture->pcm_handle = pcm;
     capture->initialized = 1U;

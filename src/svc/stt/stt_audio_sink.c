@@ -1,32 +1,19 @@
 /**********************************************************************************************************************
 Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal/
-
 **********************************************************************************************************************/
 
 ///
-/// @file video_gpio.c
-/// @brief Video GPIO HAL adapter implementation
+/// @file stt_audio_sink.c
+/// @brief Audio sink adapter for STT WebSocket client
 ///
 
 // === Headers files inclusions ==================================================================================== //
 
-#include "video_gpio.h"
+#include "stt_audio_sink.h"
 
-#include <errno.h>
-
-#include "hw_platform.h"
-#include "xil_io.h"
+#include "stt_ws_client.h"
 
 // === Macros definitions ========================================================================================== //
-
-#define XGPIO_DATA_OFFSET  0x000U
-#define XGPIO_TRI_OFFSET   0x004U
-#define XGPIO_DATA2_OFFSET 0x008U
-#define XGPIO_TRI2_OFFSET  0x00CU
-
-#define HPD_MASK    0x00000001U
-#define LOCKED_MASK 0x00000001U
-
 // === Private data type declarations ============================================================================== //
 // === Private variable declarations =============================================================================== //
 // === Private function declarations =============================================================================== //
@@ -35,45 +22,29 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 // === Private function implementation ============================================================================= //
 // === Public function implementation ============================================================================== //
 
-/**
- * @brief Initialize the video GPIO and assert HDMI hot-plug detect.
- * @param gpio GPIO adapter to initialize.
- * @return 0 on success, -EINVAL for bad input, or -EIO when the region is not mapped.
- */
-int video_gpio_init(video_gpio_t* const gpio)
+/** @brief Sink submit implementation that forwards to the active STT WS client. */
+static int stt_sink_submit(void* const ctx,
+                           const void* const pcm,
+                           size_t const size,
+                           uint64_t const timestamp_ns,
+                           uint32_t const dropped)
 {
-    if (gpio == NULL)
+    stt_ws_client_t* const client = (stt_ws_client_t*)ctx;
+
+    if (client == NULL)
     {
-        return -EINVAL;
+        return -1; // No client available; audio is dropped.
     }
 
-    gpio->base = hw_platform_base(HW_REGION_VIDEO_GPIO);
-    if (gpio->base == (uintptr_t)0)
-    {
-        return -EIO;
-    }
-
-    Xil_Out32(gpio->base + XGPIO_DATA_OFFSET, 0U);
-    Xil_Out32(gpio->base + XGPIO_TRI_OFFSET, 0U);
-    Xil_Out32(gpio->base + XGPIO_TRI2_OFFSET, LOCKED_MASK);
-    Xil_Out32(gpio->base + XGPIO_DATA_OFFSET, HPD_MASK);
-
-    return 0;
+    return stt_ws_client_submit_audio(client, pcm, size, timestamp_ns, dropped);
 }
 
-/**
- * @brief Read the HDMI input lock signal.
- * @param gpio Initialized GPIO adapter.
- * @return Nonzero when the input clock is locked, zero otherwise.
- */
-uint8_t video_gpio_is_locked(video_gpio_t const* const gpio)
+audio_sink_t stt_audio_sink_create(void)
 {
-    if ((gpio == NULL) || (gpio->base == (uintptr_t)0))
-    {
-        return 0U;
-    }
-
-    return ((Xil_In32(gpio->base + XGPIO_DATA2_OFFSET) & LOCKED_MASK) != 0U) ? 1U : 0U;
+    audio_sink_t sink;
+    sink.ctx = stt_ws_client_get_active();
+    sink.submit = stt_sink_submit;
+    return sink;
 }
 
 // === End of documentation ======================================================================================== //

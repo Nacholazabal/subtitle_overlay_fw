@@ -11,11 +11,12 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 #include "video_dynclk.h"
 
+#include <errno.h>
 #include <math.h>
-#include <stdio.h>
 #include <time.h>
 
 #include "hw_platform.h"
+#include "log.h"
 #include "xil_io.h"
 
 // === Macros definitions ========================================================================================== //
@@ -295,25 +296,25 @@ static int dynclk_now_ns(uint64_t* const now_ns)
 
     if ((now_ns == NULL) || (clock_gettime(CLOCK_MONOTONIC, &ts) != 0))
     {
-        return XST_FAILURE;
+        return -EIO;
     }
 
     *now_ns = ((uint64_t)ts.tv_sec * 1000000000ULL) + (uint64_t)ts.tv_nsec;
-    return XST_SUCCESS;
+    return 0;
 }
 
 /**
  * @brief Start the dynclk core and wait for lock.
  * @param base Mapped dynclk register base.
- * @return XST_SUCCESS when locked, or XST_FAILURE on timeout.
+ * @return 0 when locked, or -EIO on timeout.
  */
 static int clk_start(uintptr_t base)
 {
     uint64_t start_ns;
 
-    if (dynclk_now_ns(&start_ns) != XST_SUCCESS)
+    if (dynclk_now_ns(&start_ns) != 0)
     {
-        return XST_FAILURE;
+        return -EIO;
     }
 
     Xil_Out32(base + OFST_DYNCLK_CTRL, 1U << BIT_DYNCLK_START);
@@ -321,14 +322,14 @@ static int clk_start(uintptr_t base)
     {
         uint64_t now_ns;
 
-        if ((dynclk_now_ns(&now_ns) != XST_SUCCESS) || ((now_ns - start_ns) >= CLK_TIMEOUT_NS))
+        if ((dynclk_now_ns(&now_ns) != 0) || ((now_ns - start_ns) >= CLK_TIMEOUT_NS))
         {
-            fprintf(stderr, "[video_dynclk] PLL lock timeout\n");
-            return XST_FAILURE;
+            LOG_ERROR("video_dynclk: PLL lock timeout");
+            return -EIO;
         }
     }
 
-    return XST_SUCCESS;
+    return 0;
 }
 
 // === Public function implementation ============================================================================== //
@@ -336,25 +337,25 @@ static int clk_start(uintptr_t base)
 /**
  * @brief Initialize a dynclk adapter from the mapped platform region.
  * @param dynclk Adapter to initialize.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or XST_FAILURE when the region is not mapped.
+ * @return 0 on success, -EINVAL for bad input, or -EIO when the region is not mapped.
  */
 int video_dynclk_init(video_dynclk_t* const dynclk)
 {
     if (dynclk == NULL)
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     dynclk->base = hw_platform_base(HW_REGION_DYNCLK);
     dynclk->actual_frequency_mhz = 0.0;
 
-    return (dynclk->base != (uintptr_t)0) ? XST_SUCCESS : XST_FAILURE;
+    return (dynclk->base != (uintptr_t)0) ? 0 : -EIO;
 }
 
 /**
  * @brief Stop the dynamic pixel clock.
  * @param dynclk Initialized dynclk adapter.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or XST_FAILURE on timeout.
+ * @return 0 on success, -EINVAL for bad input, or -EIO on timeout.
  */
 int video_dynclk_stop(video_dynclk_t* const dynclk)
 {
@@ -362,12 +363,12 @@ int video_dynclk_stop(video_dynclk_t* const dynclk)
 
     if ((dynclk == NULL) || (dynclk->base == (uintptr_t)0))
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
-    if (dynclk_now_ns(&start_ns) != XST_SUCCESS)
+    if (dynclk_now_ns(&start_ns) != 0)
     {
-        return XST_FAILURE;
+        return -EIO;
     }
 
     Xil_Out32(dynclk->base + OFST_DYNCLK_CTRL, 0U);
@@ -375,22 +376,22 @@ int video_dynclk_stop(video_dynclk_t* const dynclk)
     {
         uint64_t now_ns;
 
-        if ((dynclk_now_ns(&now_ns) != XST_SUCCESS) || ((now_ns - start_ns) >= CLK_TIMEOUT_NS))
+        if ((dynclk_now_ns(&now_ns) != 0) || ((now_ns - start_ns) >= CLK_TIMEOUT_NS))
         {
-            fprintf(stderr, "[video_dynclk] clock stop timeout\n");
-            return XST_FAILURE;
+            LOG_ERROR("video_dynclk: clock stop timeout");
+            return -EIO;
         }
     }
 
     dynclk->actual_frequency_mhz = 0.0;
-    return XST_SUCCESS;
+    return 0;
 }
 
 /**
  * @brief Configure and start the dynamic pixel clock.
  * @param dynclk Initialized dynclk adapter.
  * @param frequency_mhz Desired pixel clock in MHz.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or XST_FAILURE when configuration/lock fails.
+ * @return 0 on success, -EINVAL for bad input, or -EIO when configuration/lock fails.
  */
 int video_dynclk_configure(video_dynclk_t* const dynclk, double frequency_mhz)
 {
@@ -402,7 +403,7 @@ int video_dynclk_configure(video_dynclk_t* const dynclk, double frequency_mhz)
     if ((dynclk == NULL) || (dynclk->base == (uintptr_t)0) || !isfinite(frequency_mhz)
         || (frequency_mhz <= 0.0) || (frequency_mhz > DYNCLK_MAX_FREQ_MHZ))
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     // Enforce a maximum synthesis error so an unsupported frequency (no valid
@@ -410,27 +411,27 @@ int video_dynclk_configure(video_dynclk_t* const dynclk, double frequency_mhz)
     double const freq_error = clk_find_params(frequency_mhz, &mode);
     if (!isfinite(mode.freq) || (freq_error > DYNCLK_MAX_FREQ_ERR_MHZ))
     {
-        return XST_FAILURE;
+        return -EIO;
     }
 
     if (!clk_find_reg(&regs, &mode))
     {
-        return XST_FAILURE;
+        return -EIO;
     }
 
-    if (video_dynclk_stop(dynclk) != XST_SUCCESS)
+    if (video_dynclk_stop(dynclk) != 0)
     {
-        return XST_FAILURE;
+        return -EIO;
     }
     clk_write_reg(dynclk->base, &regs);
 
-    if (clk_start(dynclk->base) != XST_SUCCESS)
+    if (clk_start(dynclk->base) != 0)
     {
-        return XST_FAILURE;
+        return -EIO;
     }
 
     dynclk->actual_frequency_mhz = mode.freq;
-    return XST_SUCCESS;
+    return 0;
 }
 
 // === End of documentation ======================================================================================== //

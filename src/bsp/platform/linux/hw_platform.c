@@ -3,12 +3,12 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stddef.h>
-#include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
 #include "../xparameters_linux.h"
+#include "log.h"
 
 #define HW_PLATFORM_REGION_SIZE(base, high) (((high) - (base)) + 1U)
 
@@ -56,11 +56,10 @@ static void* map_region(hw_platform_mapping_t* const mapping)
 
     if (virtual_base == MAP_FAILED)
     {
-        fprintf(stderr,
-                "[hw_platform] mmap %s at 0x%08X failed: %s\n",
-                mapping->name,
-                mapping->physical_base,
-                strerror(errno));
+        LOG_ERROR("hw_platform: mmap %s at 0x%08X failed: %s",
+                  mapping->name,
+                  mapping->physical_base,
+                  strerror(errno));
         return NULL;
     }
 
@@ -104,7 +103,7 @@ int hw_platform_init(void)
     devmem_fd = open("/dev/mem", O_RDWR | O_SYNC);
     if (devmem_fd < 0)
     {
-        fprintf(stderr, "[hw_platform] open /dev/mem failed: %s\n", strerror(errno));
+        LOG_ERROR("hw_platform: open /dev/mem failed: %s", strerror(errno));
         return -1;
     }
 

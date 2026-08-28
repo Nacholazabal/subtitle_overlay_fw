@@ -6,8 +6,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 ///
 /// @file log.h
-/// @brief Log Facility API. This module allows to print formatted messages over an output stream (currently stdout
-/// peripheral) adding a timestamp and a log level.
+/// @brief Log Facility API. Subscribers receive formatted messages with severity levels; app.c adds timestamps.
 ///
 
 // === Headers files inclusions ==================================================================================== //
@@ -27,7 +26,7 @@ extern "C" {
 
 // Maximum length of the formatted log messages
 #ifndef LOG_MAX_MESSAGE_LENGTH
-    #define LOG_MAX_MESSAGE_LENGTH (128U)
+    #define LOG_MAX_MESSAGE_LENGTH (256U)
 #endif
 
 // Helper macros for printing log messages
