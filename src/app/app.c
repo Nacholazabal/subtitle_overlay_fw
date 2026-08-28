@@ -33,11 +33,14 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #define STT_AO_QUEUE_LEN       (8U)
 #define USB_AUDIO_AO_QUEUE_LEN (8U)
 #define VIDEO_AO_QUEUE_LEN     (16U)
-#define SYSTEM_AO_PRIO         (1U)
-#define VIDEO_AO_PRIO          (2U)
-#define USB_AUDIO_AO_PRIO      (3U)
-#define STT_AO_PRIO            (4U)
-#define SUBTITLE_AO_PRIO       (5U)
+
+// AO priorities follow rate-monotonic scheduling: shorter period = higher priority.
+// STT (10 ms) has the tightest deadline; Subtitle is event-driven with the loosest.
+#define SYSTEM_AO_PRIO    (1U) // Orchestration; lowest priority.
+#define SUBTITLE_AO_PRIO  (2U) // Event-driven; loosest deadline.
+#define VIDEO_AO_PRIO     (3U) // 100 ms poll.
+#define USB_AUDIO_AO_PRIO (4U) // 100 ms poll; same period as video.
+#define STT_AO_PRIO       (5U) // 10 ms poll; tightest deadline, highest priority.
 
 // === Private data type declarations ============================================================================== //
 
@@ -153,6 +156,9 @@ static void app_init(void)
     stt_ao_ctor();
     QActive_start(AO_Stt, STT_AO_PRIO, stt_queue_sto, Q_DIM(stt_queue_sto), (void*)0, 0U, (void*)0);
 
+    // SystemAO must start last: QActive_start() runs the initial transition immediately,
+    // and system_ao_init's Q_ENTRY_SIG posts COMPONENT_INIT to the other AOs. Starting
+    // SystemAO earlier would post to unregistered active objects and trip a QP/C assert.
     static QEvtPtr system_queue_sto[SYSTEM_AO_QUEUE_LEN];
     system_ao_ctor();
     QActive_start(AO_System,

@@ -173,6 +173,20 @@ static int on_video_poll(video_ao_t* const me)
             enter_error(me, -EIO);
             status = -EIO;
         }
+        else if (poll_result == VIDEO_PIPELINE_POLL_UNSUPPORTED_INPUT)
+        {
+            LOG_WARNING("video: unsupported input resolution or timing");
+        }
+        else if (poll_result == VIDEO_PIPELINE_POLL_TIMING_TIMEOUT)
+        {
+            LOG_WARNING("video: timing acquisition timeout; detector restarted");
+        }
+        else if (poll_result == VIDEO_PIPELINE_POLL_SIGNAL_LOST)
+        {
+            // Clear ready_posted so a relock at a different resolution re-announces.
+            me->ready_posted = 0U;
+            LOG_INFO("video: signal lost");
+        }
         else if ((poll_result == VIDEO_PIPELINE_POLL_STREAMING_STARTED) && !me->ready_posted)
         {
             video_pipeline_mode_t const* const mode = video_pipeline_get_active_mode(&me->pipeline);

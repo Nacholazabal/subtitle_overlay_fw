@@ -47,6 +47,9 @@ typedef struct
 int subtitle_pipeline_init(subtitle_pipeline_t* pipeline,
                            uint32_t display_width,
                            uint32_t display_height);
+int subtitle_pipeline_reconfigure(subtitle_pipeline_t* pipeline,
+                                  uint32_t display_width,
+                                  uint32_t display_height);
 void subtitle_pipeline_cleanup(subtitle_pipeline_t* pipeline);
 int subtitle_pipeline_clear(subtitle_pipeline_t* pipeline);
 int subtitle_pipeline_set_box(subtitle_pipeline_t* pipeline, uint32_t width, uint32_t height);

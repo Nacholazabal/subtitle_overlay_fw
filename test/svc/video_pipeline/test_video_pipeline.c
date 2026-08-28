@@ -332,8 +332,19 @@ void test_video_pipeline_poll_stops_output_when_input_capture_fails(void)
 
 void test_video_pipeline_poll_is_unchanged_while_streaming_or_unsupported_with_lock(void)
 {
+    video_vtc_timing_t timing;
+    video_pipeline_mode_t mode;
+
+    // While STREAMING, poll re-reads timing to detect resolution changes.
     pipeline.state = VIDEO_PIPELINE_STREAMING;
+    mode.timing.width = 1920U;
+    mode.timing.height = 1080U;
+    pipeline.active_mode = &mode;
+    timing.width = 1920U;
+    timing.height = 1080U;
     video_input_locked_ExpectAnyArgsAndReturn(1U);
+    video_input_read_timing_ExpectAnyArgsAndReturn(0);
+    video_input_read_timing_ReturnThruPtr_timing(&timing);
     TEST_ASSERT_EQUAL(VIDEO_PIPELINE_POLL_UNCHANGED, video_pipeline_poll(&pipeline, 400U));
     TEST_ASSERT_EQUAL(VIDEO_PIPELINE_STREAMING, video_pipeline_get_state(&pipeline));
 

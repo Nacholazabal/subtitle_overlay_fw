@@ -44,6 +44,11 @@ static uint8_t pipeline_is_initialized(subtitle_pipeline_t const* pipeline);
 
 // === Public variable definitions ================================================================================= //
 // === Private variable definitions ================================================================================ //
+
+// F27: File-scope buffer for caption rendering; safe single-threaded under QV invariant.
+// Reduces per-caption stack from ~40 KB to ~8 KB.
+static uint8_t s_render_bitmap[SUBTITLE_BRAM_SIZE_BYTES];
+
 // === Private function implementation ============================================================================= //
 
 /**
@@ -175,6 +180,34 @@ int subtitle_pipeline_init(subtitle_pipeline_t* const pipeline,
 }
 
 /**
+ * @brief Reconfigure subtitle bar for new display dimensions without full teardown.
+ * @param pipeline Initialized pipeline instance.
+ * @param display_width New display width in pixels.
+ * @param display_height New display height in lines.
+ * @return 0 on success, or a negative errno-style value on failure.
+ */
+int subtitle_pipeline_reconfigure(subtitle_pipeline_t* const pipeline,
+                                  uint32_t display_width,
+                                  uint32_t display_height)
+{
+    if (!pipeline_is_initialized(pipeline))
+    {
+        return (pipeline == NULL) ? -EINVAL : -APP_ESTATE;
+    }
+
+    if ((display_width == 0U) || (display_height == 0U))
+    {
+        return -EINVAL;
+    }
+
+    pipeline->display_width = display_width;
+    pipeline->display_height = display_height;
+    pipeline->config = default_config(display_width, display_height);
+
+    return subtitle_overlay_configure(&pipeline->overlay, &pipeline->config);
+}
+
+/**
  * @brief Disable subtitle overlay and reset service state.
  * @param pipeline Pipeline instance to clean up.
  * @return None.
@@ -273,9 +306,9 @@ int subtitle_pipeline_write_caption(subtitle_pipeline_t* const pipeline,
                                     char const* const text,
                                     uint8_t const current_is_final)
 {
-    uint8_t bitmap[SUBTITLE_BRAM_SIZE_BYTES];
     uint32_t width;
     uint32_t height;
+    uint32_t stride;
     int status;
 
     if (!pipeline_is_initialized(pipeline))
@@ -285,10 +318,11 @@ int subtitle_pipeline_write_caption(subtitle_pipeline_t* const pipeline,
 
     status = subtitle_text_renderer_render_caption(text,
                                                    current_is_final,
-                                                   bitmap,
-                                                   sizeof(bitmap),
+                                                   s_render_bitmap,
+                                                   sizeof(s_render_bitmap),
                                                    &width,
-                                                   &height);
+                                                   &height,
+                                                   &stride);
     if (status != 0)
     {
         return status;
@@ -302,8 +336,8 @@ int subtitle_pipeline_write_caption(subtitle_pipeline_t* const pipeline,
     if (status == 0)
     {
         status = subtitle_bram_write_bitmap(&pipeline->bram,
-                                            bitmap,
-                                            sizeof(bitmap),
+                                            s_render_bitmap,
+                                            stride,
                                             0,
                                             0,
                                             width,
