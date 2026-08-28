@@ -16,14 +16,15 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
+#include "app_config.h"
 #include "log.h"
 #include "SttAO.h"
 #include "SubtitleAO.h"
 #include "SystemAO.h"
 #include "USBAudioAO.h"
 #include "VideoAO.h"
-#include <time.h>
 
 // === Macros definitions ========================================================================================== //
 
@@ -63,6 +64,9 @@ static void app_install_signal_handlers(void);
 static void app_shutdown_signal_handler(int signal_number);
 
 // === Public variable definitions ================================================================================= //
+
+app_config_t g_app_config;
+
 // === Private variable definitions ================================================================================ //
 // === Private function implementation ============================================================================= //
 
@@ -204,6 +208,13 @@ int main(void)
     log_init();
     (void)log_subscribe(app_log_output, LOG_LEVEL_INFO);
     LOG_INFO("app: starting subtitle overlay firmware");
+
+    // Read and validate configuration before starting active objects
+    if (app_config_init(&g_app_config) != 0)
+    {
+        LOG_ERROR("app: configuration initialization failed");
+        return 1;
+    }
 
     QF_init();
     app_install_signal_handlers();

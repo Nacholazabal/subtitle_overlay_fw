@@ -18,9 +18,14 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include "qpc.h"
 
 #include "app.h"
+#include "app_config.h"
 #include "log.h"
 #include "number_parse.h"
 #include "subtitle_pipeline.h"
+
+// === External references ========================================================================================= //
+
+extern app_config_t g_app_config;
 
 // === Macros definitions ========================================================================================== //
 
@@ -76,7 +81,7 @@ static void promote_current_to_previous(subtitle_ao_t* const me);
 static void reset_text_state(subtitle_ao_t* const me);
 static void clear_subtitle(subtitle_ao_t* const me);
 static uint32_t ms_to_ticks(uint32_t timeout_ms);
-static uint32_t resolve_timeout_ticks(char const* env_name, uint32_t default_ms, uint32_t min_ms);
+static uint32_t timeout_ms_to_ticks(uint32_t timeout_ms);
 static uint32_t resolve_clear_timeout_ticks(void);
 static uint32_t resolve_previous_hold_ticks(void);
 static void enter_error(subtitle_ao_t* const me, int32_t code);
@@ -236,27 +241,9 @@ static uint32_t ms_to_ticks(uint32_t const timeout_ms)
            + ((remaining_ms * SUBTITLE_AO_TICKS_PER_SEC) / 1000U);
 }
 
-static uint32_t resolve_timeout_ticks(char const* const env_name,
-                                      uint32_t const default_ms,
-                                      uint32_t const min_ms)
+// Timeouts now come from app_config (no getenv)
+static uint32_t timeout_ms_to_ticks(uint32_t timeout_ms)
 {
-    char const* const env = getenv(env_name);
-    uint32_t timeout_ms = default_ms;
-
-    if ((env != NULL) && (env[0] != '\0'))
-    {
-        uint32_t parsed;
-
-        if (number_parse_u32(env, strlen(env), min_ms, UINT32_MAX, &parsed) == 0)
-        {
-            timeout_ms = parsed;
-        }
-        else
-        {
-            LOG_WARNING("subtitle: ignoring invalid %s='%s'", env_name, env);
-        }
-    }
-
     return ms_to_ticks(timeout_ms);
 }
 
@@ -267,16 +254,12 @@ static uint32_t resolve_timeout_ticks(char const* const env_name,
  */
 static uint32_t resolve_clear_timeout_ticks(void)
 {
-    return resolve_timeout_ticks("SUBTITLE_CLEAR_TIMEOUT_MS",
-                                 SUBTITLE_AO_CLEAR_TIMEOUT_MS,
-                                 SUBTITLE_AO_CLEAR_TIMEOUT_MIN_MS);
+    return timeout_ms_to_ticks(g_app_config.subtitle_clear_timeout_ms);
 }
 
 static uint32_t resolve_previous_hold_ticks(void)
 {
-    return resolve_timeout_ticks("SUBTITLE_PREVIOUS_HOLD_MS",
-                                 SUBTITLE_AO_PREVIOUS_HOLD_MS,
-                                 SUBTITLE_AO_PREVIOUS_HOLD_MIN_MS);
+    return timeout_ms_to_ticks(g_app_config.subtitle_partial_timeout_ms);
 }
 
 static int render_current_state(subtitle_ao_t* const me)

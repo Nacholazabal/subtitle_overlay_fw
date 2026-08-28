@@ -44,7 +44,7 @@ void test_video_input_init_rejects_invalid_arguments(void)
 void test_video_input_init_sets_dma_stride_and_initializes_hal(void)
 {
     video_gpio_init_ExpectAnyArgsAndReturn(XST_SUCCESS);
-    video_vtc_init_ExpectAnyArgsAndReturn(XST_SUCCESS);
+    video_vtc_init_generator_ExpectAnyArgsAndReturn(XST_SUCCESS);
 
     TEST_ASSERT_EQUAL_INT(XST_SUCCESS, video_input_init(&input, &dma, 5760U));
     TEST_ASSERT_EQUAL_PTR(&dma, input.dma);
@@ -63,7 +63,7 @@ void test_video_input_init_returns_gpio_error(void)
 void test_video_input_init_returns_vtc_error(void)
 {
     video_gpio_init_ExpectAnyArgsAndReturn(XST_SUCCESS);
-    video_vtc_init_ExpectAnyArgsAndReturn(XST_DEVICE_NOT_FOUND);
+    video_vtc_init_generator_ExpectAnyArgsAndReturn(XST_DEVICE_NOT_FOUND);
 
     TEST_ASSERT_EQUAL_INT(XST_DEVICE_NOT_FOUND, video_input_init(&input, &dma, 5760U));
 }
@@ -265,7 +265,7 @@ void test_video_output_init_rejects_invalid_arguments(void)
 void test_video_output_init_sets_dma_stride_and_initializes_hal(void)
 {
     video_dynclk_init_ExpectAnyArgsAndReturn(XST_SUCCESS);
-    video_vtc_init_ExpectAnyArgsAndReturn(XST_SUCCESS);
+    video_vtc_init_generator_ExpectAnyArgsAndReturn(XST_SUCCESS);
 
     TEST_ASSERT_EQUAL_INT(XST_SUCCESS, video_output_init(&output, &dma, 5760U));
     TEST_ASSERT_EQUAL_PTR(&dma, output.dma);
@@ -283,7 +283,7 @@ void test_video_output_init_returns_dynclk_error(void)
 void test_video_output_init_returns_vtc_error(void)
 {
     video_dynclk_init_ExpectAnyArgsAndReturn(XST_SUCCESS);
-    video_vtc_init_ExpectAnyArgsAndReturn(XST_DEVICE_NOT_FOUND);
+    video_vtc_init_generator_ExpectAnyArgsAndReturn(XST_DEVICE_NOT_FOUND);
 
     TEST_ASSERT_EQUAL_INT(XST_DEVICE_NOT_FOUND, video_output_init(&output, &dma, 5760U));
 }

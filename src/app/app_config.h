@@ -55,6 +55,9 @@ typedef struct
 } app_config_t;
 
 // === Public variable declarations ================================================================================ //
+
+extern app_config_t g_app_config;
+
 // === Public function declarations ================================================================================ //
 
 /**

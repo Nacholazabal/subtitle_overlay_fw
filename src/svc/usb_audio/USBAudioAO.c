@@ -14,9 +14,14 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include "qpc.h"
 
 #include "app.h"
+#include "app_config.h"
 #include "log.h"
 #include "stt_audio_sink.h"
 #include "usb_audio_stream.h"
+
+// === External references ========================================================================================= //
+
+extern app_config_t g_app_config;
 
 // === Macros definitions ========================================================================================== //
 
@@ -126,16 +131,18 @@ static void post_error(usb_audio_ao_t* const me, int32_t code)
  */
 static int on_component_init(usb_audio_ao_t* const me)
 {
-    usb_audio_stream_config_t config;
     audio_sink_t sink;
     int status;
 
-    usb_audio_stream_default_config(&config);
     sink = stt_audio_sink_create();
     // STT owns the bounded queue and WebSocket worker; USB owns ALSA only.
-    LOG_INFO("usb-audio: starting capture device=%s", config.pcm_device);
+    LOG_INFO("usb-audio: starting capture device=%s", g_app_config.audio_stream.pcm_device);
 
-    status = usb_audio_stream_start(&me->stream, &config, &sink);
+    status = usb_audio_stream_start(&me->stream,
+                                    &g_app_config.audio_stream,
+                                    &sink,
+                                    g_app_config.audio_agc_enabled,
+                                    g_app_config.audio_agc_target_pct);
     if (status == 0)
     {
         me->running = 1U;

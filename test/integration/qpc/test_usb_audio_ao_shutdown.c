@@ -4,10 +4,28 @@
 #include "unity.h"
 
 #include "app.h"
+#include "app_config.h"
+#include "audio_sink.h"
 #include "qpc_test_harness.h"
 #include "USBAudioAO.h"
 
 #include "mock_usb_audio_stream.h"
+
+// Stub for global config used by USBAudioAO
+app_config_t g_app_config = {
+    .audio_stream.pcm_device = "hw:0,0",
+    .audio_agc_enabled = 0U,
+    .audio_agc_target_pct = 50U,
+};
+
+// Stub for stt_audio_sink_create
+audio_sink_t stt_audio_sink_create(void) {
+    audio_sink_t sink = {
+        .ctx = NULL,
+        .submit = NULL,
+    };
+    return sink;
+}
 
 TEST_SOURCE_FILE("qpc_test_harness.c")
 TEST_SOURCE_FILE("USBAudioAO.c")

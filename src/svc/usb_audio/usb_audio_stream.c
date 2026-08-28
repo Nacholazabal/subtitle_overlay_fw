@@ -19,9 +19,14 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include <time.h>
 #include <unistd.h>
 
+#include "app_config.h"
 #include "errorno.h"
 #include "log.h"
 #include "number_parse.h"
+
+// === External references ========================================================================================= //
+
+extern app_config_t g_app_config;
 
 // === Macros definitions ========================================================================================== //
 
@@ -315,9 +320,9 @@ void usb_audio_stream_default_config(usb_audio_stream_config_t* const config)
         return;
     }
 
+    // Default config now populated by app_config; this function kept for compatibility
     memset(config, 0, sizeof(*config));
     snprintf(config->pcm_device, sizeof(config->pcm_device), "%s", USB_AUDIO_STREAM_DEFAULT_DEVICE);
-    copy_env_string(config->pcm_device, sizeof(config->pcm_device), getenv("USB_AUDIO_PCM_DEVICE"));
 }
 
 /**
@@ -359,11 +364,8 @@ int usb_audio_stream_start(usb_audio_stream_t* const stream,
         LOG_INFO("usb-audio: digital AGC disabled; streaming raw PCM");
     }
 
-    memset(&capture_config, 0, sizeof(capture_config));
-    snprintf(capture_config.device, sizeof(capture_config.device), "%s", config->pcm_device);
-    capture_config.sample_rate_hz = USB_AUDIO_STREAM_SAMPLE_RATE_HZ;
-    capture_config.channels = USB_AUDIO_STREAM_CHANNELS;
-    capture_config.samples_per_chunk = USB_AUDIO_STREAM_SAMPLES_PER_CHUNK;
+    // Use capture config from app_config (includes mixer settings)
+    capture_config = g_app_config.audio_capture;
 
     status = usb_audio_capture_init(&stream->capture, &capture_config);
     if (status != 0)

@@ -297,6 +297,6 @@ void test_stt_event_ring_rejects_line_too_long(void)
     memset(long_line, 'A', sizeof(long_line));
     long_line[sizeof(long_line) - 1U] = '\0';
 
-    ret = stt_event_ring_push(&ring, long_line, sizeof(long_line, NULL, NULL) - 1U);
+    ret = stt_event_ring_push(&ring, long_line, sizeof(long_line) - 1U, NULL);
     TEST_ASSERT_EQUAL_INT(-EINVAL, ret);
 }
