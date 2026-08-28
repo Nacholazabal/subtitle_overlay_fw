@@ -57,13 +57,6 @@ int subtitle_pipeline_set_box(subtitle_pipeline_t* pipeline, uint32_t width, uin
 int subtitle_pipeline_write_caption(subtitle_pipeline_t* pipeline,
                                     char const* text,
                                     uint8_t current_is_final);
-/*
- * Blocking debug/manual synchronization helper. It can spin through many MMIO
- * reads and must not be called from QP/C AO state handlers.
- */
-int subtitle_pipeline_commit(subtitle_pipeline_t* pipeline);
-int subtitle_pipeline_clear_sof(subtitle_pipeline_t* pipeline);
-int subtitle_pipeline_poll_sof(subtitle_pipeline_t* pipeline, uint8_t* sof_seen);
 int subtitle_pipeline_enable(subtitle_pipeline_t* pipeline, uint8_t enabled);
 
 // === End of documentation ======================================================================================== //
