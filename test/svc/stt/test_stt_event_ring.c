@@ -65,7 +65,7 @@ void test_stt_event_ring_pushes_and_drains_one_event(void)
 
     stt_event_ring_init(&ring);
 
-    ret = stt_event_ring_push(&ring, line, strlen(line));
+    ret = stt_event_ring_push(&ring, line, strlen(line), NULL);
     TEST_ASSERT_EQUAL_INT(0, ret);
 
     ret = stt_event_ring_drain(&ring, events, 8U, &event_count);
@@ -91,13 +91,13 @@ void test_stt_event_ring_sheds_oldest_partial_when_full(void)
         snprintf(line, sizeof(line),
                  "{\"seq\":%u,\"is_final\":false,\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"partial%u\"}",
                  i, i);
-        ret = stt_event_ring_push(&ring, line, strlen(line));
+        ret = stt_event_ring_push(&ring, line, strlen(line), NULL);
         TEST_ASSERT_EQUAL_INT(0, ret);
     }
 
     char const* const new_line =
         "{\"seq\":99,\"is_final\":false,\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"new\"}";
-    ret = stt_event_ring_push(&ring, new_line, strlen(new_line));
+    ret = stt_event_ring_push(&ring, new_line, strlen(new_line), NULL);
     TEST_ASSERT_EQUAL_INT(0, ret);
 
     TEST_ASSERT_EQUAL_UINT32(1U, stt_event_ring_get_dropped_count(&ring));
@@ -125,13 +125,13 @@ void test_stt_event_ring_sheds_oldest_final_when_only_finals_present(void)
         snprintf(line, sizeof(line),
                  "{\"seq\":%u,\"is_final\":true,\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"final%u\"}",
                  i, i);
-        ret = stt_event_ring_push(&ring, line, strlen(line));
+        ret = stt_event_ring_push(&ring, line, strlen(line), NULL);
         TEST_ASSERT_EQUAL_INT(0, ret);
     }
 
     char const* const new_line =
         "{\"seq\":99,\"is_final\":true,\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"new\"}";
-    ret = stt_event_ring_push(&ring, new_line, strlen(new_line));
+    ret = stt_event_ring_push(&ring, new_line, strlen(new_line), NULL);
     TEST_ASSERT_EQUAL_INT(0, ret);
 
     TEST_ASSERT_EQUAL_UINT32(1U, stt_event_ring_get_dropped_count(&ring));
@@ -159,13 +159,13 @@ void test_stt_event_ring_sheds_oldest_partial_before_finals(void)
         snprintf(line, sizeof(line),
                  "{\"seq\":%u,\"is_final\":%s,\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"%s%u\"}",
                  i, is_final ? "true" : "false", is_final ? "final" : "partial", i);
-        ret = stt_event_ring_push(&ring, line, strlen(line));
+        ret = stt_event_ring_push(&ring, line, strlen(line), NULL);
         TEST_ASSERT_EQUAL_INT(0, ret);
     }
 
     char const* const new_line =
         "{\"seq\":99,\"is_final\":true,\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"new\"}";
-    ret = stt_event_ring_push(&ring, new_line, strlen(new_line));
+    ret = stt_event_ring_push(&ring, new_line, strlen(new_line), NULL);
     TEST_ASSERT_EQUAL_INT(0, ret);
 
     TEST_ASSERT_EQUAL_UINT32(1U, stt_event_ring_get_dropped_count(&ring));
@@ -188,7 +188,7 @@ void test_stt_event_ring_generation_bump_invalidates_copied_entries(void)
 
     char const* const line1 =
         "{\"seq\":1,\"is_final\":false,\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"old\"}";
-    ret = stt_event_ring_push(&ring, line1, strlen(line1));
+    ret = stt_event_ring_push(&ring, line1, strlen(line1), NULL);
     TEST_ASSERT_EQUAL_INT(0, ret);
 
     discarded = stt_event_ring_invalidate_session(&ring);
@@ -196,7 +196,7 @@ void test_stt_event_ring_generation_bump_invalidates_copied_entries(void)
 
     char const* const line2 =
         "{\"seq\":0,\"is_final\":false,\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"new\"}";
-    ret = stt_event_ring_push(&ring, line2, strlen(line2));
+    ret = stt_event_ring_push(&ring, line2, strlen(line2), NULL);
     TEST_ASSERT_EQUAL_INT(0, ret);
 
     ret = stt_event_ring_drain(&ring, events, 8U, &event_count);
@@ -216,12 +216,12 @@ void test_stt_event_ring_rejects_duplicate_sequence(void)
 
     char const* const line1 =
         "{\"seq\":5,\"is_final\":false,\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"first\"}";
-    ret = stt_event_ring_push(&ring, line1, strlen(line1));
+    ret = stt_event_ring_push(&ring, line1, strlen(line1), NULL);
     TEST_ASSERT_EQUAL_INT(0, ret);
 
     char const* const line2 =
         "{\"seq\":5,\"is_final\":false,\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"duplicate\"}";
-    ret = stt_event_ring_push(&ring, line2, strlen(line2));
+    ret = stt_event_ring_push(&ring, line2, strlen(line2), NULL);
     TEST_ASSERT_EQUAL_INT(0, ret);
 
     ret = stt_event_ring_drain(&ring, events, 8U, &event_count);
@@ -241,12 +241,12 @@ void test_stt_event_ring_rejects_out_of_order_sequence(void)
 
     char const* const line1 =
         "{\"seq\":10,\"is_final\":false,\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"first\"}";
-    ret = stt_event_ring_push(&ring, line1, strlen(line1));
+    ret = stt_event_ring_push(&ring, line1, strlen(line1), NULL);
     TEST_ASSERT_EQUAL_INT(0, ret);
 
     char const* const line2 =
         "{\"seq\":5,\"is_final\":false,\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"old\"}";
-    ret = stt_event_ring_push(&ring, line2, strlen(line2));
+    ret = stt_event_ring_push(&ring, line2, strlen(line2), NULL);
     TEST_ASSERT_EQUAL_INT(0, ret);
 
     ret = stt_event_ring_drain(&ring, events, 8U, &event_count);
@@ -266,7 +266,7 @@ void test_stt_event_ring_accepts_seq_zero_after_generation_bump(void)
 
     char const* const line1 =
         "{\"seq\":42,\"is_final\":false,\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"old\"}";
-    ret = stt_event_ring_push(&ring, line1, strlen(line1));
+    ret = stt_event_ring_push(&ring, line1, strlen(line1), NULL);
     TEST_ASSERT_EQUAL_INT(0, ret);
 
     ret = stt_event_ring_drain(&ring, events, 8U, &event_count);
@@ -277,7 +277,7 @@ void test_stt_event_ring_accepts_seq_zero_after_generation_bump(void)
 
     char const* const line2 =
         "{\"seq\":0,\"is_final\":false,\"start_sec\":0.0,\"end_sec\":1.0,\"text\":\"new\"}";
-    ret = stt_event_ring_push(&ring, line2, strlen(line2));
+    ret = stt_event_ring_push(&ring, line2, strlen(line2), NULL);
     TEST_ASSERT_EQUAL_INT(0, ret);
 
     event_count = 0U;
@@ -297,6 +297,6 @@ void test_stt_event_ring_rejects_line_too_long(void)
     memset(long_line, 'A', sizeof(long_line));
     long_line[sizeof(long_line) - 1U] = '\0';
 
-    ret = stt_event_ring_push(&ring, long_line, sizeof(long_line) - 1U);
+    ret = stt_event_ring_push(&ring, long_line, sizeof(long_line, NULL, NULL) - 1U);
     TEST_ASSERT_EQUAL_INT(-EINVAL, ret);
 }

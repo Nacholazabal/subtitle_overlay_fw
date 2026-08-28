@@ -97,6 +97,7 @@ VIDEO_PORT_SRCS := \
 	src/svc/stt/stt_session_json.c \
 	src/svc/stt/stt_audio_txq.c \
 	src/svc/stt/stt_event_ring.c \
+	src/svc/stt/stt_audio_sink.c \
 	src/svc/stt/stt_ws_client.c \
 	src/svc/stt/stt_ws_config.c \
 	src/svc/stt/stt_ws_frame.c \

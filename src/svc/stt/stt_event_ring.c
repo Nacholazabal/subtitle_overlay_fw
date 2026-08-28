@@ -69,7 +69,7 @@ int stt_event_ring_push(stt_event_ring_t* const ring, char const* const line, si
     {
         return -EINVAL;
     }
-    is_final = (parsed.finality == SUBTITLE_FINALITY_FINAL) ? 1U : 0U;
+    is_final = (parsed.is_final != 0U) ? 1U : 0U;
     if (out_is_final != NULL)
     {
         *out_is_final = is_final;
