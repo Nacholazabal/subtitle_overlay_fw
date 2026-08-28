@@ -49,9 +49,10 @@ void stt_event_ring_cleanup(stt_event_ring_t* const ring)
     memset(ring, 0, sizeof(*ring));
 }
 
-int stt_event_ring_push(stt_event_ring_t* const ring, char const* const line, size_t const length)
+int stt_event_ring_push(stt_event_ring_t* const ring, char const* const line, size_t const length, uint8_t* const out_is_final)
 {
-    uint8_t const is_final = (strstr(line, "\"is_final\":true") != NULL) ? 1U : 0U;
+    subtitle_text_evt_t parsed;
+    uint8_t is_final;
     uint32_t tail;
 
     if (ring == NULL)
@@ -61,6 +62,17 @@ int stt_event_ring_push(stt_event_ring_t* const ring, char const* const line, si
     if (length >= STT_EVENT_RING_LINE_MAX)
     {
         return -EINVAL;
+    }
+
+    // Parse to extract is_final using the real parser (no strstr whitespace fragility)
+    if (stt_transcript_parse_line(line, &parsed) != 0)
+    {
+        return -EINVAL;
+    }
+    is_final = (parsed.finality == SUBTITLE_FINALITY_FINAL) ? 1U : 0U;
+    if (out_is_final != NULL)
+    {
+        *out_is_final = is_final;
     }
 
     pthread_mutex_lock(&ring->lock);

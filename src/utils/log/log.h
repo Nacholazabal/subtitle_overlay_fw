@@ -6,8 +6,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 ///
 /// @file log.h
-/// @brief Log Facility API. This module allows to print formatted messages over an output stream (currently stdout
-/// peripheral) adding a timestamp and a log level.
+/// @brief Log Facility API. Subscribers receive formatted messages with severity levels; app.c adds timestamps.
 ///
 
 // === Headers files inclusions ==================================================================================== //
