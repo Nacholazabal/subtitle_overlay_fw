@@ -11,6 +11,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 #include "video_dynclk.h"
 
+#include <errno.h>
 #include <math.h>
 #include <time.h>
 

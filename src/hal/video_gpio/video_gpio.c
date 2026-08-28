@@ -12,6 +12,8 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 #include "video_gpio.h"
 
+#include <errno.h>
+
 #include "hw_platform.h"
 #include "xil_io.h"
 

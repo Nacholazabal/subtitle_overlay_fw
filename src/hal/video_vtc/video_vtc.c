@@ -12,6 +12,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 #include "video_vtc.h"
 
+#include <errno.h>
 #include <string.h>
 
 #include "hw_platform.h"
