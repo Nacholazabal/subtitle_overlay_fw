@@ -490,6 +490,34 @@ static QState subtitle_ao_ready(subtitle_ao_t* const me, QEvt const* const e)
 
     switch (e->sig)
     {
+    case COMPONENT_READY_SIG:
+    {
+        // Resolution change: reconfigure the subtitle bar for new display dimensions.
+        component_ready_evt_t const* const ready_evt = Q_EVT_CAST(component_ready_evt_t);
+        if ((ready_evt->source == COMPONENT_VIDEO) && (ready_evt->width != 0U)
+            && (ready_evt->height != 0U))
+        {
+            LOG_INFO("subtitle: video resolution changed to %lux%lu",
+                     (unsigned long)ready_evt->width,
+                     (unsigned long)ready_evt->height);
+            if (subtitle_pipeline_reconfigure(&me->pipeline, ready_evt->width, ready_evt->height)
+                == 0)
+            {
+                status = Q_HANDLED();
+            }
+            else
+            {
+                enter_error(me, -EIO);
+                status = Q_TRAN(&subtitle_ao_error);
+            }
+        }
+        else
+        {
+            status = Q_HANDLED();
+        }
+        break;
+    }
+
     case SUBTITLE_TEXT_SIG:
         if (on_subtitle_text(me, Q_EVT_CAST(subtitle_text_evt_t)) == 0)
         {

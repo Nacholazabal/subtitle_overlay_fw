@@ -30,7 +30,16 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #define SYSTEM_STOP_EXPECTED_MASK                                    \
     ((uint8_t)((1U << COMPONENT_VIDEO) | (1U << COMPONENT_USB_AUDIO) \
                | (1U << COMPONENT_SUBTITLE_PIPELINE) | (1U << COMPONENT_STT)))
+
+// Coordinated startup: fork the init graph to ungate STT from HDMI lock. Video,
+// USB audio, and STT init immediately; only SubtitleAO waits for video dimensions.
+// Transition to run when all expected components report ready.
+#define SYSTEM_INIT_EXPECTED_MASK                                    \
+    ((uint8_t)((1U << COMPONENT_VIDEO) | (1U << COMPONENT_USB_AUDIO) \
+               | (1U << COMPONENT_SUBTITLE_PIPELINE) | (1U << COMPONENT_STT)))
+
 #define SYSTEM_SHUTDOWN_TIMEOUT_TICKS (1600U) // 16 s: bounds an in-flight TLS handshake.
+#define SYSTEM_INIT_TIMEOUT_TICKS     (500U)  // 5 s: periodic diagnostic for outstanding components.
 
 // === Private data type declarations ============================================================================== //
 
@@ -39,13 +48,13 @@ typedef struct
     QActive super;
 
     QTimeEvt shutdown_timeout_evt;
+    QTimeEvt init_timeout_evt;
     component_id_e error_source;
     int32_t error_code;
     uint32_t active_video_width;
     uint32_t active_video_height;
-    uint8_t usb_audio_ready;
+    uint8_t ready_mask; ///< bitmask of components that reported COMPONENT_READY.
     uint8_t subtitle_init_requested;
-    uint8_t stt_init_requested;
     uint8_t stopped_mask; ///< bitmask of components that acked SYSTEM_STOPPED.
     uint8_t requested_shutdown; ///< A signal requested a normal process stop.
 } system_ao_t;
@@ -146,11 +155,13 @@ static int on_init(system_ao_t* const me)
 
     me->active_video_width = 0U;
     me->active_video_height = 0U;
-    me->usb_audio_ready = 0U;
+    me->ready_mask = 0U;
     me->subtitle_init_requested = 0U;
-    me->stt_init_requested = 0U;
 
     LOG_INFO("system: init sequence started");
+
+    // Fork the init graph: Video, USB audio, and STT init immediately.
+    // Only SubtitleAO waits for video dimensions.
     if (post_component_init(me, AO_Video, COMPONENT_VIDEO, 0U, 0U) != 0)
     {
         me->error_source = COMPONENT_VIDEO;
@@ -160,6 +171,12 @@ static int on_init(system_ao_t* const me)
     if (post_component_init(me, AO_USBAudio, COMPONENT_USB_AUDIO, 0U, 0U) != 0)
     {
         me->error_source = COMPONENT_USB_AUDIO;
+        me->error_code = -EIO;
+        status = -EIO;
+    }
+    if (post_component_init(me, AO_Stt, COMPONENT_STT, 0U, 0U) != 0)
+    {
+        me->error_source = COMPONENT_STT;
         me->error_code = -EIO;
         status = -EIO;
     }
@@ -189,7 +206,10 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
 
         me->active_video_width = e->width;
         me->active_video_height = e->height;
-        if ((me->usb_audio_ready != 0U) && (me->subtitle_init_requested == 0U))
+        me->ready_mask |= (uint8_t)(1U << COMPONENT_VIDEO);
+
+        // Request SubtitleAO init once we have video dimensions (gate only this component).
+        if (me->subtitle_init_requested == 0U)
         {
             LOG_INFO("system: requesting subtitle init for %lux%lu",
                      (unsigned long)e->width,
@@ -210,74 +230,33 @@ static int on_component_ready(system_ao_t* const me, component_ready_evt_t const
                 status = -EIO;
             }
         }
-        else if (me->subtitle_init_requested != 0U)
-        {
-            LOG_WARNING("system: duplicate video ready ignored; subtitle init already requested");
-        }
         else
         {
-            LOG_INFO("system: video ready, waiting for usb-audio before subtitle init");
+            LOG_WARNING("system: duplicate video ready ignored; subtitle init already requested");
         }
         break;
 
     case COMPONENT_USB_AUDIO:
-        me->usb_audio_ready = 1U;
-        if ((me->active_video_width != 0U) && (me->active_video_height != 0U)
-            && (me->subtitle_init_requested == 0U))
-        {
-            LOG_INFO("system: usb-audio ready, requesting subtitle init for %lux%lu",
-                     (unsigned long)me->active_video_width,
-                     (unsigned long)me->active_video_height);
-            if (post_component_init(me,
-                                    AO_Subtitle,
-                                    COMPONENT_SUBTITLE_PIPELINE,
-                                    me->active_video_width,
-                                    me->active_video_height)
-                == 0)
-            {
-                me->subtitle_init_requested = 1U;
-            }
-            else
-            {
-                me->error_source = COMPONENT_SUBTITLE_PIPELINE;
-                me->error_code = -EIO;
-                status = -EIO;
-            }
-        }
-        else
-        {
-            LOG_INFO("system: usb-audio ready, subtitle still waiting for video");
-        }
+        me->ready_mask |= (uint8_t)(1U << COMPONENT_USB_AUDIO);
         break;
 
     case COMPONENT_SUBTITLE_PIPELINE:
-        if (me->stt_init_requested == 0U)
-        {
-            LOG_INFO("system: subtitle ready, requesting stt init");
-            if (post_component_init(me, AO_Stt, COMPONENT_STT, 0U, 0U) == 0)
-            {
-                me->stt_init_requested = 1U;
-            }
-            else
-            {
-                me->error_source = COMPONENT_STT;
-                me->error_code = -EIO;
-                status = -EIO;
-            }
-        }
-        else
-        {
-            LOG_WARNING("system: duplicate subtitle ready while stt init already requested");
-        }
+        me->ready_mask |= (uint8_t)(1U << COMPONENT_SUBTITLE_PIPELINE);
         break;
 
     case COMPONENT_STT:
-        status = 0;
+        me->ready_mask |= (uint8_t)(1U << COMPONENT_STT);
         break;
 
     default:
         LOG_WARNING("system: ignoring unexpected ready source: %d", (int)e->source);
         break;
+    }
+
+    // Transition to run when all expected components are ready.
+    if ((me->ready_mask & SYSTEM_INIT_EXPECTED_MASK) == SYSTEM_INIT_EXPECTED_MASK)
+    {
+        status = 0;
     }
 
     return status;
@@ -343,6 +322,7 @@ static QState system_ao_init(system_ao_t* const me, QEvt const* const e)
     switch (e->sig)
     {
     case Q_ENTRY_SIG:
+        QTimeEvt_armX(&me->init_timeout_evt, SYSTEM_INIT_TIMEOUT_TICKS, SYSTEM_INIT_TIMEOUT_TICKS);
         if (on_init(me) == 0)
         {
             status = Q_HANDLED();
@@ -351,6 +331,11 @@ static QState system_ao_init(system_ao_t* const me, QEvt const* const e)
         {
             status = Q_TRAN(&system_ao_stopping);
         }
+        break;
+
+    case Q_EXIT_SIG:
+        (void)QTimeEvt_disarm(&me->init_timeout_evt);
+        status = Q_HANDLED();
         break;
 
     case COMPONENT_READY_SIG:
@@ -369,6 +354,34 @@ static QState system_ao_init(system_ao_t* const me, QEvt const* const e)
         {
             status = Q_TRAN(&system_ao_stopping);
         }
+        break;
+    }
+
+    case SYSTEM_INIT_TIMEOUT_SIG:
+    {
+        // Log outstanding components by name as a diagnostic.
+        uint8_t const outstanding = SYSTEM_INIT_EXPECTED_MASK & ~me->ready_mask;
+        if (outstanding != 0U)
+        {
+            LOG_INFO("system: still waiting for:");
+            if ((outstanding & (1U << COMPONENT_VIDEO)) != 0U)
+            {
+                LOG_INFO("  - video");
+            }
+            if ((outstanding & (1U << COMPONENT_USB_AUDIO)) != 0U)
+            {
+                LOG_INFO("  - usb-audio");
+            }
+            if ((outstanding & (1U << COMPONENT_SUBTITLE_PIPELINE)) != 0U)
+            {
+                LOG_INFO("  - subtitle");
+            }
+            if ((outstanding & (1U << COMPONENT_STT)) != 0U)
+            {
+                LOG_INFO("  - stt");
+            }
+        }
+        status = Q_HANDLED();
         break;
     }
 
@@ -487,13 +500,13 @@ void system_ao_ctor(void)
 
     QActive_ctor(&me->super, Q_STATE_CAST(&system_ao_initial));
     QTimeEvt_ctorX(&me->shutdown_timeout_evt, &me->super, SYSTEM_SHUTDOWN_TIMEOUT_SIG, 0U);
+    QTimeEvt_ctorX(&me->init_timeout_evt, &me->super, SYSTEM_INIT_TIMEOUT_SIG, 0U);
     me->error_source = COMPONENT_NONE;
     me->error_code = 0;
     me->active_video_width = 0U;
     me->active_video_height = 0U;
-    me->usb_audio_ready = 0U;
+    me->ready_mask = 0U;
     me->subtitle_init_requested = 0U;
-    me->stt_init_requested = 0U;
     me->stopped_mask = 0U;
     me->requested_shutdown = 0U;
 }

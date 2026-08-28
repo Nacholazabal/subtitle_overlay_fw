@@ -225,3 +225,31 @@ the warning flags in CI. It was checked by hand in the VM when this landed — a
 36 translation units compile warning-free with ALSA and TLS enabled — and
 `make app` (the shipping build) is warning-free there too. If that `#ifdef` grows,
 re-check it in the VM rather than trusting the CI job alone.
+
+### ARCH-02-F4 — AO priorities follow rate-monotonic scheduling
+
+`src/app/app.c` assigns QP/C priorities to active objects based on their polling
+periods, following rate-monotonic scheduling principles: shorter period = higher
+priority (tighter deadline), since the QV kernel dispatches the highest-priority
+ready AO's next event.
+
+- **SttAO** (priority 5, highest): 10 ms poll period — tightest deadline, must
+  process STT transcript input promptly to avoid dropping chunks or delaying
+  subtitle updates.
+- **USBAudioAO** (priority 4): 100 ms poll — monitors the ALSA capture thread's
+  liveness; same period as VideoAO but less time-critical.
+- **VideoAO** (priority 3): 100 ms poll — checks HDMI input lock state and
+  detector timing; a missed poll can delay mode acquisition but does not drop data.
+- **SubtitleAO** (priority 2, event-driven): No periodic poll; responds to
+  `SUBTITLE_TEXT_SIG` and timeout events. Its handler is the heaviest in the
+  system (renders text, writes BRAM, configures overlay MMIO) but has the loosest
+  deadline — a caption 30 ms late is invisible to a viewer, whereas STT poll skew
+  directly affects transcription quality.
+- **SystemAO** (priority 1, lowest): Orchestration only; handles startup/shutdown
+  coordination and error reports, all of which tolerate scheduling latency.
+
+Rationale documented here per ARCH-02 F4 to prevent unexplained priority inversions.
+The original declaration order (SystemAO 1, VideoAO 2, USBAudioAO 3, SttAO 4,
+SubtitleAO 5) placed the heaviest handler ahead of the tightest-deadline poller;
+the corrected order ensures STT's 10 ms deadline is met when multiple AOs have
+queued events.

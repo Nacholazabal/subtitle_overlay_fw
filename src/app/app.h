@@ -60,6 +60,7 @@ typedef enum
     SYSTEM_STOP_SIG, ///< Directed command from system_ao_t: quiesce and stop (fail-fast shutdown).
     SYSTEM_STOPPED_SIG,          ///< Directed ack to system_ao_t: this component has quiesced.
     SYSTEM_SHUTDOWN_TIMEOUT_SIG, ///< Private system AO timer: shutdown ack timeout.
+    SYSTEM_INIT_TIMEOUT_SIG,     ///< Private system AO timer: periodic startup diagnostic.
 
     MAX_SIG
 } app_signal_e;

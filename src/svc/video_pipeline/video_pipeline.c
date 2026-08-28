@@ -192,6 +192,34 @@ video_pipeline_poll_result_e video_pipeline_poll(video_pipeline_t* const pipelin
     switch (pipeline->state)
     {
     case VIDEO_PIPELINE_STREAMING:
+        // Re-read detector timing periodically to detect resolution changes.
+        status = video_input_read_timing(&pipeline->input, &timing);
+        if (status == 0)
+        {
+            // Compare against active mode; restart if resolution changed.
+            if ((timing.width != pipeline->active_mode->timing.width)
+                || (timing.height != pipeline->active_mode->timing.height))
+            {
+                LOG_INFO("video: resolution change detected %lux%lu -> %lux%lu",
+                         (unsigned long)pipeline->active_mode->timing.width,
+                         (unsigned long)pipeline->active_mode->timing.height,
+                         (unsigned long)timing.width,
+                         (unsigned long)timing.height);
+                stop_transport(pipeline);
+                pipeline->state = VIDEO_PIPELINE_ACQUIRING_TIMING;
+                result = VIDEO_PIPELINE_POLL_SIGNAL_LOST;
+            }
+            else
+            {
+                result = VIDEO_PIPELINE_POLL_UNCHANGED;
+            }
+        }
+        else
+        {
+            result = VIDEO_PIPELINE_POLL_UNCHANGED;
+        }
+        break;
+
     case VIDEO_PIPELINE_UNSUPPORTED_INPUT:
         result = VIDEO_PIPELINE_POLL_UNCHANGED;
         break;
