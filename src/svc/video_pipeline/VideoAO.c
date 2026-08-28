@@ -129,23 +129,23 @@ static void post_error(video_ao_t* const me, int32_t code)
  */
 static int on_component_init(video_ao_t* const me)
 {
-    int status = -EIO;
+    int status;
 
     LOG_INFO("video: initializing pipeline");
 
-    if (video_pipeline_init(&me->pipeline) == 0)
+    status = video_pipeline_init(&me->pipeline);
+    if (status == 0)
     {
         me->now_ms = 0U;
         me->running = 1U;
         me->ready_posted = 0U;
         QTimeEvt_armX(&me->poll_time_evt, VIDEO_AO_POLL_TICKS, VIDEO_AO_POLL_TICKS);
         LOG_INFO("video: pipeline running, poll period=%u ms", (unsigned)VIDEO_AO_POLL_PERIOD_MS);
-        status = 0;
     }
     else
     {
-        LOG_ERROR("video: pipeline init failed");
-        enter_error(me, -EIO);
+        LOG_ERROR("video: pipeline init failed: %d", status);
+        enter_error(me, status);
     }
 
     return status;

@@ -16,7 +16,6 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 #include "hw_platform.h"
 #include "log.h"
-#include "xstatus.h"
 
 // === Macros definitions ========================================================================================== //
 
@@ -63,14 +62,14 @@ static video_pipeline_poll_result_e start_passthrough(video_pipeline_t* const pi
 
     // Single-buffer passthrough — capture and display share one frame.
     status = video_output_start(&pipeline->output, mode, VIDEO_PIPELINE_PASSTHROUGH_FRAME);
-    if (status != XST_SUCCESS)
+    if (status != 0)
     {
         pipeline->state = VIDEO_PIPELINE_ERROR;
         return VIDEO_PIPELINE_POLL_ERROR;
     }
 
     status = video_input_start_capture(&pipeline->input, mode, VIDEO_PIPELINE_PASSTHROUGH_FRAME);
-    if (status != XST_SUCCESS)
+    if (status != 0)
     {
         (void)video_output_stop(&pipeline->output);
         pipeline->state = VIDEO_PIPELINE_ERROR;
@@ -87,7 +86,7 @@ static video_pipeline_poll_result_e start_passthrough(video_pipeline_t* const pi
 /**
  * @brief Initialize platform mapping, shared DMA, and input/output helpers.
  * @param pipeline Pipeline instance to initialize.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or a lower-layer error code on failure.
+ * @return 0 on success, -EINVAL for bad input, or a lower-layer error code on failure.
  */
 int video_pipeline_init(video_pipeline_t* const pipeline)
 {
@@ -95,7 +94,7 @@ int video_pipeline_init(video_pipeline_t* const pipeline)
 
     if (pipeline == NULL)
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     memset(pipeline, 0, sizeof(*pipeline));
@@ -104,33 +103,33 @@ int video_pipeline_init(video_pipeline_t* const pipeline)
     if (hw_platform_init() != 0)
     {
         pipeline->state = VIDEO_PIPELINE_ERROR;
-        return XST_FAILURE;
+        return -EIO;
     }
     pipeline->platform_ready = 1U;
 
     status = video_dma_init(&pipeline->dma, VIDEO_PIPELINE_FRAME_COUNT);
-    if (status != XST_SUCCESS)
+    if (status != 0)
     {
         video_pipeline_cleanup(pipeline);
         return status;
     }
 
     status = video_output_init(&pipeline->output, &pipeline->dma, VIDEO_PIPELINE_STRIDE);
-    if (status != XST_SUCCESS)
+    if (status != 0)
     {
         video_pipeline_cleanup(pipeline);
         return status;
     }
 
     status = video_input_init(&pipeline->input, &pipeline->dma, VIDEO_PIPELINE_STRIDE);
-    if (status != XST_SUCCESS)
+    if (status != 0)
     {
         video_pipeline_cleanup(pipeline);
         return status;
     }
 
     pipeline->state = VIDEO_PIPELINE_WAITING_FOR_SIGNAL;
-    return XST_SUCCESS;
+    return 0;
 }
 
 /**
@@ -226,7 +225,7 @@ video_pipeline_poll_result_e video_pipeline_poll(video_pipeline_t* const pipelin
 
     case VIDEO_PIPELINE_ACQUIRING_TIMING:
         status = video_input_read_timing(&pipeline->input, &timing);
-        if (status == XST_NO_DATA)
+        if (status == -ENODATA)
         {
             // Bound the wait for detected timing. If the detector stalls past
             // the timeout, restart it so an absent/flaky source cannot strand
@@ -242,7 +241,7 @@ video_pipeline_poll_result_e video_pipeline_poll(video_pipeline_t* const pipelin
             result = VIDEO_PIPELINE_POLL_UNCHANGED;
             break;
         }
-        if (status != XST_SUCCESS)
+        if (status != 0)
         {
             pipeline->state = VIDEO_PIPELINE_ERROR;
             result = VIDEO_PIPELINE_POLL_ERROR;
@@ -274,7 +273,7 @@ video_pipeline_poll_result_e video_pipeline_poll(video_pipeline_t* const pipelin
     case VIDEO_PIPELINE_ERROR:
     default:
         status = video_input_start_detector(&pipeline->input, now_ms);
-        if (status != XST_SUCCESS)
+        if (status != 0)
         {
             pipeline->state = VIDEO_PIPELINE_ERROR;
             result = VIDEO_PIPELINE_POLL_ERROR;

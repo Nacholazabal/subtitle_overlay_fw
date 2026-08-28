@@ -36,19 +36,19 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 /**
  * @brief Initialize the video GPIO and assert HDMI hot-plug detect.
  * @param gpio GPIO adapter to initialize.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, or XST_FAILURE when the region is not mapped.
+ * @return 0 on success, -EINVAL for bad input, or -EIO when the region is not mapped.
  */
 int video_gpio_init(video_gpio_t* const gpio)
 {
     if (gpio == NULL)
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     gpio->base = hw_platform_base(HW_REGION_VIDEO_GPIO);
     if (gpio->base == (uintptr_t)0)
     {
-        return XST_FAILURE;
+        return -EIO;
     }
 
     Xil_Out32(gpio->base + XGPIO_DATA_OFFSET, 0U);
@@ -56,7 +56,7 @@ int video_gpio_init(video_gpio_t* const gpio)
     Xil_Out32(gpio->base + XGPIO_TRI2_OFFSET, LOCKED_MASK);
     Xil_Out32(gpio->base + XGPIO_DATA_OFFSET, HPD_MASK);
 
-    return XST_SUCCESS;
+    return 0;
 }
 
 /**

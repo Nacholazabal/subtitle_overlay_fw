@@ -30,7 +30,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
  * @brief Initialize an imported Xilinx VTC instance with a mapped EffectiveAddr.
  * @param vtc VTC adapter to initialize.
  * @param device_id Xilinx VTC device ID from xparameters.
- * @return XST_SUCCESS on success, XST_INVALID_PARAM for bad input, XST_DEVICE_NOT_FOUND for unknown ID, or XST_FAILURE on mapping/init failure.
+ * @return 0 on success, -EINVAL for bad input, -ENODEV for unknown ID, or -EIO on mapping/init failure.
  */
 int video_vtc_init(video_vtc_t* const vtc, uint16_t device_id)
 {
@@ -39,36 +39,36 @@ int video_vtc_init(video_vtc_t* const vtc, uint16_t device_id)
 
     if (vtc == NULL)
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     memset(vtc, 0, sizeof(*vtc));
     config = XVtc_LookupConfig(device_id);
     if (config == NULL)
     {
-        return XST_DEVICE_NOT_FOUND;
+        return -ENODEV;
     }
 
     effective_address = hw_platform_translate(config->BaseAddress);
     if (effective_address == (uintptr_t)0)
     {
-        return XST_FAILURE;
+        return -EIO;
     }
 
-    if (XVtc_CfgInitialize(&vtc->instance, config, effective_address) != XST_SUCCESS)
+    if (XVtc_CfgInitialize(&vtc->instance, config, effective_address) != 0)
     {
-        return XST_FAILURE;
+        return -EIO;
     }
 
     vtc->initialized = 1;
-    return XST_SUCCESS;
+    return 0;
 }
 
 /**
  * @brief Program output-generator timing for one video mode.
  * @param vtc Initialized output VTC adapter.
  * @param mode Video timing values to apply.
- * @return XST_SUCCESS on success, or XST_INVALID_PARAM for bad input/uninitialized VTC.
+ * @return 0 on success, or -EINVAL for bad input/uninitialized VTC.
  */
 int video_vtc_configure_generator(video_vtc_t* const vtc, video_vtc_mode_t const* const mode)
 {
@@ -77,7 +77,7 @@ int video_vtc_configure_generator(video_vtc_t* const vtc, video_vtc_mode_t const
 
     if ((vtc == NULL) || (mode == NULL) || !vtc->initialized)
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     memset(&timing, 0, sizeof(timing));
@@ -121,7 +121,7 @@ int video_vtc_configure_generator(video_vtc_t* const vtc, video_vtc_mode_t const
     XVtc_SetGeneratorTiming(&vtc->instance, &timing);
     XVtc_SetSource(&vtc->instance, &source);
 
-    return XST_SUCCESS;
+    return 0;
 }
 
 // === End of documentation ======================================================================================== //
@@ -160,20 +160,20 @@ void video_vtc_stop_generator(video_vtc_t* const vtc)
 /**
  * @brief Enable the VTC detector and core.
  * @param vtc Initialized input VTC adapter.
- * @return XST_SUCCESS on success, or XST_INVALID_PARAM for bad input/uninitialized VTC.
+ * @return 0 on success, or -EINVAL for bad input/uninitialized VTC.
  */
 int video_vtc_start_detector(video_vtc_t* const vtc)
 {
     if ((vtc == NULL) || !vtc->initialized)
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     XVtc_RegUpdateEnable(&vtc->instance);
     XVtc_EnableDetector(&vtc->instance);
     XVtc_Enable(&vtc->instance);
 
-    return XST_SUCCESS;
+    return 0;
 }
 
 /**
@@ -195,7 +195,7 @@ int video_vtc_detector_locked(video_vtc_t* const vtc)
  * @brief Read active input dimensions from the VTC detector.
  * @param vtc Initialized input VTC adapter.
  * @param timing Output active width and height.
- * @return XST_SUCCESS on valid timing, XST_NO_DATA when unlocked/invalid, or XST_INVALID_PARAM for bad input.
+ * @return 0 on valid timing, -ENODATA when unlocked/invalid, or -EINVAL for bad input.
  */
 int video_vtc_read_detector_timing(video_vtc_t* const vtc, video_vtc_timing_t* const timing)
 {
@@ -203,12 +203,12 @@ int video_vtc_read_detector_timing(video_vtc_t* const vtc, video_vtc_timing_t* c
 
     if ((vtc == NULL) || (timing == NULL) || !vtc->initialized)
     {
-        return XST_INVALID_PARAM;
+        return -EINVAL;
     }
 
     if (!video_vtc_detector_locked(vtc))
     {
-        return XST_NO_DATA;
+        return -ENODATA;
     }
 
     memset(&raw_timing, 0, sizeof(raw_timing));
@@ -216,11 +216,11 @@ int video_vtc_read_detector_timing(video_vtc_t* const vtc, video_vtc_timing_t* c
 
     if ((raw_timing.HActiveVideo == 0U) || (raw_timing.VActiveVideo == 0U))
     {
-        return XST_NO_DATA;
+        return -ENODATA;
     }
 
     timing->width = raw_timing.HActiveVideo;
     timing->height = raw_timing.VActiveVideo;
 
-    return XST_SUCCESS;
+    return 0;
 }
