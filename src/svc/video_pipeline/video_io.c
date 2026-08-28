@@ -51,7 +51,7 @@ int video_input_init(video_input_t* const input, video_dma_t* const dma, uint32_
         return status;
     }
 
-    status = video_vtc_init(&input->vtc, XPAR_V_TC_1_DEVICE_ID);
+    status = video_vtc_init_detector(&input->vtc);
     if (status != 0)
     {
         return status;
@@ -249,7 +249,7 @@ int video_output_init(video_output_t* const output, video_dma_t* const dma, uint
         return status;
     }
 
-    status = video_vtc_init(&output->vtc, XPAR_V_TC_0_DEVICE_ID);
+    status = video_vtc_init_generator(&output->vtc);
     if (status != 0)
     {
         return status;

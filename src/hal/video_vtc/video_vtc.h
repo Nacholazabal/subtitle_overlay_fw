@@ -14,7 +14,6 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 #include <stdint.h>
 
-#include "xstatus.h"
 #include "xvtc.h"
 
 // === C++ Guard =================================================================================================== //
@@ -56,7 +55,10 @@ typedef struct
 // === Public variable declarations ================================================================================ //
 // === Public function declarations ================================================================================ //
 
-int video_vtc_init(video_vtc_t* vtc, uint16_t device_id);
+// Role-based init resolves device IDs internally per board configuration
+int video_vtc_init_detector(video_vtc_t* vtc);
+int video_vtc_init_generator(video_vtc_t* vtc);
+
 int video_vtc_configure_generator(video_vtc_t* vtc, video_vtc_mode_t const* mode);
 void video_vtc_start_generator(video_vtc_t* vtc);
 void video_vtc_stop_generator(video_vtc_t* vtc);

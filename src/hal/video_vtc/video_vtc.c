@@ -15,6 +15,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include <string.h>
 
 #include "hw_platform.h"
+#include "xparameters.h"
 #include "xvtc_hw.h"
 
 // === Macros definitions ========================================================================================== //
@@ -32,7 +33,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
  * @param device_id Xilinx VTC device ID from xparameters.
  * @return 0 on success, -EINVAL for bad input, -ENODEV for unknown ID, or -EIO on mapping/init failure.
  */
-int video_vtc_init(video_vtc_t* const vtc, uint16_t device_id)
+static int video_vtc_init(video_vtc_t* const vtc, uint16_t device_id)
 {
     XVtc_Config* config;
     uintptr_t effective_address;
@@ -62,6 +63,26 @@ int video_vtc_init(video_vtc_t* const vtc, uint16_t device_id)
 
     vtc->initialized = 1;
     return 0;
+}
+
+/**
+ * @brief Initialize VTC for input timing detection.
+ * @param vtc VTC adapter to initialize.
+ * @return 0 on success, -EINVAL for bad input, -ENODEV for unknown device, or -EIO on init failure.
+ */
+int video_vtc_init_detector(video_vtc_t* const vtc)
+{
+    return video_vtc_init(vtc, XPAR_V_TC_1_DEVICE_ID);
+}
+
+/**
+ * @brief Initialize VTC for output timing generation.
+ * @param vtc VTC adapter to initialize.
+ * @return 0 on success, -EINVAL for bad input, -ENODEV for unknown device, or -EIO on init failure.
+ */
+int video_vtc_init_generator(video_vtc_t* const vtc)
+{
+    return video_vtc_init(vtc, XPAR_V_TC_0_DEVICE_ID);
 }
 
 /**
