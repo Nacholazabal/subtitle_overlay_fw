@@ -15,6 +15,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include <stddef.h>
 #include <stdint.h>
 
+#include "audio_sink.h"
 #include "errorno.h"
 #include "usb_audio_agc.h"
 #include "usb_audio_capture.h"
@@ -59,6 +60,7 @@ typedef struct
     usb_audio_capture_t capture;
     usb_audio_agc_t agc;
     uint8_t agc_enabled;
+    audio_sink_t sink;
     pthread_mutex_t state_mutex;
     pthread_t capture_thread;
     uint32_t next_sequence;
@@ -77,9 +79,12 @@ typedef struct
 void usb_audio_stream_default_config(usb_audio_stream_config_t* config);
 
 /// @brief Open ALSA capture and start its capture worker; may block during device setup.
-/// Captured chunks are submitted nonblocking to the STT subsystem's bounded queue.
+/// Captured chunks are submitted to the provided sink.
+/// @param stream Stream service instance.
+/// @param config Capture configuration.
+/// @param sink Audio data sink (injected dependency).
 /// @return 0 on success or a negative errno-style status. The instance must remain alive until stopped.
-int usb_audio_stream_start(usb_audio_stream_t* stream, usb_audio_stream_config_t const* config);
+int usb_audio_stream_start(usb_audio_stream_t* stream, usb_audio_stream_config_t const* config, audio_sink_t const* sink);
 
 /// @brief Return 0 while workers are healthy, their fatal error, or -APP_ESTATE when not running.
 int usb_audio_stream_get_status(usb_audio_stream_t* stream);

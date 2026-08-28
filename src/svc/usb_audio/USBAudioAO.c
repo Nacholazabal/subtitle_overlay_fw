@@ -15,6 +15,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 
 #include "app.h"
 #include "log.h"
+#include "stt_audio_sink.h"
 #include "usb_audio_stream.h"
 
 // === Macros definitions ========================================================================================== //
@@ -126,13 +127,15 @@ static void post_error(usb_audio_ao_t* const me, int32_t code)
 static int on_component_init(usb_audio_ao_t* const me)
 {
     usb_audio_stream_config_t config;
+    audio_sink_t sink;
     int status;
 
     usb_audio_stream_default_config(&config);
+    sink = stt_audio_sink_create();
     // STT owns the bounded queue and WebSocket worker; USB owns ALSA only.
     LOG_INFO("usb-audio: starting capture device=%s", config.pcm_device);
 
-    status = usb_audio_stream_start(&me->stream, &config);
+    status = usb_audio_stream_start(&me->stream, &config, &sink);
     if (status == 0)
     {
         me->running = 1U;

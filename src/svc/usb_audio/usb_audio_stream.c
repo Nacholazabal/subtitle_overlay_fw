@@ -22,7 +22,6 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include "errorno.h"
 #include "log.h"
 #include "number_parse.h"
-#include "stt_ws_client.h"
 
 // === Macros definitions ========================================================================================== //
 
@@ -149,14 +148,9 @@ static void stream_add_dropped(usb_audio_stream_t* const stream, uint32_t droppe
 static void* capture_thread_main(void* const arg)
 {
     usb_audio_stream_t* const stream = (usb_audio_stream_t*)arg;
-    stt_ws_client_t* const client = stt_ws_client_get_active();
     uint8_t first_read_pending = 1U;
 
     LOG_INFO("usb-audio: capture thread started");
-    if (client == NULL)
-    {
-        LOG_ERROR("usb-audio: STT client unavailable; captured PCM will be dropped");
-    }
     LOG_INFO("usb-audio: waiting for first ALSA chunk");
 
     while (stream_stop_requested(stream) == 0U)
@@ -208,13 +202,12 @@ static void* capture_thread_main(void* const arg)
         }
         chunk.sequence = stream_next_sequence(stream);
         chunk.bytes_used = (uint32_t)bytes_read;
-        if ((client == NULL)
-            || (stt_ws_client_submit_audio(client,
-                                           chunk.payload,
-                                           chunk.bytes_used,
-                                           chunk.timestamp_ns,
-                                           stream_get_total_dropped(stream))
-                != 0))
+        if (stream->sink.submit(stream->sink.ctx,
+                                chunk.payload,
+                                chunk.bytes_used,
+                                chunk.timestamp_ns,
+                                stream_get_total_dropped(stream))
+            != 0)
         {
             stream_add_dropped(stream, 1U);
         }
@@ -228,13 +221,10 @@ static void* capture_thread_main(void* const arg)
                      (double)(metrics.raw_peak * 100.0f),
                      (double)metrics.applied_gain,
                      (double)(metrics.out_peak * 100.0f));
-            LOG_DEBUG("usb-audio: submitted chunk seq=%lu bytes=%lu dropped=%lu link=%s",
+            LOG_DEBUG("usb-audio: submitted chunk seq=%lu bytes=%lu dropped=%lu",
                       (unsigned long)chunk.sequence,
                       (unsigned long)chunk.bytes_used,
-                      (unsigned long)stream_get_total_dropped(stream),
-                      (client != NULL)
-                          ? stt_ws_client_state_name(stt_ws_client_state(client))
-                          : "unavailable");
+                      (unsigned long)stream_get_total_dropped(stream));
             first_read_pending = 0U;
         }
     }
@@ -337,18 +327,21 @@ void usb_audio_stream_default_config(usb_audio_stream_config_t* const config)
  * @return 0 on success, or a negative errno-style value on failure.
  */
 int usb_audio_stream_start(usb_audio_stream_t* const stream,
-                           usb_audio_stream_config_t const* const config)
+                           usb_audio_stream_config_t const* const config,
+                           audio_sink_t const* const sink)
 {
     usb_audio_capture_config_t capture_config;
     int status;
 
-    if ((stream == NULL) || (config == NULL) || (config->pcm_device[0] == '\0'))
+    if ((stream == NULL) || (config == NULL) || (config->pcm_device[0] == '\0') || (sink == NULL)
+        || (sink->submit == NULL))
     {
         return -EINVAL;
     }
 
     memset(stream, 0, sizeof(*stream));
     stream->config = *config;
+    stream->sink = *sink;
     status = pthread_mutex_init(&stream->state_mutex, NULL);
     if (status != 0)
     {
