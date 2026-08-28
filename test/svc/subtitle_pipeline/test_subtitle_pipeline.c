@@ -270,54 +270,6 @@ void test_subtitle_pipeline_write_caption_renders_final_text_solid(void)
     TEST_ASSERT_EQUAL_UINT8(1U, captured_caption_is_final);
 }
 
-void test_subtitle_pipeline_commit_clears_and_waits_for_sof(void)
-{
-    pipeline.initialized = 1U;
-
-    subtitle_overlay_clear_sof_ExpectAnyArgsAndReturn(0);
-    subtitle_overlay_wait_sof_ExpectAnyArgsAndReturn(0);
-
-    TEST_ASSERT_EQUAL_INT(0, subtitle_pipeline_commit(&pipeline));
-    TEST_ASSERT_EQUAL_UINT8(1U, pipeline.initialized);
-}
-
-void test_subtitle_pipeline_commit_returns_timeout_without_resetting_pipeline(void)
-{
-    pipeline.initialized = 1U;
-
-    subtitle_overlay_clear_sof_ExpectAnyArgsAndReturn(0);
-    subtitle_overlay_wait_sof_ExpectAnyArgsAndReturn(-EAGAIN);
-
-    TEST_ASSERT_EQUAL_INT(-EAGAIN, subtitle_pipeline_commit(&pipeline));
-    TEST_ASSERT_EQUAL_UINT8(1U, pipeline.initialized);
-}
-
-void test_subtitle_pipeline_commit_returns_overlay_error(void)
-{
-    pipeline.initialized = 1U;
-
-    subtitle_overlay_clear_sof_ExpectAnyArgsAndReturn(-EIO);
-
-    TEST_ASSERT_EQUAL_INT(-EIO, subtitle_pipeline_commit(&pipeline));
-    TEST_ASSERT_EQUAL_UINT8(1U, pipeline.initialized);
-}
-
-void test_subtitle_pipeline_nonblocking_sof_helpers_delegate_to_overlay(void)
-{
-    uint8_t sof_seen = 0U;
-    uint32_t control = SUBTITLE_OVERLAY_CTRL_SOF;
-
-    pipeline.initialized = 1U;
-
-    subtitle_overlay_clear_sof_ExpectAnyArgsAndReturn(0);
-    TEST_ASSERT_EQUAL_INT(0, subtitle_pipeline_clear_sof(&pipeline));
-
-    subtitle_overlay_read_control_ExpectAnyArgsAndReturn(0);
-    subtitle_overlay_read_control_ReturnThruPtr_control(&control);
-    TEST_ASSERT_EQUAL_INT(0, subtitle_pipeline_poll_sof(&pipeline, &sof_seen));
-    TEST_ASSERT_EQUAL_UINT8(1U, sof_seen);
-}
-
 void test_subtitle_pipeline_enable_delegates_to_overlay(void)
 {
     pipeline.initialized = 1U;
@@ -350,39 +302,3 @@ void test_subtitle_pipeline_write_caption_propagates_renderer_failure(void)
     TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_pipeline_write_caption(&pipeline, "hola", 1U));
 }
 
-void test_subtitle_pipeline_sof_helpers_reject_null_and_uninitialized(void)
-{
-    uint8_t sof_seen = 0U;
-    subtitle_pipeline_t uninitialized;
-
-    memset(&uninitialized, 0, sizeof(uninitialized));
-
-    TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_pipeline_clear_sof(NULL));
-    TEST_ASSERT_EQUAL_INT(-APP_ESTATE, subtitle_pipeline_clear_sof(&uninitialized));
-
-    TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_pipeline_poll_sof(NULL, &sof_seen));
-    TEST_ASSERT_EQUAL_INT(-APP_ESTATE, subtitle_pipeline_poll_sof(&uninitialized, &sof_seen));
-}
-
-void test_subtitle_pipeline_poll_sof_rejects_null_output(void)
-{
-    pipeline.initialized = 1U;
-
-    TEST_ASSERT_EQUAL_INT(-EINVAL, subtitle_pipeline_poll_sof(&pipeline, NULL));
-}
-
-void test_subtitle_pipeline_poll_sof_reports_cleared_flag_and_hal_errors(void)
-{
-    uint8_t sof_seen = 1U;
-    uint32_t control = 0U;
-
-    pipeline.initialized = 1U;
-
-    subtitle_overlay_read_control_ExpectAnyArgsAndReturn(0);
-    subtitle_overlay_read_control_ReturnThruPtr_control(&control);
-    TEST_ASSERT_EQUAL_INT(0, subtitle_pipeline_poll_sof(&pipeline, &sof_seen));
-    TEST_ASSERT_EQUAL_UINT8(0U, sof_seen);
-
-    subtitle_overlay_read_control_ExpectAnyArgsAndReturn(-EIO);
-    TEST_ASSERT_EQUAL_INT(-EIO, subtitle_pipeline_poll_sof(&pipeline, &sof_seen));
-}

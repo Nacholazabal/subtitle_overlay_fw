@@ -34,6 +34,7 @@ extern "C" {
 typedef struct
 {
     uintptr_t base;
+    uint32_t shadow[SUBTITLE_BRAM_WORD_COUNT]; ///< F2 Stage 2: DRAM shadow for diff-write
 } subtitle_bram_t;
 
 // === Public variable declarations ================================================================================ //
@@ -43,7 +44,7 @@ int subtitle_bram_init(subtitle_bram_t* bram);
 int subtitle_bram_clear(subtitle_bram_t* bram);
 int subtitle_bram_write_bitmap(subtitle_bram_t* bram,
                                uint8_t const* src,
-                               size_t src_size,
+                               uint32_t src_stride,
                                int32_t x,
                                int32_t y,
                                uint32_t width,

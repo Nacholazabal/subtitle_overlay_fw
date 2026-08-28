@@ -123,6 +123,13 @@ static void draw_visible(uint8_t* bitmap,
                          render_metrics_t const* metrics,
                          uint8_t current_is_final);
 
+// === Private variable definitions ================================================================================ //
+
+// F27: File-scope layout buffers for caption rendering; safe single-threaded under QV invariant.
+// Each is ~2.3 KB (512 codepoints × 4 bytes + 32 spans × 6 bytes). Avoids ~4.6 KB stack per call.
+static render_layout_t s_previous_layout;
+static render_layout_t s_current_layout;
+
 // === Private function implementation ============================================================================= //
 
 static int sanitize_slice(char const* const source,
@@ -142,6 +149,17 @@ static int sanitize_slice(char const* const source,
     return subtitle_text_sanitize(input, destination, capacity);
 }
 
+/**
+ * @brief Decode one UTF-8 codepoint and advance the offset.
+ *
+ * F24: Precondition — input must be sanitized. Only 1-byte and 2-byte UTF-8
+ * sequences are supported, as 3-byte and 4-byte sequences have no glyphs in
+ * the font. subtitle_text_sanitize strips or converts them before rendering.
+ *
+ * @param text Null-terminated sanitized UTF-8 text.
+ * @param offset Byte offset; advanced by the number of bytes consumed.
+ * @return Decoded codepoint (ASCII or 2-byte UTF-8).
+ */
 static uint32_t decode_codepoint(char const* const text, size_t* const offset)
 {
     unsigned char const lead = (unsigned char)text[*offset];
@@ -150,6 +168,13 @@ static uint32_t decode_codepoint(char const* const text, size_t* const offset)
     {
         (*offset)++;
         return lead;
+    }
+
+    // F24: Assert precondition — no 3-byte (0xE0-0xEF) or 4-byte (0xF0-0xF7) sequences.
+    // If this fires, the input was not sanitized, and decoding would desync.
+    if (lead >= 0xE0U)
+    {
+        return 0U; // Return null codepoint (renders as space) instead of desyncing
     }
 
     {
@@ -405,7 +430,19 @@ static void measure_visible(visible_line_t const* const visible,
         uint32_t ink_width;
 
         metrics->lines[line] = measure_line(&visible[line], baseline);
-        ink_width = (uint32_t)(metrics->lines[line].max_x - metrics->lines[line].min_x + 1);
+
+        // F23: Guard signed overflow on ink-free lines. If no glyph has a bitmap,
+        // measure_line returns {INT_MAX, INT_MIN, INT_MAX, INT_MIN}, so min_x > max_x.
+        // Treat such lines as having zero ink width instead of computing UB overflow.
+        if (metrics->lines[line].min_x <= metrics->lines[line].max_x)
+        {
+            ink_width = (uint32_t)(metrics->lines[line].max_x - metrics->lines[line].min_x + 1);
+        }
+        else
+        {
+            ink_width = 0U;
+        }
+
         metrics->maximum_width = (ink_width > metrics->maximum_width) ? ink_width
                                                                       : metrics->maximum_width;
         metrics->min_y = (metrics->lines[line].min_y < metrics->min_y)
@@ -537,48 +574,66 @@ static void draw_visible(uint8_t* const bitmap,
  * the current segment. Partial current text is dithered; previous and final text remain solid.
  * The returned bitmap is tightly packed to a black box with 18 px horizontal and 10 px vertical
  * padding, and never exceeds the 1024x256 hardware mask.
+ *
+ * The width is aligned up to a 32-pixel boundary to enable word-at-a-time BRAM writes.
+ * The stride is (width / 8) and is guaranteed to be a multiple of 4 bytes.
+ *
  * @param text Null-terminated UTF-8 text; the first newline separates previous and current text.
  * @param current_is_final Nonzero renders the current segment solid.
  * @param dst Destination packed MSB-first 1-bpp bitmap.
- * @param dst_size Destination capacity; must hold the complete hardware mask.
- * @param width Rendered compact box width in pixels.
+ * @param dst_capacity Destination buffer capacity in bytes.
+ * @param width Rendered compact box width in pixels (32-pixel aligned).
  * @param height Rendered compact box height in pixels.
+ * @param stride Bitmap stride in bytes.
  * @return 0 on success, or a negative errno-style value on failure.
  */
 int subtitle_text_renderer_render_caption(char const* const text,
                                           uint8_t const current_is_final,
                                           uint8_t* const dst,
-                                          size_t const dst_size,
+                                          size_t const dst_capacity,
                                           uint32_t* const width,
-                                          uint32_t* const height)
+                                          uint32_t* const height,
+                                          uint32_t* const stride)
 {
-    render_layout_t previous;
-    render_layout_t current;
     visible_line_t visible[RENDER_MAX_LINES];
     render_metrics_t metrics;
     uint32_t line_count;
+    uint32_t natural_width;
+    size_t bytes_used;
 
     if ((text == NULL) || (dst == NULL) || (width == NULL) || (height == NULL)
-        || (dst_size < RENDER_BITMAP_SIZE))
+        || (stride == NULL))
     {
         return -EINVAL;
     }
 
-    line_count = build_visible_lines(text, &previous, &current, visible);
+    line_count = build_visible_lines(text, &s_previous_layout, &s_current_layout, visible);
     if (line_count == 0U)
     {
         return -EINVAL;
     }
 
     measure_visible(visible, line_count, &metrics);
-    *width = metrics.maximum_width + (2U * RENDER_PADDING_X);
+    natural_width = metrics.maximum_width + (2U * RENDER_PADDING_X);
+
+    // Align width to 32 pixels for word-at-a-time BRAM writes (F2 Stage 1)
+    *width = ((natural_width + 31U) / 32U) * 32U;
     *height = (uint32_t)(metrics.max_y - metrics.min_y + 1) + (2U * RENDER_PADDING_Y);
+    *stride = *width / 8U;  // Guaranteed multiple of 4 since width is multiple of 32
+
     if ((*width > SUBTITLE_BRAM_MASK_WIDTH) || (*height > SUBTITLE_BRAM_MASK_HEIGHT))
     {
         return -EINVAL;
     }
 
-    memset(dst, 0, dst_size);
+    bytes_used = (size_t)(*stride) * (size_t)(*height);
+    if (bytes_used > dst_capacity)
+    {
+        return -EINVAL;
+    }
+
+    // Clear only the bytes that will be used, not the entire buffer (F16)
+    memset(dst, 0, bytes_used);
     draw_visible(dst, *width, *height, visible, line_count, &metrics, current_is_final);
     return 0;
 }

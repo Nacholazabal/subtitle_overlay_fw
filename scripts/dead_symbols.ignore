@@ -7,7 +7,7 @@
 # Every keep here should also appear in docs/legacy-llm/decisions.md.
 
 log_unsubscribe               # subscribe/unsubscribe is a coherent pair; see SRC-D01
-subtitle_pipeline_commit      # frame-sync trio owned by ARCH-03 (F17a): wire in or delete together
-subtitle_pipeline_clear_sof   # frame-sync trio owned by ARCH-03 (F17a): wire in or delete together
-subtitle_pipeline_poll_sof    # frame-sync trio owned by ARCH-03 (F17a): wire in or delete together
+subtitle_overlay_clear_sof    # HAL primitives for frame-sync deferred in ARCH-03 F17a; see SRC-D04
+subtitle_overlay_read_control # HAL primitives for frame-sync deferred in ARCH-03 F17a; see SRC-D04
+subtitle_overlay_wait_sof     # HAL primitives for frame-sync deferred in ARCH-03 F17a; see SRC-D04
 stt_ws_client_cleanup         # self-documented legacy shim; ARCH-05 replaces it

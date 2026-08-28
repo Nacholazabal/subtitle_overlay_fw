@@ -180,11 +180,20 @@ to **ARCH-02**. ARCH-06 removes and documents; it does not change behaviour. If
 ARCH-02 wants the check, the kernel's `HDMI_VDMA_*_STATUS` ioctls are still
 there and `git log` has the wrapper.
 
-### SRC-D04 — the frame-sync trio is ARCH-03's to resolve
-`subtitle_pipeline_commit` / `_clear_sof` / `_poll_sof` have no production caller
-and are the subject of ARCH-03's F17a: wire `_poll_sof` into the caption flush or
-delete all three. Kept unchanged here so the two tickets do not collide, listed
-in `scripts/dead_symbols.ignore` with that reason.
+### SRC-D04 — frame-sync deferred; SOF trio deleted (ARCH-03 F17a)
+`subtitle_pipeline_commit` / `_clear_sof` / `_poll_sof` **deleted** in ARCH-03.
+They had no production caller, and proper frame-sync would require:
+- Non-blocking `poll_sof` integrated into the caption update path
+- A short time-event to poll and flush only changed words after SOF
+- Shadow-diff (F2 Stage 2) to make the flush short enough for blanking
+
+**Decision**: defer frame-sync to future work (it addresses tearing, not latency),
+and delete the unreachable API now per ARCH-06 (no public function without a
+production caller). When frame-sync is revisited, reimplement with the
+shadow-buffer already in place (F2 Stage 2) and the non-blocking pattern
+sketched in ARCH-03. The overlay update deliberately has **no frame
+synchronization** today — same tearing tradeoff as SRC-H02 (single-buffer
+passthrough on the video side).
 
 ### SRC-D05 — detected timing is bounded by the framebuffer geometry
 `src/svc/video_pipeline/video_pipeline.c`. `VIDEO_PIPELINE_MAX_HEIGHT` had no
