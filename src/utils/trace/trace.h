@@ -23,7 +23,7 @@ extern "C" {
 
 /// Enable/disable tracing at compile time
 #ifndef CONFIG_TRACE_ENABLED
-    #define CONFIG_TRACE_ENABLED (1)
+    #define CONFIG_TRACE_ENABLED (0)  // Disabled by default; enable with make TRACE=1
 #endif
 
 /// Trace event types (aligned with Chrome Trace Format)

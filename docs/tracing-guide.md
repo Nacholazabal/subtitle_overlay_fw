@@ -179,32 +179,42 @@ Estos puntos dan visibilidad del resto del sistema sin ser abrumadores.
 
 ## Workflow completo
 
-### 1. **Capturar traces**
+### 1. **Build con tracing habilitado**
+
+```bash
+# Build especial con profiling (desde WSL)
+TRACE=1 ./scripts/build.sh
+
+# O directamente en la VM:
+ssh petalinux-vm
+cd /home/tesislinux/tesis/hdmi-overlay
+make TRACE=1 app
+```
+
+### 2. **Deploy y capturar traces**
 
 #### En el firmware:
 ```bash
-# Agregar inicialización en main()
-# Rebuild y deploy
-./scripts/build.sh
+# Deploy (desde WSL o VM)
 scp build/vm-artifacts/subtitle_overlay_fw hdmi-overlay:/root/
+
+# Correr en la board
 ssh hdmi-overlay '/root/subtitle_overlay_fw'
 
-# Después de correr, copiar trace
+# Después de ~30 segundos, Ctrl+C y copiar trace
 scp hdmi-overlay:/tmp/fw_trace.jsonl logs/
 ```
 
 #### En el server:
-```python
-# Agregar al código del bridge/STT
-from server.runtime.unified_trace import UnifiedTracer
+```bash
+# El servidor Python ya tiene tracing instrumentado
+# Simplemente corre normalmente:
+python3 server/runtime/bridge.py --stream-url ws://... --send-subtitles
 
-tracer = UnifiedTracer(source="bridge")
-# ... usar tracer.instant(), tracer.duration(), etc.
+# El trace se guarda automáticamente en logs/server_trace.jsonl
 ```
 
-El trace se guarda automáticamente en `logs/server_trace.jsonl`.
-
-### 2. **Mergear traces**
+### 3. **Mergear traces**
 
 ```bash
 # Combinar firmware + server + legacy STT events
@@ -215,7 +225,7 @@ python3 scripts/merge_traces.py \
   --output logs/unified_trace.json
 ```
 
-### 3. **Visualizar en Perfetto**
+### 4. **Visualizar en Perfetto**
 
 ```bash
 # Abrir en browser
@@ -268,16 +278,20 @@ Una vez en Perfetto, podés:
 
 ---
 
-## Disable tracing (producción)
+## Tracing por defecto: DESHABILITADO
 
-En el firmware, cambiar en `trace.h`:
-```c
-#define CONFIG_TRACE_ENABLED (0)
+El tracing está **apagado por defecto** (cero overhead).
+
+Para habilitarlo, build con `TRACE=1`:
+```bash
+# Opción 1: via scripts/build.sh
+TRACE=1 ./scripts/build.sh
+
+# Opción 2: directamente en la VM
+make TRACE=1 app
 ```
 
-Todas las macros `TRACE_*` se convierten en no-ops (cero overhead).
-
-En el server, simplemente no inicializar `UnifiedTracer`.
+Sin `TRACE=1`, todas las macros `TRACE_*` se convierten en no-ops.
 
 ---
 

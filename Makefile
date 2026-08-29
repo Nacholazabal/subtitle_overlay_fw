@@ -40,6 +40,12 @@ COMMON_CFLAGS := \
 	-Isrc/svc/usb_audio \
 	-Isrc/svc/video_pipeline
 
+# Enable unified tracing for performance profiling
+TRACE ?= 0
+ifeq ($(TRACE),1)
+COMMON_CFLAGS += -DCONFIG_TRACE_ENABLED=1
+endif
+
 USB_AUDIO_ENABLE_ALSA ?= 1
 
 ifeq ($(USB_AUDIO_ENABLE_ALSA),1)
