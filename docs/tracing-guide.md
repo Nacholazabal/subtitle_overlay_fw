@@ -1,0 +1,281 @@
+# Unified Tracing Guide
+
+## Overview
+
+Sistema de tracing unificado que captura eventos del **firmware (C)** y **server (Python)** en el mismo formato, permitiendo visualizar todo el pipeline end-to-end en Perfetto.
+
+## Arquitectura
+
+```
+Firmware (C)              Server (Python)           Legacy
+━━━━━━━━━━━━━             ━━━━━━━━━━━━━━━━━         ━━━━━━━
+trace.c/h                 unified_trace.py          stt_events.jsonl
+   ↓                           ↓                         ↓
+/tmp/fw_trace.jsonl      logs/server_trace.jsonl   (convertido)
+   └────────────────────────────┴──────────────────────┘
+                              ↓
+                    merge_traces.py
+                              ↓
+                   logs/unified_trace.json
+                              ↓
+                 https://ui.perfetto.dev
+```
+
+---
+
+## Uso en Firmware (C)
+
+### 1. Inicializar tracing
+
+```c
+#include "trace.h"
+
+// En main() o init
+trace_ctx_t* trace = trace_init(NULL);  // Output: /tmp/fw_trace.jsonl
+if (!trace) {
+    LOG_ERROR("Failed to init tracing");
+}
+```
+
+### 2. Instrumentar código
+
+#### **Eventos instantáneos** (punto en el tiempo)
+
+```c
+// Cuando llega un audio chunk
+TRACE_INSTANT(trace, "audio_chunk_rx", 
+              "\"seq\":%lu,\"bytes\":%zu", seq, chunk_size);
+
+// Cuando se recibe un transcript
+TRACE_INSTANT(trace, "transcript_rx",
+              "\"seq\":%lu,\"text\":\"%.40s\"", seq, text);
+```
+
+#### **Eventos de duración** (medidos)
+
+```c
+// Opción A: Medir duración manualmente
+uint64_t start_ns = trace_now_ns();
+subtitle_text_render(...);
+uint64_t dur_ns = trace_now_ns() - start_ns;
+
+TRACE_DURATION(trace, "subtitle_render", dur_ns,
+               "\"seq\":%lu,\"chars\":%zu", seq, strlen(text));
+```
+
+```c
+// Opción B: Begin/End
+uint64_t start = TRACE_BEGIN(trace, "bram_write", "\"seq\":%lu", seq);
+subtitle_bram_write(...);
+TRACE_END(trace, "bram_write", start, NULL);
+```
+
+```c
+// Opción C: Scope helpers (para bloques)
+{
+    TRACE_SCOPE_START(trace, subtitle_pipeline);
+    // ... todo el pipeline ...
+    TRACE_SCOPE_END(trace, subtitle_pipeline);
+}
+```
+
+### 3. Cerrar tracing
+
+```c
+// Al finalizar
+trace_close(trace);
+```
+
+---
+
+## Uso en Server (Python)
+
+### Importar
+
+```python
+from server.runtime.unified_trace import UnifiedTracer, TraceScope
+```
+
+### Inicializar
+
+```python
+# Al inicio del bridge/server
+tracer = UnifiedTracer(output_path="logs/server_trace.jsonl", source="bridge")
+
+# O con context manager
+with UnifiedTracer(source="stt") as tracer:
+    # ...
+```
+
+### Instrumentar
+
+```python
+# Evento instantáneo
+tracer.instant("audio_received", seq=seq, bytes=len(payload))
+
+# Evento con duración
+start = time.monotonic_ns()
+result = process_audio(payload)
+end = time.monotonic_ns()
+tracer.duration("audio_processing", end - start, samples=len(result))
+
+# Scope (context manager)
+with TraceScope(tracer, "gpu_inference", model="nemotron"):
+    result = model.infer(audio)
+```
+
+---
+
+## Puntos de instrumentación recomendados
+
+### **Firmware (C)**
+
+| Ubicación | Evento | Tipo |
+|-----------|--------|------|
+| `usb_audio_stream.c` | `audio_chunk_rx` | Instant |
+| `stt_ws_client.c` | `ws_frame_rx` | Instant |
+| `SttAO.c` | `transcript_rx` | Instant |
+| `SubtitleAO.c` | `subtitle_render` | Duration |
+| `subtitle_bram.c` | `bram_write` | Duration |
+| `SubtitleAO.c` | `overlay_enable` | Instant |
+
+### **Server (Python)**
+
+| Ubicación | Evento | Tipo |
+|-----------|--------|------|
+| `bridge.py` | `board_audio_rx` | Instant |
+| `bridge.py` | `ws_send_audio` | Instant |
+| `nemotron.py` | `gpu_inference` | Duration |
+| `bridge.py` | `transcript_emit` | Instant |
+
+---
+
+## Workflow completo
+
+### 1. **Capturar traces**
+
+#### En el firmware:
+```bash
+# Agregar inicialización en main()
+# Rebuild y deploy
+./scripts/build.sh
+scp build/vm-artifacts/subtitle_overlay_fw hdmi-overlay:/root/
+ssh hdmi-overlay '/root/subtitle_overlay_fw'
+
+# Después de correr, copiar trace
+scp hdmi-overlay:/tmp/fw_trace.jsonl logs/
+```
+
+#### En el server:
+```python
+# Agregar al código del bridge/STT
+from server.runtime.unified_trace import UnifiedTracer
+
+tracer = UnifiedTracer(source="bridge")
+# ... usar tracer.instant(), tracer.duration(), etc.
+```
+
+El trace se guarda automáticamente en `logs/server_trace.jsonl`.
+
+### 2. **Mergear traces**
+
+```bash
+# Combinar firmware + server + legacy STT events
+python3 scripts/merge_traces.py \
+  --fw logs/fw_trace.jsonl \
+  --server logs/server_trace.jsonl \
+  --stt logs/stt_events.jsonl \
+  --output logs/unified_trace.json
+```
+
+### 3. **Visualizar en Perfetto**
+
+```bash
+# Abrir en browser
+open https://ui.perfetto.dev
+
+# Cargar logs/unified_trace.json
+# Drag & drop el archivo en Perfetto
+```
+
+---
+
+## Ejemplo de timeline esperada
+
+```
+Process: subtitle-bridge (PID 100)
+├─ audio_received          ●━━━━━━━┓
+├─ ws_send_audio                   ●━━━━┓
+└─ transcript_emit                        ●
+
+Process: subtitle_overlay_fw (PID 1234)
+├─ audio_chunk_rx                             ●
+├─ ws_frame_rx                                  ●━━┓
+├─ transcript_rx                                    ●
+├─ subtitle_render                                   ●━━━━━━━┓
+├─ bram_write                                                ●━━┓
+└─ overlay_enable                                                 ●
+
+Process: stt (PID 100)
+└─ final [GPU inference]        ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+   args: {queue_wait_sec: 0.5, gpu_infer_sec: 1.2}
+```
+
+---
+
+## Análisis de latencia
+
+Una vez en Perfetto, podés:
+
+1. **Medir latencias end-to-end**
+   - Desde `audio_received` (server) hasta `overlay_enable` (firmware)
+
+2. **Identificar bottlenecks**
+   - Ver qué etapa toma más tiempo (GPU, render, BRAM write)
+
+3. **Analizar jitter**
+   - Variación en tiempos de procesamiento
+
+4. **Verificar orden de eventos**
+   - Asegurar que el pipeline fluye correctamente
+
+---
+
+## Disable tracing (producción)
+
+En el firmware, cambiar en `trace.h`:
+```c
+#define CONFIG_TRACE_ENABLED (0)
+```
+
+Todas las macros `TRACE_*` se convierten en no-ops (cero overhead).
+
+En el server, simplemente no inicializar `UnifiedTracer`.
+
+---
+
+## Troubleshooting
+
+### "No events in trace file"
+
+- Verificar que `trace_init()` no devolvió NULL
+- Verificar permisos de `/tmp/` en la board
+- Ver logs de stderr: `trace: initialized → /tmp/fw_trace.jsonl`
+
+### "Timestamps desfasados entre firmware y server"
+
+Normal - cada proceso tiene su propio `t=0`. Perfetto maneja esto automáticamente mostrándolos en tracks separados.
+
+### "Trace file muy grande"
+
+- Instrumentar solo eventos clave (no loops muy frecuentes)
+- Capturar traces cortos (10-30 segundos)
+- Disable en producción con `CONFIG_TRACE_ENABLED (0)`
+
+---
+
+## Referencias
+
+- Chrome Trace Format: https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/
+- Perfetto UI: https://ui.perfetto.dev
+- Trace Viewer: chrome://tracing

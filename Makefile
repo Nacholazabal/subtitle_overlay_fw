@@ -25,6 +25,7 @@ COMMON_CFLAGS := \
 	-Isrc/app \
 	-Isrc/utils/log \
 	-Isrc/utils/number_parse \
+	-Isrc/utils/trace \
 	-Isrc/svc/system \
 	-Isrc/hal/subtitle_bram \
 	-Isrc/hal/subtitle_overlay \
@@ -89,6 +90,7 @@ VIDEO_PORT_SRCS := \
 	src/hal/subtitle_overlay/subtitle_overlay.c \
 	src/utils/log/log.c \
 	src/utils/number_parse/number_parse.c \
+	src/utils/trace/trace.c \
 	src/app/app.c \
 	src/svc/system/SystemAO.c \
 	src/svc/stt/SttAO.c \
