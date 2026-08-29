@@ -128,25 +128,52 @@ with TraceScope(tracer, "gpu_inference", model="nemotron"):
 
 ## Puntos de instrumentación recomendados
 
-### **Firmware (C)**
+### **Pipeline crítico (audio → subtitle display)**
 
-| Ubicación | Evento | Tipo |
-|-----------|--------|------|
-| `usb_audio_stream.c` | `audio_chunk_rx` | Instant |
-| `stt_ws_client.c` | `ws_frame_rx` | Instant |
-| `SttAO.c` | `transcript_rx` | Instant |
-| `SubtitleAO.c` | `subtitle_render` | Duration |
-| `subtitle_bram.c` | `bram_write` | Duration |
-| `SubtitleAO.c` | `overlay_enable` | Instant |
+Estos son **los más importantes** — capturan la latencia end-to-end del pipeline de subtítulos.
 
-### **Server (Python)**
+#### **Firmware (C)**
 
-| Ubicación | Evento | Tipo |
-|-----------|--------|------|
-| `bridge.py` | `board_audio_rx` | Instant |
-| `bridge.py` | `ws_send_audio` | Instant |
-| `nemotron.py` | `gpu_inference` | Duration |
-| `bridge.py` | `transcript_emit` | Instant |
+| Ubicación | Evento | Tipo | Qué mide |
+|-----------|--------|------|----------|
+| `usb_audio_stream.c` | `audio_chunk_capture` | Instant | **T₀**: Audio sale del USB |
+| `usb_audio_stream.c` | `audio_ws_send` | Instant | Audio → WebSocket |
+| `stt_ws_client.c` | `transcript_ws_rx` | Instant | Respuesta STT llega |
+| `SttAO.c` | `transcript_parsed` | Instant | JSON → texto limpio |
+| `SubtitleAO.c` | `subtitle_render` | Duration | Render completo (font + layout) |
+| `SubtitleAO.c` | `subtitle_display` | Instant | **T_final**: Visible en HDMI |
+
+#### **Server (Python)**
+
+| Ubicación | Evento | Tipo | Qué mide |
+|-----------|--------|------|----------|
+| `bridge.py` | `board_audio_rx` | Instant | Audio llega del board |
+| `bridge.py` | `gpu_queue` | Instant | Audio → cola GPU |
+| `nemotron.py` | `gpu_inference` | Duration | **Bottleneck GPU** (~800-1200ms) |
+| `bridge.py` | `transcript_emit` | Instant | Resultado → board |
+
+---
+
+### **Contexto adicional (sistema general)**
+
+Estos puntos dan visibilidad del resto del sistema sin ser abrumadores.
+
+#### **Firmware (C)**
+
+| Ubicación | Evento | Tipo | Para qué |
+|-----------|--------|------|----------|
+| `VideoAO.c` | `video_mode_detect` | Instant | Cambios de resolución HDMI |
+| `VideoAO.c` | `video_frame_complete` | Instant | Frame procesado (cada 16ms @ 60Hz) |
+| `SystemAO.c` | `qpc_event_dispatch` | Instant | Eventos QP/C (carga del event loop) |
+| `stt_ws_client.c` | `ws_connect` / `ws_disconnect` | Instant | Conexiones WebSocket |
+| `subtitle_bram.c` | `bram_write` | Duration | Escritura a BRAM (debería ser <1ms) |
+
+#### **Server (Python)**
+
+| Ubicación | Evento | Tipo | Para qué |
+|-----------|--------|------|----------|
+| `bridge.py` | `ws_connection` | Instant | Board conecta/desconecta |
+| `bridge.py` | `audio_queue_overflow` | Instant | Si se pierde audio por overflow |
 
 ---
 
