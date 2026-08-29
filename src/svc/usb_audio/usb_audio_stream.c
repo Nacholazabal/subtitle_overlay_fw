@@ -19,6 +19,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include <time.h>
 #include <unistd.h>
 
+#include "app.h"
 #include "errorno.h"
 #include "log.h"
 #include "number_parse.h"
@@ -171,6 +172,12 @@ static void* capture_thread_main(void* const arg)
                                               sizeof(chunk.payload),
                                               &bytes_read);
 
+        // TRACE: Audio chunk captured from USB (T₀ of pipeline)
+        if ((status == 0) && (g_trace != NULL))
+        {
+            TRACE_INSTANT(g_trace, "audio_chunk_capture", "\"bytes\":%zu", bytes_read);
+        }
+
         if (status != 0)
         {
             if (status == -ECANCELED)
@@ -208,6 +215,14 @@ static void* capture_thread_main(void* const arg)
         }
         chunk.sequence = stream_next_sequence(stream);
         chunk.bytes_used = (uint32_t)bytes_read;
+
+        // TRACE: Audio chunk sent to STT WebSocket
+        if (g_trace != NULL)
+        {
+            TRACE_INSTANT(g_trace, "audio_ws_send", "\"seq\":%lu,\"bytes\":%lu",
+                          (unsigned long)chunk.sequence, (unsigned long)chunk.bytes_used);
+        }
+
         if ((client == NULL)
             || (stt_ws_client_submit_audio(client,
                                            chunk.payload,

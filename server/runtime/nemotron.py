@@ -61,6 +61,12 @@ from server.runtime.captions import (
     resample_to_16k,
 )
 
+try:
+    from server.runtime.unified_trace import UnifiedTracer, TraceScope
+    _TRACE_AVAILABLE = True
+except ImportError:
+    _TRACE_AVAILABLE = False
+
 
 # --- Provenance / pinned experiment identity -------------------------------
 
@@ -1083,6 +1089,8 @@ class NemotronPipelineStream:
         if self.frame_samples <= 0:
             raise ValueError(f"invalid NeMo chunk size: {pipeline.chunk_size_in_secs!r}")
         self._options = None
+        # Initialize unified tracing for GPU inference profiling
+        self.tracer = UnifiedTracer(source="nemotron") if _TRACE_AVAILABLE else None
 
     def _build_options(self):
         from nemo.collections.asr.inference.streaming.framing.request_options import ASRRequestOptions
@@ -1119,7 +1127,13 @@ class NemotronPipelineStream:
             # Upstream MonoStream only attaches options to the first frame.
             options=self._options if is_first else None,
         )
-        return self.pipeline.transcribe_step([frame])
+
+        # TRACE: GPU inference (the bottleneck)
+        if self.tracer and _TRACE_AVAILABLE:
+            with TraceScope(self.tracer, "gpu_inference", samples=len(samples)):
+                return self.pipeline.transcribe_step([frame])
+        else:
+            return self.pipeline.transcribe_step([frame])
 
 
 class SharedNemotronModel:

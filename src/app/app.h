@@ -17,6 +17,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include "qpc.h"
 
 #include "errorno.h"
+#include "trace.h"
 
 // === C++ Guard =================================================================================================== //
 
@@ -106,6 +107,9 @@ typedef struct
 
 /// @brief Opaque handle used to post events to system_ao_t.
 extern QActive* const AO_System;
+
+/// @brief Global trace context for performance profiling (initialized in main)
+extern trace_ctx_t* g_trace;
 
 // === Public function declarations ================================================================================ //
 

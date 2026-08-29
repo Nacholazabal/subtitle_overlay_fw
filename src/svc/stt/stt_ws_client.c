@@ -19,6 +19,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include <time.h>
 #include <unistd.h>
 
+#include "app.h"
 #include "log.h"
 #include "stt_session_json.h"
 #include "stt_transcript_parse.h"
@@ -644,6 +645,13 @@ static int handle_frame(stt_ws_client_t* const client, stt_ws_frame_t const* con
 
     client->msg[client->msg_used] = '\0';
     client->msg_used = 0U;
+
+    // TRACE: Transcript WebSocket frame received
+    if (g_trace != NULL)
+    {
+        TRACE_INSTANT(g_trace, "transcript_ws_rx", "\"bytes\":%zu", client->msg_used);
+    }
+
     return handle_text_message(client, client->msg);
 }
 

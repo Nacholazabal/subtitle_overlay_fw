@@ -18,6 +18,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include <stdlib.h>
 
 #include "log.h"
+#include "trace.h"
 #include "SttAO.h"
 #include "SubtitleAO.h"
 #include "SystemAO.h"
@@ -62,6 +63,10 @@ static void app_install_signal_handlers(void);
 static void app_shutdown_signal_handler(int signal_number);
 
 // === Public variable definitions ================================================================================= //
+
+/// Global trace context for performance profiling
+trace_ctx_t* g_trace = NULL;
+
 // === Private variable definitions ================================================================================ //
 // === Private function implementation ============================================================================= //
 
@@ -186,11 +191,23 @@ int main(void)
     (void)log_subscribe(app_log_output, LOG_LEVEL_INFO);
     LOG_INFO("app: starting subtitle overlay firmware");
 
+    // Initialize unified tracing (outputs to /tmp/fw_trace.jsonl)
+    g_trace = trace_init(NULL);
+    if (!g_trace)
+    {
+        LOG_WARN("app: tracing disabled (failed to init)");
+    }
+
     QF_init();
     app_install_signal_handlers();
     bsp_init_placeholder();
     app_init();
-    return QF_run();
+
+    int const ret = QF_run();
+
+    // Cleanup
+    trace_close(g_trace);
+    return ret;
 }
 
 // === QP/C POSIX callbacks ======================================================================================== //

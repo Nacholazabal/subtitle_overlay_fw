@@ -40,6 +40,7 @@ from server.runtime.protocol import (
     make_session_start,
     validate_backend_config,
 )
+from server.runtime.unified_trace import UnifiedTracer
 
 
 def board_drop_delta(start, end):
@@ -141,6 +142,8 @@ class StreamingBridge:
         self.session_summary = {}
         self.forward_summary = {}
         self.subtitle_delivery_summary = {}
+        # Initialize unified tracing for performance profiling
+        self.tracer = UnifiedTracer(source="bridge")
 
     async def run(self):
         server = await asyncio.start_server(self._handle_board, self.args.host, self.args.port)
@@ -331,6 +334,10 @@ class StreamingBridge:
             payload = await read_exactly(reader, payload_bytes)
             payload_received_at = time.monotonic()
             payload_received_wall = time.time()
+
+            # TRACE: Audio chunk received from board
+            self.tracer.instant("board_audio_rx", seq=int(seq), bytes=int(payload_bytes))
+
             if first_timestamp_ns is None:
                 first_timestamp_ns = timestamp_ns
                 audio_start_monotonic = payload_received_at
@@ -402,6 +409,11 @@ class StreamingBridge:
                 message = decode_json_message(raw)
                 msg_type = message.get("type")
                 if msg_type == MESSAGE_TRANSCRIPT:
+                    # TRACE: Transcript received and forwarding to board
+                    self.tracer.instant("transcript_emit",
+                                       seq=message.get("seq"),
+                                       text=message.get("text", "")[:40],
+                                       is_final=message.get("is_final"))
                     self.bridge_sink.handle_event(message)
                 elif msg_type == MESSAGE_SESSION_SUMMARY:
                     self.session_summary = {
