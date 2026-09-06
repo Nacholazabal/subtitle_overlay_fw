@@ -50,6 +50,7 @@ tar \
     -cf - . | ssh_vm "tar -xf - -C '${REMOTE_PROJECT_DIR}'"
 
 step "Building ${APP_TARGET} inside the VM"
+TRACE_FLAG="${TRACE:-0}"
 ssh_vm "cat > /tmp/subtitle_overlay_fw_build.sh <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -64,7 +65,7 @@ set -u
 echo \"PATH=\${PATH}\"
 command -v '${REMOTE_CC}' || true
 make clean-app
-make app CC='${REMOTE_CC}' STRIP='${REMOTE_STRIP}' PETALINUX_PROJECT='${VM_PETALINUX_PROJECT}'
+make app CC='${REMOTE_CC}' STRIP='${REMOTE_STRIP}' PETALINUX_PROJECT='${VM_PETALINUX_PROJECT}' TRACE=${TRACE_FLAG}
 if command -v readelf >/dev/null 2>&1; then
     readelf -V '${REMOTE_BINARY}' | grep GLIBC || true
 fi
