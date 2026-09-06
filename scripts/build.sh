@@ -51,7 +51,7 @@ tar \
 
 step "Building ${APP_TARGET} inside the VM"
 TRACE_FLAG="${TRACE:-0}"
-ssh_vm "cat > /tmp/subtitle_overlay_fw_build.sh <<'EOF'
+ssh_vm "cat > /tmp/subtitle_overlay_fw_build.sh <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 cd '${REMOTE_PROJECT_DIR}'
