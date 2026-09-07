@@ -40,10 +40,13 @@ COMMON_CFLAGS := \
 	-Isrc/svc/usb_audio \
 	-Isrc/svc/video_pipeline
 
-# Enable unified tracing for performance profiling
+# Enable unified tracing for performance profiling. BUILD_ID is stamped into the
+# trace metadata so a capture can be tied back to the exact firmware that made it.
 TRACE ?= 0
+BUILD_ID ?= unknown
 ifeq ($(TRACE),1)
 COMMON_CFLAGS += -DCONFIG_TRACE_ENABLED=1
+COMMON_CFLAGS += -DFW_BUILD_ID=\"$(BUILD_ID)\"
 endif
 
 USB_AUDIO_ENABLE_ALSA ?= 1

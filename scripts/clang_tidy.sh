@@ -27,6 +27,7 @@ COMMON_FLAGS=(
     -Isrc/app
     -Isrc/utils/log
     -Isrc/utils/number_parse
+    -Isrc/utils/trace
     -Isrc/svc/system
     -Isrc/hal/subtitle_bram
     -Isrc/hal/subtitle_overlay
@@ -51,6 +52,7 @@ mapfile -t SOURCES < <(
         'src/svc/**/*.c' \
         'src/utils/log/*.c' \
         'src/utils/number_parse/*.c' \
+        'src/utils/trace/*.c' \
         ':!:src/bsp/**' |
     sort
 )

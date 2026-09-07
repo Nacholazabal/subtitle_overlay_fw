@@ -235,6 +235,26 @@ the warning flags in CI. It was checked by hand in the VM when this landed — a
 `make app` (the shipping build) is warning-free there too. If that `#ifdef` grows,
 re-check it in the VM rather than trusting the CI job alone.
 
+### SRC-D09 — two tracer symbols are kept without a production caller
+
+`trace_flush()` and `trace_get_stats()` are exported by `src/utils/trace/trace.h`
+but nothing in `src/` calls them, so the ARCH-06 guard reports them.
+
+They are kept deliberately:
+
+- `trace_get_stats()` is how a capture proves it lost nothing. The same counters
+  are written into the file by `trace_close()` as the `trace_stats` record, so
+  production does not need to read them back — but the unit tests assert on them,
+  and the accessor is the only supported way to inspect a live tracer.
+- `trace_flush()` is the explicit checkpoint. Production does not need it: the
+  writer already flushes on a size threshold, on a 1 s timer, and on close, and
+  the 1 Hz health counters guarantee the timer keeps firing even when the audio
+  pipeline goes quiet. Removing it would leave tests unable to read the file
+  deterministically, and would remove the only way to force a snapshot.
+
+Deleting either would trade a real capability for a guard entry, so they stay
+listed in `scripts/dead_symbols.ignore` instead.
+
 ### ARCH-02-F4 — AO priorities follow rate-monotonic scheduling
 
 `src/app/app.c` assigns QP/C priorities to active objects based on their polling

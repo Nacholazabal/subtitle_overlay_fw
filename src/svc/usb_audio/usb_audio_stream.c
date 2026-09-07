@@ -154,6 +154,7 @@ static void* capture_thread_main(void* const arg)
     uint8_t first_read_pending = 1U;
 
     LOG_INFO("usb-audio: capture thread started");
+    TRACE_THREAD(g_trace, "usb-capture");
     if (client == NULL)
     {
         LOG_ERROR("usb-audio: STT client unavailable; captured PCM will be dropped");
@@ -165,20 +166,23 @@ static void* capture_thread_main(void* const arg)
         usb_audio_stream_chunk_t chunk;
         usb_audio_agc_metrics_t metrics;
         size_t bytes_read = 0U;
+        uint32_t dropped_before;
+        int enqueue_status;
         int status;
+        uint64_t const read_started_ns = TRACE_NOW();
 
         status = usb_audio_capture_read_chunk(&stream->capture,
                                               chunk.payload,
                                               sizeof(chunk.payload),
                                               &bytes_read);
 
-#if CONFIG_TRACE_ENABLED
-        // TRACE: Audio chunk captured from USB (T₀ of pipeline)
-        if ((status == 0) && (g_trace != NULL))
-        {
-            TRACE_INSTANT(g_trace, "audio_chunk_capture", "\"bytes\":%zu", bytes_read);
-        }
-#endif
+        // The slice covers the blocking wait, so a starved capture is visible as
+        // a long bar rather than inferred from the gap between two instants.
+        TRACE_SLICE(g_trace,
+                    "alsa_read",
+                    read_started_ns,
+                    TRACE_U64("bytes", (uint64_t)bytes_read),
+                    TRACE_I64("status", status));
 
         if (status != 0)
         {
@@ -217,23 +221,38 @@ static void* capture_thread_main(void* const arg)
         }
         chunk.sequence = stream_next_sequence(stream);
         chunk.bytes_used = (uint32_t)bytes_read;
+        dropped_before = stream_get_total_dropped(stream);
 
-#if CONFIG_TRACE_ENABLED
-        // TRACE: Audio chunk sent to STT WebSocket
-        if (g_trace != NULL)
-        {
-            TRACE_INSTANT(g_trace, "audio_ws_send", "\"seq\":%lu,\"bytes\":%lu",
-                          (unsigned long)chunk.sequence, (unsigned long)chunk.bytes_used);
-        }
-#endif
+        // PCM is metered and stamped here; this is the earliest point a chunk can
+        // be correlated with the copy the server will receive.
+        //
+        // capture_seq counts every chunk read since the process started, whereas
+        // the protocol's audio_seq restarts at zero on each STT session. They are
+        // deliberately different names because they are different numbers;
+        // capture_ts_ns is what correlates a chunk across the two traces.
+        TRACE_INSTANT(g_trace,
+                      "audio_chunk_ready",
+                      TRACE_U64("capture_seq", chunk.sequence),
+                      TRACE_U64("capture_ts_ns", chunk.timestamp_ns),
+                      TRACE_U64("bytes", chunk.bytes_used),
+                      TRACE_U64("dropped", dropped_before));
 
-        if ((client == NULL)
-            || (stt_ws_client_submit_audio(client,
-                                           chunk.payload,
-                                           chunk.bytes_used,
-                                           chunk.timestamp_ns,
-                                           stream_get_total_dropped(stream))
-                != 0))
+        enqueue_status = (client == NULL) ? -ENODEV
+                                          : stt_ws_client_submit_audio(client,
+                                                                       chunk.payload,
+                                                                       chunk.bytes_used,
+                                                                       chunk.timestamp_ns,
+                                                                       dropped_before);
+
+        // Recording the outcome is what makes captured == enqueued + drops
+        // checkable from the trace alone.
+        TRACE_INSTANT(g_trace,
+                      "audio_enqueue",
+                      TRACE_U64("capture_seq", chunk.sequence),
+                      TRACE_U64("capture_ts_ns", chunk.timestamp_ns),
+                      TRACE_I64("status", enqueue_status));
+
+        if (enqueue_status != 0)
         {
             stream_add_dropped(stream, 1U);
         }

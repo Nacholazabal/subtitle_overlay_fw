@@ -133,6 +133,13 @@ void stt_audio_txq_wait(stt_audio_txq_t* txq, uint32_t timeout_ms);
  */
 uint32_t stt_audio_txq_get_dropped_count(stt_audio_txq_t* txq);
 
+/**
+ * @brief Get the number of chunks currently waiting for transmission.
+ * @param txq Queue instance.
+ * @return Pending chunk count, or 0 when @p txq is NULL.
+ */
+uint32_t stt_audio_txq_get_count(stt_audio_txq_t* txq);
+
 // === End of documentation ======================================================================================== //
 
 #ifdef __cplusplus

@@ -46,6 +46,7 @@ from server.runtime.nemotron import (
     transcribe_offline_float32,
 )
 from server.runtime.captions import pcm_s16le_to_float32
+from server.runtime.unified_trace import create_tracer
 from server.runtime.protocol import (
     MESSAGE_ERROR,
     MESSAGE_PING,
@@ -339,9 +340,14 @@ def create_app(config: ServerConfig, *, backend_state=None):
     app.state.config = config
     app.state.backend_state = backend_state or BackendState(config)
     app.state.sessions = SingleSessionManager()
+    # One tracer per server run, owned here: sessions borrow it and never open or
+    # truncate the file. Returns a no-op tracer unless SUBTITLE_TRACE=1.
+    app.state.tracer = create_tracer(source="colab", build_id=NEMO_COMMIT[:12])
+    app.state.session_counter = 0
 
     @app.on_event("startup")
     async def startup():
+        app.state.tracer.register_thread("fastapi-loop")
         # If a caller (e.g. the Colab notebook) already loaded and warmed the model
         # synchronously before creating the app, do not reload it.
         if not app.state.backend_state.is_ready():
@@ -352,6 +358,12 @@ def create_app(config: ServerConfig, *, backend_state=None):
             f"lookahead={config.backend.latency_ms}ms device={config.device}",
             flush=True,
         )
+
+    @app.on_event("shutdown")
+    async def shutdown():
+        # Closing here is what flushes the tail of the run and writes the
+        # tracer's own drop counters into the file.
+        app.state.tracer.close()
 
     @app.get("/health")
     async def health():
@@ -404,6 +416,11 @@ def create_app(config: ServerConfig, *, backend_state=None):
             return
 
         session = None
+        tracer = app.state.tracer
+        app.state.session_counter += 1
+        session_id = f"{app.state.session_counter}"
+        close_reason = "disconnect"
+        last_counter_sample = 0.0
         try:
             first = await websocket.receive_text()
             session_start = decode_json_message(first)
@@ -413,6 +430,14 @@ def create_app(config: ServerConfig, *, backend_state=None):
             session = shared_model.build_session(
                 session_config, source_rate=int(session_start.get("sample_rate_hz", TARGET_RATE))
             )
+            session.attach_tracer(tracer)
+            tracer.instant(
+                "session_open",
+                session_id=session_id,
+                sample_rate_hz=int(session_start.get("sample_rate_hz", TARGET_RATE)),
+                target_lang=session_config.target_lang,
+                latency_ms=session_config.latency_ms,
+            )
             await websocket.send_text(encode_json_message(session_ready_message(session_start, session_config)))
 
             while True:
@@ -421,9 +446,46 @@ def create_app(config: ServerConfig, *, backend_state=None):
                     break
                 if message.get("bytes") is not None:
                     frame = decode_audio_frame(message["bytes"])
-                    for event in await asyncio.to_thread(session.push_pcm, frame.payload):
+                    # The board's audio_seq and capture stamp travel in the frame
+                    # header, so no separate correlation id is needed.
+                    tracer.instant(
+                        "audio_frame_rx",
+                        session_id=session_id,
+                        audio_seq=frame.seq,
+                        board_capture_ts_ns=frame.timestamp_ns,
+                        bytes=len(frame.payload),
+                        board_dropped=frame.dropped,
+                    )
+                    for event in await asyncio.to_thread(
+                        session.push_pcm,
+                        frame.payload,
+                        audio_seq=frame.seq,
+                        capture_ts_ns=frame.timestamp_ns,
+                    ):
                         event["server_sent_monotonic"] = round(time.monotonic(), 6)
+                        tracer.instant(
+                            "transcript_emit",
+                            session_id=session_id,
+                            transcript_seq=event.get("seq"),
+                            is_final=event.get("is_final"),
+                            end_sec=event.get("end_sec"),
+                            text_chars=len(event.get("text", "")),
+                            reason=event.get("final_reason", ""),
+                        )
                         await websocket.send_text(encode_json_message(event))
+
+                    now = time.monotonic()
+                    if (now - last_counter_sample) >= 1.0:
+                        last_counter_sample = now
+                        tracer.counter(
+                            "server_health",
+                            chunks_received=session.chunks_received,
+                            streaming_steps=session.streaming_steps,
+                            buffered_samples=session.buffered_samples,
+                            max_backlog_samples=session.max_backlog_samples,
+                            infer_wall_sec=round(session.infer_wall_sec, 3),
+                            session_errors=session.session_errors,
+                        )
                     continue
                 if message.get("text") is not None:
                     control = decode_json_message(message["text"])
@@ -431,8 +493,18 @@ def create_app(config: ServerConfig, *, backend_state=None):
                     if msg_type == MESSAGE_PING:
                         await websocket.send_text(encode_json_message({"type": MESSAGE_PONG}))
                     elif msg_type == MESSAGE_SESSION_END:
+                        close_reason = "session_end"
                         for event in await asyncio.to_thread(session.flush):
                             event["server_sent_monotonic"] = round(time.monotonic(), 6)
+                            tracer.instant(
+                                "transcript_emit",
+                                session_id=session_id,
+                                transcript_seq=event.get("seq"),
+                                is_final=event.get("is_final"),
+                                end_sec=event.get("end_sec"),
+                                text_chars=len(event.get("text", "")),
+                                reason=event.get("final_reason", "flush"),
+                            )
                             await websocket.send_text(encode_json_message(event))
                         await websocket.send_text(
                             encode_json_message({"type": MESSAGE_SESSION_SUMMARY, **session.stats_snapshot()})
@@ -445,6 +517,7 @@ def create_app(config: ServerConfig, *, backend_state=None):
         except WebSocketDisconnect:
             pass
         except Exception as exc:  # noqa: BLE001 - report then continue serving
+            close_reason = "error"
             try:
                 await websocket.send_text(
                     encode_json_message({"type": MESSAGE_ERROR, "message": _sanitize_error(exc)})
@@ -458,6 +531,15 @@ def create_app(config: ServerConfig, *, backend_state=None):
                     session.close()
                 except Exception as exc:  # noqa: BLE001
                     print(f"Nemotron session close error: {exc}", flush=True)
+            tracer.instant(
+                "session_close",
+                session_id=session_id,
+                reason=close_reason,
+                chunks_received=getattr(session, "chunks_received", 0),
+                streaming_steps=getattr(session, "streaming_steps", 0),
+            )
+            # Bound the loss if the process is killed before shutdown runs.
+            tracer.flush()
             app.state.sessions.release()
 
     return app

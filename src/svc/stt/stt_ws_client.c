@@ -45,6 +45,9 @@ static void put_u32_be(uint8_t* out, uint32_t value);
 static void enter_backoff(stt_ws_client_t* client, char const* reason);
 static void drop_session(stt_ws_client_t* client, char const* reason);
 static void client_set_state(stt_ws_client_t* client, stt_ws_state_e state);
+static void client_set_state_reason(stt_ws_client_t* client,
+                                    stt_ws_state_e state,
+                                    char const* reason);
 static void client_stats_inc(stt_ws_client_t* client, uint32_t* counter);
 static void* worker_main(void* arg);
 static int send_frame(stt_ws_client_t* client,
@@ -175,9 +178,39 @@ static void put_u32_be(uint8_t* const out, uint32_t value)
 
 static void client_set_state(stt_ws_client_t* const client, stt_ws_state_e const state)
 {
+    client_set_state_reason(client, state, NULL);
+}
+
+/** @brief Move to @p state and record the transition on the network track. */
+static void client_set_state_reason(stt_ws_client_t* const client,
+                                    stt_ws_state_e const state,
+                                    char const* const reason)
+{
+#if CONFIG_TRACE_ENABLED
+    stt_ws_state_e previous;
+#endif
+
     pthread_mutex_lock(&client->lock);
+#if CONFIG_TRACE_ENABLED
+    previous = client->state;
+#endif
     client->state = state;
     pthread_mutex_unlock(&client->lock);
+
+#if CONFIG_TRACE_ENABLED
+    // Connect/backoff/reconnect churn explains latency spikes that look like
+    // inference stalls from the outside.
+    if (previous != state)
+    {
+        TRACE_INSTANT(g_trace,
+                      "ws_state",
+                      TRACE_STR("from", stt_ws_client_state_name(previous)),
+                      TRACE_STR("to", stt_ws_client_state_name(state)),
+                      TRACE_STR("reason", (reason != NULL) ? reason : ""));
+    }
+#else
+    (void)reason;
+#endif
 }
 
 static void client_stats_inc(stt_ws_client_t* const client, uint32_t* const counter)
@@ -192,6 +225,9 @@ static void enter_backoff(stt_ws_client_t* const client, char const* const reaso
 {
     uint32_t const min_ms = client->config.backoff_min_ms;
     uint32_t const max_ms = client->config.backoff_max_ms;
+#if CONFIG_TRACE_ENABLED
+    stt_ws_state_e previous;
+#endif
     uint32_t jitter;
 
     pthread_mutex_lock(&client->lock);
@@ -208,9 +244,19 @@ static void enter_backoff(stt_ws_client_t* const client, char const* const reaso
     // Jitter keeps a board that reboots in a loop from hammering the same
     // instant, and spreads retries if the server restarts.
     jitter = (client->backoff_ms > 8U) ? (random_u32() % (client->backoff_ms / 4U)) : 0U;
+#if CONFIG_TRACE_ENABLED
+    previous = client->state;
+#endif
     client->state = STT_WS_STATE_BACKOFF;
     client->next_attempt_ms = now_ms() + (uint64_t)client->backoff_ms + (uint64_t)jitter;
     pthread_mutex_unlock(&client->lock);
+
+    TRACE_INSTANT(g_trace,
+                  "ws_state",
+                  TRACE_STR("from", stt_ws_client_state_name(previous)),
+                  TRACE_STR("to", stt_ws_client_state_name(STT_WS_STATE_BACKOFF)),
+                  TRACE_STR("reason", reason),
+                  TRACE_U64("retry_in_ms", (uint64_t)(client->backoff_ms + jitter)));
 
     LOG_WARNING("stt-ws: %s; retrying in %lu ms", reason,
                 (unsigned long)(client->backoff_ms + jitter));
@@ -460,7 +506,7 @@ static int ensure_connected(stt_ws_client_t* const client)
     {
         net_tls_close(client->conn);
         client->conn = NULL;
-        client_set_state(client, STT_WS_STATE_IDLE);
+        client_set_state_reason(client, STT_WS_STATE_IDLE, "stop requested");
         return -ECANCELED;
     }
 
@@ -474,7 +520,7 @@ static int ensure_connected(stt_ws_client_t* const client)
     {
         net_tls_close(client->conn);
         client->conn = NULL;
-        client_set_state(client, STT_WS_STATE_IDLE);
+        client_set_state_reason(client, STT_WS_STATE_IDLE, "stop requested");
         return -ECANCELED;
     }
 
@@ -494,12 +540,59 @@ static int ensure_connected(stt_ws_client_t* const client)
     return 0;
 }
 
+#if CONFIG_TRACE_ENABLED
+/**
+ * @brief Read the transcript sequence number without a second full JSON parse.
+ *
+ * The authoritative parse happens later, on the QP/C thread. This scan exists so
+ * the network thread can stamp the sequence onto the arrival event, which is what
+ * closes the chain server emit -> board decode -> dispatch -> overlay.
+ */
+static uint32_t transcript_seq_of(char const* const line)
+{
+    static char const key[] = "\"seq\":";
+    char const* cursor = strstr(line, key);
+    uint32_t value = 0U;
+    uint8_t digits = 0U;
+
+    if (cursor == NULL)
+    {
+        return 0U;
+    }
+
+    cursor += sizeof(key) - 1U;
+    while ((*cursor == ' ') || (*cursor == '\t'))
+    {
+        cursor++;
+    }
+
+    // Ten digits cover UINT32_MAX; anything longer is malformed, not a sequence.
+    while ((*cursor >= '0') && (*cursor <= '9') && (digits < 10U))
+    {
+        value = (value * 10U) + (uint32_t)(*cursor - '0');
+        cursor++;
+        digits++;
+    }
+
+    return value;
+}
+#endif
+
 /** @brief Buffer one transcript line for the QP/C thread, shedding partials first. */
 static void push_event(stt_ws_client_t* const client, char const* const line, size_t length)
 {
     uint8_t const is_final = (strstr(line, "\"is_final\":true") != NULL) ? 1U : 0U;
 
     stt_event_ring_push(&client->event_ring, line, length);
+
+    // Emitted after the message type is known, so control frames are not counted
+    // as transcripts, and with the real payload size.
+    TRACE_INSTANT(g_trace,
+                  "transcript_decoded",
+                  TRACE_U64("transcript_seq", transcript_seq_of(line)),
+                  TRACE_U64("bytes", (uint64_t)length),
+                  TRACE_BOOL("is_final", is_final),
+                  TRACE_U64("ring_depth", (uint64_t)stt_event_ring_get_count(&client->event_ring)));
 
     client_stats_inc(client, &client->stats.transcripts_received);
     if (is_final != 0U)
@@ -536,6 +629,13 @@ static int handle_text_message(stt_ws_client_t* const client, char const* const 
         client->backoff_ms = 0U;
         client->audio_seq = 0U;
         pthread_mutex_unlock(&client->lock);
+
+        TRACE_INSTANT(g_trace,
+                      "ws_state",
+                      TRACE_STR("from", stt_ws_client_state_name(STT_WS_STATE_STARTING)),
+                      TRACE_STR("to", stt_ws_client_state_name(STT_WS_STATE_READY)),
+                      TRACE_STR("reason", "session_ready"));
+
         stt_audio_txq_discard_all(&client->audio_txq);
         // The negotiated configuration is the one the run must be judged by.
         LOG_INFO("stt-ws: engine=%s effective run_config=%s%s", ready.run_engine, ready.run_config,
@@ -645,14 +745,6 @@ static int handle_frame(stt_ws_client_t* const client, stt_ws_frame_t const* con
 
     client->msg[client->msg_used] = '\0';
     client->msg_used = 0U;
-
-#if CONFIG_TRACE_ENABLED
-    // TRACE: Transcript WebSocket frame received
-    if (g_trace != NULL)
-    {
-        TRACE_INSTANT(g_trace, "transcript_ws_rx", "\"bytes\":%zu", client->msg_used);
-    }
-#endif
 
     return handle_text_message(client, client->msg);
 }
@@ -830,6 +922,7 @@ static void* worker_main(void* const arg)
     uint8_t stop;
 
     LOG_INFO("stt-ws: network worker started");
+    TRACE_THREAD(g_trace, "stt-network");
     stt_audio_txq_worker_started(&client->audio_txq);
 
     pthread_mutex_lock(&client->lock);
@@ -1049,6 +1142,8 @@ static int send_audio_chunk(stt_ws_client_t* const client,
                              uint32_t dropped)
 {
     uint8_t payload[STT_WS_AUDIO_HEADER_BYTES + 2048U];
+    uint64_t send_started_ns;
+    uint32_t audio_seq;
     int status;
 
     if ((client == NULL) || (client->initialized == 0U) || (pcm == NULL) || (size == 0U)
@@ -1064,13 +1159,29 @@ static int send_audio_chunk(stt_ws_client_t* const client,
         return status;
     }
 
+    audio_seq = client->audio_seq;
+
     // Header layout mirrors protocol.py CHUNK_HEADER "!QQI".
-    put_u64_be(&payload[0], (uint64_t)client->audio_seq);
+    put_u64_be(&payload[0], (uint64_t)audio_seq);
     put_u64_be(&payload[8], timestamp_ns);
     put_u32_be(&payload[16], dropped);
     memcpy(&payload[STT_WS_AUDIO_HEADER_BYTES], pcm, size);
 
-    if (send_frame(client, STT_WS_OPCODE_BINARY, payload, STT_WS_AUDIO_HEADER_BYTES + size) != 0)
+    send_started_ns = TRACE_NOW();
+    status = send_frame(client, STT_WS_OPCODE_BINARY, payload,
+                        STT_WS_AUDIO_HEADER_BYTES + size);
+
+    // This slice, not the capture-thread enqueue, is the board's real network
+    // hand-off: it spans the TLS write for one chunk.
+    TRACE_SLICE(g_trace,
+                "audio_ws_send",
+                send_started_ns,
+                TRACE_U64("audio_seq", (uint64_t)audio_seq),
+                TRACE_U64("capture_ts_ns", timestamp_ns),
+                TRACE_U64("bytes", (uint64_t)size),
+                TRACE_I64("status", status));
+
+    if (status != 0)
     {
         client_stats_inc(client, &client->stats.chunks_dropped_tx);
         drop_session(client, "audio send failed");
@@ -1190,6 +1301,20 @@ stt_ws_state_e stt_ws_client_state(stt_ws_client_t* const client)
 }
 
 /** @brief Human-readable name of @p state. */
+void stt_ws_client_queue_depths(stt_ws_client_t* const client,
+                                uint32_t* const audio_depth,
+                                uint32_t* const event_depth)
+{
+    if (audio_depth != NULL)
+    {
+        *audio_depth = (client != NULL) ? stt_audio_txq_get_count(&client->audio_txq) : 0U;
+    }
+    if (event_depth != NULL)
+    {
+        *event_depth = (client != NULL) ? stt_event_ring_get_count(&client->event_ring) : 0U;
+    }
+}
+
 char const* stt_ws_client_state_name(stt_ws_state_e state)
 {
     char const* name;

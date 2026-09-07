@@ -49,6 +49,7 @@ typedef struct
     char current_text[SUBTITLE_AO_SLOT_MAX];
     uint32_t clear_timeout_ticks;
     uint32_t previous_hold_ticks;
+    uint32_t current_seq;
     uint8_t previous_visible;
     uint8_t current_valid;
     uint8_t current_is_final;
@@ -72,6 +73,7 @@ static int on_component_init(subtitle_ao_t* const me, component_init_evt_t const
 static int on_subtitle_text(subtitle_ao_t* const me, subtitle_text_evt_t const* const e);
 static int on_previous_expired(subtitle_ao_t* const me);
 static int render_current_state(subtitle_ao_t* const me);
+static int render_current_state_inner(subtitle_ao_t* const me, uint32_t* rendered_bytes);
 static void promote_current_to_previous(subtitle_ao_t* const me);
 static void reset_text_state(subtitle_ao_t* const me);
 static void clear_subtitle(subtitle_ao_t* const me);
@@ -279,19 +281,34 @@ static uint32_t resolve_previous_hold_ticks(void)
                                  SUBTITLE_AO_PREVIOUS_HOLD_MIN_MS);
 }
 
+/**
+ * @brief Time one render without letting any exit path escape the measurement.
+ *
+ * The work lives in render_current_state_inner() so that a complete slice is
+ * always emitted: an early return inside the render can no longer leave an
+ * unterminated slice that would corrupt the track in Perfetto.
+ */
 static int render_current_state(subtitle_ao_t* const me)
+{
+    uint64_t const started_ns = TRACE_NOW();
+    uint32_t rendered_bytes = 0U;
+    int const status = render_current_state_inner(me, &rendered_bytes);
+
+    TRACE_SLICE(g_trace,
+                "subtitle_render",
+                started_ns,
+                TRACE_U64("transcript_seq", me->current_seq),
+                TRACE_BOOL("is_final", me->current_is_final),
+                TRACE_U64("text_bytes", rendered_bytes),
+                TRACE_I64("status", status));
+
+    return status;
+}
+
+static int render_current_state_inner(subtitle_ao_t* const me, uint32_t* const rendered_bytes)
 {
     char render_text[SUBTITLE_AO_RENDER_MAX];
     int status;
-#if CONFIG_TRACE_ENABLED
-    uint64_t render_start = 0;
-
-    // TRACE: Begin subtitle render
-    if (g_trace != NULL)
-    {
-        render_start = TRACE_BEGIN(g_trace, "subtitle_render", NULL);
-    }
-#endif
 
     if ((me->previous_visible == 0U) && (me->current_valid == 0U))
     {
@@ -299,6 +316,24 @@ static int render_current_state(subtitle_ao_t* const me)
         if (status == 0)
         {
             status = subtitle_pipeline_enable(&me->pipeline, 0U);
+        }
+
+        // Separate names, not a status field: an analysis that forgets to filter
+        // then cannot mistake a failed write for a displayed caption.
+        if (status == 0)
+        {
+            TRACE_INSTANT(g_trace,
+                          "overlay_commit",
+                          TRACE_U64("transcript_seq", me->current_seq),
+                          TRACE_BOOL("enabled", 0));
+        }
+        else
+        {
+            TRACE_INSTANT(g_trace,
+                          "overlay_error",
+                          TRACE_U64("transcript_seq", me->current_seq),
+                          TRACE_BOOL("enabled", 0),
+                          TRACE_I64("status", status));
         }
         return status;
     }
@@ -316,27 +351,31 @@ static int render_current_state(subtitle_ao_t* const me)
         snprintf(render_text, sizeof(render_text), "%s", me->current_text);
     }
 
+    *rendered_bytes = (uint32_t)strlen(render_text);
+
     status = subtitle_pipeline_write_caption(&me->pipeline, render_text, me->current_is_final);
     if (status == 0)
     {
         status = subtitle_pipeline_enable(&me->pipeline, 1U);
-
-#if CONFIG_TRACE_ENABLED
-        // TRACE: Subtitle now visible on HDMI output (T_final)
-        if (g_trace != NULL)
-        {
-            TRACE_INSTANT(g_trace, "subtitle_display", "\"text\":\"%.40s\"", render_text);
-        }
-#endif
     }
 
-#if CONFIG_TRACE_ENABLED
-    // TRACE: End subtitle render
-    if ((g_trace != NULL) && (render_start != 0))
+    if (status == 0)
     {
-        TRACE_END(g_trace, "subtitle_render", render_start, NULL);
+        // The enable bit is written; the PL still has to scan the next frame out,
+        // so this is a logical commit and not proof of a visible pixel.
+        TRACE_INSTANT(g_trace,
+                      "overlay_commit",
+                      TRACE_U64("transcript_seq", me->current_seq),
+                      TRACE_BOOL("enabled", 1));
     }
-#endif
+    else
+    {
+        TRACE_INSTANT(g_trace,
+                      "overlay_error",
+                      TRACE_U64("transcript_seq", me->current_seq),
+                      TRACE_BOOL("enabled", 1),
+                      TRACE_I64("status", status));
+    }
 
     return status;
 }
@@ -366,6 +405,7 @@ static int on_subtitle_text(subtitle_ao_t* const me, subtitle_text_evt_t const* 
     snprintf(me->current_text, sizeof(me->current_text), "%s", e->text);
     me->current_valid = 1U;
     me->current_is_final = (e->is_final != 0U) ? 1U : 0U;
+    me->current_seq = e->seq;
 
     // DEBUG: runs per render and carries the whole caption.
     LOG_DEBUG("subtitle: rendering %s seq=%lu text=\"%s\"",

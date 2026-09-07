@@ -28,6 +28,7 @@
     - src/svc/video_pipeline/**
     - src/utils/log/**
     - src/utils/number_parse/**
+    - src/utils/trace/**
   :include:
     - linux/include/uapi
     - src/bsp/bsp_compat

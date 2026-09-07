@@ -11,3 +11,5 @@ subtitle_overlay_clear_sof    # HAL primitives for frame-sync deferred in ARCH-0
 subtitle_overlay_read_control # HAL primitives for frame-sync deferred in ARCH-03 F17a; see SRC-D04
 subtitle_overlay_wait_sof     # HAL primitives for frame-sync deferred in ARCH-03 F17a; see SRC-D04
 stt_ws_client_cleanup         # self-documented legacy shim; ARCH-05 replaces it
+trace_flush                   # tracer checkpoint API; only tests force a flush, see SRC-D09
+trace_get_stats               # tracer self-reporting; read by tests and diagnostics, see SRC-D09

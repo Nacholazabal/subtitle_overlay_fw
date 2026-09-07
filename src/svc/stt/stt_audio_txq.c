@@ -208,3 +208,18 @@ uint32_t stt_audio_txq_get_dropped_count(stt_audio_txq_t* const txq)
     pthread_mutex_unlock(&txq->lock);
     return dropped;
 }
+
+uint32_t stt_audio_txq_get_count(stt_audio_txq_t* const txq)
+{
+    uint32_t count;
+
+    if (txq == NULL)
+    {
+        return 0U;
+    }
+
+    pthread_mutex_lock(&txq->lock);
+    count = (uint32_t)txq->count;
+    pthread_mutex_unlock(&txq->lock);
+    return count;
+}

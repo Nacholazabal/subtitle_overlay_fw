@@ -18,6 +18,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include <stdlib.h>
 
 #include "log.h"
+#include "number_parse.h"
 #include "trace.h"
 #include "SttAO.h"
 #include "SubtitleAO.h"
@@ -26,6 +27,13 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include "VideoAO.h"
 
 // === Macros definitions ========================================================================================== //
+
+#if CONFIG_TRACE_ENABLED
+/// Stamped into the trace metadata; scripts/build.sh passes the git description.
+    #ifndef FW_BUILD_ID
+        #define FW_BUILD_ID "unknown"
+    #endif
+#endif
 
 #define APP_TICKS_PER_SEC      (100U)
 #define APP_EVENT_POOL_LEN     (64U)
@@ -61,6 +69,9 @@ static void app_init(void);
 static void app_log_output(log_level_e severity, const char* msg);
 static void app_install_signal_handlers(void);
 static void app_shutdown_signal_handler(int signal_number);
+#if CONFIG_TRACE_ENABLED
+static void app_trace_start(void);
+#endif
 
 // === Public variable definitions ================================================================================= //
 
@@ -115,6 +126,44 @@ static void app_install_signal_handlers(void)
     // peer reset is reported as an I/O error and reaches the reconnect path.
     (void)signal(SIGPIPE, SIG_IGN);
 }
+
+#if CONFIG_TRACE_ENABLED
+/**
+ * @brief Open the profiling trace and name the QP/C thread's track.
+ *
+ * The destination and the size cap are overridable so a long capture can be
+ * pointed at a larger filesystem than /tmp without another build.
+ */
+static void app_trace_start(void)
+{
+    trace_config_t config;
+    char const* const max_mb_text = getenv("SUBTITLE_TRACE_MAX_MB");
+    uint32_t max_mb = 0U;
+
+    memset(&config, 0, sizeof(config));
+    config.output_path = getenv("SUBTITLE_TRACE_PATH");
+    config.source = "board";
+    config.run_id = getenv("SUBTITLE_TRACE_RUN_ID");
+    config.build_id = FW_BUILD_ID;
+
+    if ((max_mb_text != NULL)
+        && (number_parse_u32(max_mb_text, strlen(max_mb_text), 1U, 4096U, &max_mb) == 0))
+    {
+        config.max_bytes = (uint64_t)max_mb * 1024ULL * 1024ULL;
+    }
+
+    g_trace = trace_init(&config);
+    if (g_trace == NULL)
+    {
+        LOG_WARNING("app: profiling trace disabled (could not open the trace file)");
+        return;
+    }
+
+    // QF_run() dispatches every active object on this thread.
+    TRACE_THREAD(g_trace, "qpc-main");
+    LOG_INFO("app: profiling trace enabled (build=%s)", FW_BUILD_ID);
+}
+#endif
 
 // === Public function implementation ============================================================================== //
 
@@ -192,12 +241,7 @@ int main(void)
     LOG_INFO("app: starting subtitle overlay firmware");
 
 #if CONFIG_TRACE_ENABLED
-    // Profiling builds emit firmware events to /tmp/fw_trace.jsonl.
-    g_trace = trace_init(NULL);
-    if (!g_trace)
-    {
-        LOG_WARNING("app: tracing disabled (failed to init)");
-    }
+    app_trace_start();
 #endif
 
     QF_init();

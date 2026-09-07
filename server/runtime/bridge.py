@@ -40,7 +40,7 @@ from server.runtime.protocol import (
     make_session_start,
     validate_backend_config,
 )
-from server.runtime.unified_trace import UnifiedTracer
+from server.runtime.unified_trace import create_tracer
 
 
 def board_drop_delta(start, end):
@@ -142,8 +142,9 @@ class StreamingBridge:
         self.session_summary = {}
         self.forward_summary = {}
         self.subtitle_delivery_summary = {}
-        # Initialize unified tracing for performance profiling
-        self.tracer = UnifiedTracer(source="bridge")
+        # The bridge is the evaluation path, not production. Its own source and
+        # file keep it from overwriting the board/server capture of a real run.
+        self.tracer = create_tracer(source="bridge")
 
     async def run(self):
         server = await asyncio.start_server(self._handle_board, self.args.host, self.args.port)
@@ -164,6 +165,7 @@ class StreamingBridge:
                 with contextlib.suppress(asyncio.CancelledError):
                     await stop_watcher
             self.bridge_sink.close()
+            self.tracer.close()
         if self.session_error is not None:
             raise RuntimeError(f"stream bridge session failed: {self.session_error}")
 
@@ -336,7 +338,7 @@ class StreamingBridge:
             payload_received_wall = time.time()
 
             # TRACE: Audio chunk received from board
-            self.tracer.instant("board_audio_rx", seq=int(seq), bytes=int(payload_bytes))
+            self.tracer.instant("board_audio_rx", audio_seq=int(seq), bytes=int(payload_bytes))
 
             if first_timestamp_ns is None:
                 first_timestamp_ns = timestamp_ns
@@ -410,10 +412,13 @@ class StreamingBridge:
                 msg_type = message.get("type")
                 if msg_type == MESSAGE_TRANSCRIPT:
                     # TRACE: Transcript received and forwarding to board
-                    self.tracer.instant("transcript_emit",
-                                       seq=message.get("seq"),
-                                       text=message.get("text", "")[:40],
-                                       is_final=message.get("is_final"))
+                    self.tracer.instant(
+                        "transcript_emit",
+                        transcript_seq=message.get("seq"),
+                        is_final=message.get("is_final"),
+                        end_sec=message.get("end_sec"),
+                        text_chars=len(message.get("text", "")),
+                    )
                     self.bridge_sink.handle_event(message)
                 elif msg_type == MESSAGE_SESSION_SUMMARY:
                     self.session_summary = {

@@ -15,6 +15,7 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/resource.h>
 
 #include "qpc.h"
 
@@ -31,6 +32,10 @@ Copyright (c) 2026 Ignacio Olazabal https://www.linkedin.com/in/ignacio-olazabal
 /// One metrics line every 5 s at a 10 ms poll: with the PC bridge gone this
 /// log is the only place the run's counters are recorded.
 #define STT_AO_METRICS_POLLS        (500U)
+#if CONFIG_TRACE_ENABLED
+/// Profiling counters are sampled once per second, not once per operation.
+    #define STT_AO_COUNTER_POLLS (100U)
+#endif
 #define STT_AO_MAX_EVENTS_PER_POLL  (4U)
 #define STT_AO_PARTIAL_EVENT_MARGIN (4U)
 #define STT_AO_FINAL_EVENT_MARGIN   (1U)
@@ -45,6 +50,7 @@ typedef struct
     stt_ws_client_t client_instance;  // Owned instance (no more singleton)
     stt_ws_client_t* client;          // Pointer to client_instance
     uint32_t polls_since_metrics;
+    uint32_t polls_since_counters;
     uint8_t running;
 } stt_ao_t;
 
@@ -65,6 +71,19 @@ static void post_stopped(stt_ao_t* const me);
 static int on_component_init(stt_ao_t* const me);
 static int on_poll(stt_ao_t* const me);
 static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e);
+static void emit_health_counters(stt_ao_t* me);
+#if CONFIG_TRACE_ENABLED
+static uint32_t visible_char_count(char const* text);
+static void trace_dispatch(subtitle_text_evt_t const* e, char const* outcome);
+#else
+/* A production build must not carry the helpers, only consume the arguments. */
+    #define trace_dispatch(event_, outcome_)                                                       \
+        do                                                                                         \
+        {                                                                                          \
+            (void)(event_);                                                                        \
+            (void)(outcome_);                                                                      \
+        } while (0)
+#endif
 static void log_metrics(stt_ao_t* const me);
 static void begin_stop(stt_ao_t* const me);
 static void complete_stop(stt_ao_t* const me);
@@ -214,7 +233,68 @@ static int on_poll(stt_ao_t* const me)
     }
 
     log_metrics(me);
+    emit_health_counters(me);
     return 0;
+}
+
+/**
+ * @brief Sample queue depths, drop counters and process CPU once per second.
+ *
+ * Counters answer "did the queues or the CPU fail to keep up?" without emitting
+ * an event per operation, which is what would distort the measurement.
+ */
+static void emit_health_counters(stt_ao_t* const me)
+{
+#if CONFIG_TRACE_ENABLED
+    stt_ws_client_stats_t stats;
+    uint32_t audio_depth = 0U;
+    uint32_t event_depth = 0U;
+
+    me->polls_since_counters++;
+    if (me->polls_since_counters < STT_AO_COUNTER_POLLS)
+    {
+        return;
+    }
+    me->polls_since_counters = 0U;
+
+    stt_ws_client_stats(me->client, &stats);
+    stt_ws_client_queue_depths(me->client, &audio_depth, &event_depth);
+
+    TRACE_COUNTER(g_trace,
+                  "pipeline_health",
+                  TRACE_U64("audio_txq_depth", audio_depth),
+                  TRACE_U64("event_ring_depth", event_depth),
+                  TRACE_U64("chunks_sent", stats.chunks_sent),
+                  TRACE_U64("chunks_dropped_tx", stats.chunks_dropped_tx),
+                  TRACE_U64("transcripts_final", stats.transcripts_final),
+                  TRACE_U64("transcripts_partial", stats.transcripts_partial),
+                  TRACE_U64("deliveries_accepted", stats.deliveries_accepted),
+                  TRACE_U64("dropped_pool", stats.deliveries_dropped_pool),
+                  TRACE_U64("dropped_queue", stats.deliveries_dropped_queue),
+                  TRACE_U64("dropped_ring", stats.events_dropped_ring),
+                  TRACE_U64("reconnects", stats.reconnects),
+                  TRACE_U64("protocol_errors", stats.protocol_errors));
+
+    {
+        struct rusage usage;
+
+        if (getrusage(RUSAGE_SELF, &usage) == 0)
+        {
+            TRACE_COUNTER(g_trace,
+                          "process_health",
+                          TRACE_F64("user_cpu_sec", (double)usage.ru_utime.tv_sec
+                                                        + ((double)usage.ru_utime.tv_usec / 1.0e6)),
+                          TRACE_F64("system_cpu_sec",
+                                    (double)usage.ru_stime.tv_sec
+                                        + ((double)usage.ru_stime.tv_usec / 1.0e6)),
+                          TRACE_U64("max_rss_kib", (uint64_t)usage.ru_maxrss),
+                          TRACE_U64("ctx_switches_voluntary", (uint64_t)usage.ru_nvcsw),
+                          TRACE_U64("ctx_switches_forced", (uint64_t)usage.ru_nivcsw));
+        }
+    }
+#else
+    (void)me;
+#endif
 }
 
 /** @brief Emit the periodic counters line that replaces the PC bridge report. */
@@ -257,6 +337,46 @@ static void log_metrics(stt_ao_t* const me)
     }
 }
 
+#if CONFIG_TRACE_ENABLED
+/** @brief Count UTF-8 code points, i.e. what a viewer perceives as characters. */
+static uint32_t visible_char_count(char const* const text)
+{
+    uint32_t count = 0U;
+    size_t index;
+
+    for (index = 0U; text[index] != '\0'; index++)
+    {
+        // Continuation bytes extend the previous code point.
+        if (((uint8_t)text[index] & 0xC0U) != 0x80U)
+        {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+/**
+ * @brief Record the outcome of one transcript hand-off to SubtitleAO.
+ *
+ * The transcript text itself never reaches the trace: sizes and the sequence
+ * number are enough to reconcile the pipeline, and keeping text out avoids
+ * putting speech content in a profiling artifact.
+ */
+static void trace_dispatch(subtitle_text_evt_t const* const e, char const* const outcome)
+{
+    TRACE_INSTANT(g_trace,
+                  "transcript_dispatch",
+                  TRACE_U64("transcript_seq", e->seq),
+                  TRACE_BOOL("is_final", e->is_final),
+                  TRACE_U64("text_bytes", (uint64_t)strlen(e->text)),
+                  TRACE_U64("visible_chars", visible_char_count(e->text)),
+                  TRACE_U64("start_ms", e->start_ms),
+                  TRACE_U64("end_ms", e->end_ms),
+                  TRACE_STR("outcome", outcome));
+}
+#endif /* CONFIG_TRACE_ENABLED */
+
 /**
  * @brief Forward a valid transcript event to the subtitle active object.
  * @param me STT active object.
@@ -284,6 +404,7 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
                     (unsigned long)e->seq,
                     (unsigned)margin);
         stt_ws_client_report_delivery(me->client, STT_TRANSCRIPT_DELIVERY_DROPPED_EVENT_POOL);
+        trace_dispatch(e, "dropped_event_pool");
         return -EAGAIN;
     }
 
@@ -292,16 +413,6 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
     subtitle_evt->end_ms = e->end_ms;
     subtitle_evt->is_final = e->is_final;
     snprintf(subtitle_evt->text, sizeof(subtitle_evt->text), "%s", e->text);
-
-#if CONFIG_TRACE_ENABLED
-    // TRACE: Transcript parsed and ready to forward
-    if (g_trace != NULL)
-    {
-        TRACE_INSTANT(g_trace, "transcript_parsed",
-                      "\"seq\":%lu,\"final\":%u,\"text\":\"%.40s\"",
-                      (unsigned long)e->seq, (unsigned)e->is_final, e->text);
-    }
-#endif
 
     // DEBUG: runs per transcript; the metrics line already reports volume.
     LOG_DEBUG("stt: forwarding %s transcript seq=%lu",
@@ -314,8 +425,11 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
                     (unsigned long)e->seq,
                     (unsigned)margin);
         stt_ws_client_report_delivery(me->client, STT_TRANSCRIPT_DELIVERY_DROPPED_SUBTITLE_QUEUE);
+        trace_dispatch(e, "dropped_subtitle_queue");
         return -EAGAIN;
     }
+
+    trace_dispatch(e, "accepted");
 
     // "Delivered" now means "posted to the subtitle AO": with the PC bridge
     // gone there is no peer to acknowledge to, so the outcome is a counter.

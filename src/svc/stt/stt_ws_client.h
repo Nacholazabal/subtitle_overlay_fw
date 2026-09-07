@@ -196,6 +196,16 @@ void stt_ws_client_report_delivery(stt_ws_client_t* client, stt_transcript_deliv
 /// @brief Copy a consistent snapshot of the counters.
 void stt_ws_client_stats(stt_ws_client_t* client, stt_ws_client_stats_t* stats);
 
+/**
+ * @brief Sample both pipeline queue depths for the 1 Hz profiling counters.
+ * @param client Client instance; NULL zeroes both outputs.
+ * @param audio_depth Chunks waiting to be sent, may be NULL.
+ * @param event_depth Transcripts waiting to be drained by SttAO, may be NULL.
+ */
+void stt_ws_client_queue_depths(stt_ws_client_t* client,
+                                uint32_t* audio_depth,
+                                uint32_t* event_depth);
+
 /// @brief Current connection state, for logging.
 stt_ws_state_e stt_ws_client_state(stt_ws_client_t* client);
 

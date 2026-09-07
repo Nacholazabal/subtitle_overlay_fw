@@ -75,7 +75,11 @@ else
     BUILD_MODE="production"
 fi
 
-step "Build mode: ${BUILD_MODE}"
+# The VM receives a tarball without .git, so resolve the identifier here and pass
+# it in: it lands in the trace metadata and ties a capture to exact firmware.
+BUILD_ID="$(git -C "${REPO_ROOT}" describe --always --dirty --tags 2>/dev/null || echo unknown)"
+
+step "Build mode: ${BUILD_MODE} (build id: ${BUILD_ID})"
 
 step "Preparing local artifact folder"
 mkdir -p "${LOCAL_ARTIFACT_DIR}"
@@ -111,7 +115,7 @@ set -u
 echo \"PATH=\${PATH}\"
 command -v '${REMOTE_CC}' || true
 make clean-app
-make app CC='${REMOTE_CC}' STRIP='${REMOTE_STRIP}' PETALINUX_PROJECT='${VM_PETALINUX_PROJECT}' TRACE=${TRACE_FLAG}
+make app CC='${REMOTE_CC}' STRIP='${REMOTE_STRIP}' PETALINUX_PROJECT='${VM_PETALINUX_PROJECT}' TRACE=${TRACE_FLAG} BUILD_ID='${BUILD_ID}'
 if command -v readelf >/dev/null 2>&1; then
     readelf -V '${REMOTE_BINARY}' | grep GLIBC || true
 fi

@@ -61,11 +61,7 @@ from server.runtime.captions import (
     resample_to_16k,
 )
 
-try:
-    from server.runtime.unified_trace import UnifiedTracer, TraceScope
-    _TRACE_AVAILABLE = True
-except ImportError:
-    _TRACE_AVAILABLE = False
+from server.runtime.unified_trace import NullTracer
 
 
 # --- Provenance / pinned experiment identity -------------------------------
@@ -755,6 +751,16 @@ class NemotronSession:
         self.max_backlog_samples = 0
         self.session_errors = 0
         self.started_monotonic = time.monotonic()
+        # Replaced by attach_tracer() when the application is profiling.
+        self.tracer = NullTracer()
+
+    def attach_tracer(self, tracer) -> None:
+        """Adopt the application's tracer for this session.
+
+        The tracer is owned by the FastAPI app and shared by every session in a
+        run, so sessions neither open nor close the trace file.
+        """
+        self.tracer = tracer or NullTracer()
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -777,12 +783,48 @@ class NemotronSession:
     def audio_end_sec(self) -> float:
         return round(self._samples_consumed / float(TARGET_RATE), 3)
 
-    def push_pcm(self, pcm_bytes: bytes) -> list[dict]:
-        """PCM S16LE (board format) -> float32 mono -> 16 kHz -> streaming steps."""
+    @property
+    def buffered_samples(self) -> int:
+        """Samples held back because they did not fill a whole cache-aware frame."""
+        return int(self._residue.size) if self._residue is not None else 0
+
+    def push_pcm(
+        self,
+        pcm_bytes: bytes,
+        *,
+        audio_seq: int | None = None,
+        capture_ts_ns: int | None = None,
+    ) -> list[dict]:
+        """PCM S16LE (board format) -> float32 mono -> 16 kHz -> streaming steps.
+
+        Runs on the ``asyncio.to_thread`` worker, so registering the thread here
+        is what gives the inference work its own Perfetto track.
+
+        ``capture_ts_ns`` is the board's own clock reading for this chunk, and
+        ``audio_end_sec`` is how far into the stream the chunk reaches. Recording
+        both turns this slice into the lookup table that maps a transcript's
+        ``end_sec`` back to the moment that audio was captured -- which is what an
+        honest end-to-end latency needs.
+        """
+        self.tracer.register_thread("inference-worker")
+        started = time.monotonic_ns()
+
         self.chunks_received += 1
         mono = pcm_s16le_to_float32(pcm_bytes)
         audio = resample_to_16k(mono, self.source_rate)
-        return self.push_float32(audio)
+        events = self.push_float32(audio)
+
+        self.tracer.slice(
+            "session_push_pcm",
+            started,
+            audio_seq=audio_seq,
+            board_capture_ts_ns=capture_ts_ns,
+            audio_end_sec=self.audio_end_sec,
+            input_bytes=len(pcm_bytes),
+            buffered_samples=self.buffered_samples,
+            events=len(events),
+        )
+        return events
 
     def push_float32(self, audio) -> list[dict]:
         import numpy as np
@@ -831,9 +873,16 @@ class NemotronSession:
         start_sec = self.audio_end_sec
         started = time.monotonic()
         try:
-            step_outputs = self.engine.step(
-                frame, is_first=self._first_frame, is_last=is_last, valid_length=valid_length
-            )
+            with self.tracer.scope(
+                "nemotron_step",
+                samples=int(valid_length),
+                is_first=bool(self._first_frame),
+                is_last=bool(is_last),
+                audio_end_sec=start_sec,
+            ):
+                step_outputs = self.engine.step(
+                    frame, is_first=self._first_frame, is_last=is_last, valid_length=valid_length
+                )
         except Exception:
             self.session_errors += 1
             raise
@@ -1089,8 +1138,6 @@ class NemotronPipelineStream:
         if self.frame_samples <= 0:
             raise ValueError(f"invalid NeMo chunk size: {pipeline.chunk_size_in_secs!r}")
         self._options = None
-        # Initialize unified tracing for GPU inference profiling
-        self.tracer = UnifiedTracer(source="nemotron") if _TRACE_AVAILABLE else None
 
     def _build_options(self):
         from nemo.collections.asr.inference.streaming.framing.request_options import ASRRequestOptions
@@ -1128,12 +1175,7 @@ class NemotronPipelineStream:
             options=self._options if is_first else None,
         )
 
-        # TRACE: GPU inference (the bottleneck)
-        if self.tracer and _TRACE_AVAILABLE:
-            with TraceScope(self.tracer, "gpu_inference", samples=len(samples)):
-                return self.pipeline.transcribe_step([frame])
-        else:
-            return self.pipeline.transcribe_step([frame])
+        return self.pipeline.transcribe_step([frame])
 
 
 class SharedNemotronModel:
