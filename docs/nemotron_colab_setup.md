@@ -289,7 +289,7 @@ El endpoint offline nunca fabrica timestamps: si NeMo no los da, devuelve
    ejecuta un bridge desde WSL. Para instalar o actualizar ese servicio:
 
    ```bash
-   ./scripts/run.sh -s
+   ./scripts/run.sh
    ```
 
    Para un banco de audio opcional:

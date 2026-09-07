@@ -646,11 +646,13 @@ static int handle_frame(stt_ws_client_t* const client, stt_ws_frame_t const* con
     client->msg[client->msg_used] = '\0';
     client->msg_used = 0U;
 
+#if CONFIG_TRACE_ENABLED
     // TRACE: Transcript WebSocket frame received
     if (g_trace != NULL)
     {
         TRACE_INSTANT(g_trace, "transcript_ws_rx", "\"bytes\":%zu", client->msg_used);
     }
+#endif
 
     return handle_text_message(client, client->msg);
 }

@@ -172,11 +172,13 @@ static void* capture_thread_main(void* const arg)
                                               sizeof(chunk.payload),
                                               &bytes_read);
 
+#if CONFIG_TRACE_ENABLED
         // TRACE: Audio chunk captured from USB (T₀ of pipeline)
         if ((status == 0) && (g_trace != NULL))
         {
             TRACE_INSTANT(g_trace, "audio_chunk_capture", "\"bytes\":%zu", bytes_read);
         }
+#endif
 
         if (status != 0)
         {
@@ -216,12 +218,14 @@ static void* capture_thread_main(void* const arg)
         chunk.sequence = stream_next_sequence(stream);
         chunk.bytes_used = (uint32_t)bytes_read;
 
+#if CONFIG_TRACE_ENABLED
         // TRACE: Audio chunk sent to STT WebSocket
         if (g_trace != NULL)
         {
             TRACE_INSTANT(g_trace, "audio_ws_send", "\"seq\":%lu,\"bytes\":%lu",
                           (unsigned long)chunk.sequence, (unsigned long)chunk.bytes_used);
         }
+#endif
 
         if ((client == NULL)
             || (stt_ws_client_submit_audio(client,

@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Deploy the latest VM-built Linux userspace app to the board and run it.
+# Build, deploy and run the Linux userspace app as the board boot service.
 #
 # The board opens its own WebSocket session to the Nemotron server, so no
 # PC-side bridge is started here. The production image obtains its clock from
-# NTP; -T exists only as an emergency fallback for an image without working
-# time synchronisation.
+# NTP before the firmware attempts its TLS connection.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -24,40 +23,48 @@ SUBTITLE_STT_NEMOTRON_STOP_HISTORY_EOU_MS="${SUBTITLE_STT_NEMOTRON_STOP_HISTORY_
 SUBTITLE_STT_NEMOTRON_RESIDUE_TOKENS_AT_END="${SUBTITLE_STT_NEMOTRON_RESIDUE_TOKENS_AT_END:-2}"
 SUBTITLE_STT_NEMOTRON_TARGET_LANG="${SUBTITLE_STT_NEMOTRON_TARGET_LANG:-es-ES}"
 
-BOARD_HOST="${BOARD_HOST:-hdmi-overlay}"
+BOARD_MAC="${BOARD_MAC:-00:0a:35:00:1e:53}"
+BOARD_IP="${BOARD_IP:-}"
+BOARD_USER="${BOARD_USER:-root}"
 BOARD_DEPLOY_DIR="${BOARD_DEPLOY_DIR:-/home/root}"
 BOARD_LOG_DIR="${BOARD_LOG_DIR:-/home/root/logs}"
-BOARD_SSH_TARGET="${BOARD_SSH_TARGET:-${BOARD_HOST}}"
-BOARD_SSH_OPTS=()
+BOARD_SSH_TARGET="${BOARD_SSH_TARGET:-}"
+BOARD_SSH_IDENTITY="${BOARD_SSH_IDENTITY:-}"
+BOARD_SSH_HOST_KEY_ALIAS="${BOARD_SSH_HOST_KEY_ALIAS:-subtitle-overlay-board}"
+BOARD_SSH_OPTS=(
+    -o "HostKeyAlgorithms=+ssh-rsa"
+    -o "PubkeyAcceptedAlgorithms=+ssh-rsa"
+    -o "HostKeyAlias=${BOARD_SSH_HOST_KEY_ALIAS}"
+    -o "StrictHostKeyChecking=accept-new"
+)
 
 APP_TARGET="${APP_TARGET:-subtitle_overlay_fw}"
 LOCAL_ARTIFACT_DIR="${LOCAL_ARTIFACT_DIR:-${REPO_ROOT}/build/vm-artifacts}"
 LOCAL_BINARY="${LOCAL_BINARY:-${LOCAL_ARTIFACT_DIR}/${APP_TARGET}}"
 
 SKIP_BUILD=0
-DETACH=0
-INSTALL_SERVICE=0
-SET_CLOCK_FROM_HOST=0
+PROFILE=0
 
 usage() {
     cat <<EOF
-Usage: ${0##*/} [-x] [-d] [-s] [-T]
+Usage: ${0##*/} [-x] [-p]
 
 Options:
   -x    Skip the VM rebuild and deploy the latest local artifact.
-  -d    Run detached on the board so it survives the SSH session ending
-        (only for a one-shot launch; -s already runs as a service).
-  -s    Install/update /etc/init.d/subtitle-overlay and start it. This is the
-        normal production deployment and is safe to run repeatedly.
-  -T    Emergency fallback: set the board clock from this PC before deploy.
-        Normal operation uses NTP from the PetaLinux image.
+  -p    Build with firmware tracing enabled for Perfetto profiling.
   -h    Show this help.
 
 Environment:
-  SUBTITLE_STT_WS_URL   Streaming STT endpoint (default: the reserved ngrok domain)
-  USB_AUDIO_PCM_DEVICE  ALSA capture device (default: hw:0,0)
-  BOARD_HOST             SSH host alias shown in messages (default: hdmi-overlay)
-  BOARD_SSH_TARGET       SSH/SCP destination (default: BOARD_HOST)
+  BOARD_MAC              MAC used for automatic IP discovery
+                         (default: 00:0a:35:00:1e:53)
+  BOARD_IP               Explicit board IP; skips MAC discovery
+  BOARD_SSH_TARGET       Explicit SSH target; overrides BOARD_IP and discovery
+  BOARD_SSH_IDENTITY     Optional SSH private-key path
+  SUBTITLE_STT_WS_URL    Streaming STT endpoint (default: reserved ngrok domain)
+  USB_AUDIO_PCM_DEVICE   ALSA capture device (default: hw:0,0)
+
+The command always installs/updates the subtitle-overlay boot service and
+restarts it. Use -x after a separate scripts/build.sh invocation.
 EOF
 }
 
@@ -72,13 +79,10 @@ shell_quote() {
     printf "'%s'" "${value}"
 }
 
-while getopts ":xdsTCh" opt; do
+while getopts ":xph" opt; do
     case "${opt}" in
         x) SKIP_BUILD=1 ;;
-        d) DETACH=1 ;;
-        s) INSTALL_SERVICE=1 ;;
-        T) SET_CLOCK_FROM_HOST=1 ;;
-        C) SET_CLOCK_FROM_HOST=0 ;; # Legacy compatibility: NTP is now default.
+        p) PROFILE=1 ;;
         h) usage; exit 0 ;;
         :)
             printf 'Option -%s requires an argument\n' "${OPTARG}" >&2
@@ -101,9 +105,46 @@ if [[ $# -ne 0 ]]; then
     exit 2
 fi
 
+if [[ "${SKIP_BUILD}" -eq 1 && "${PROFILE}" -eq 1 ]]; then
+    echo "Options -x and -p cannot be combined: -x skips the build that -p configures." >&2
+    exit 2
+fi
+
+if [[ -n "${BOARD_SSH_IDENTITY}" ]]; then
+    BOARD_SSH_OPTS+=( -i "${BOARD_SSH_IDENTITY}" )
+fi
+
+if [[ -n "${BOARD_SSH_TARGET}" ]]; then
+    BOARD_DISPLAY="${BOARD_SSH_TARGET} (explicit target)"
+elif [[ -n "${BOARD_IP}" ]]; then
+    BOARD_SSH_TARGET="${BOARD_USER}@${BOARD_IP}"
+    BOARD_DISPLAY="${BOARD_IP} (explicit IP)"
+else
+    step "Locating board MAC ${BOARD_MAC} on the LAN"
+    BOARD_IP="$(python3 "${SCRIPT_DIR}/board/find_board_ip.py" --mac "${BOARD_MAC}")"
+    BOARD_SSH_TARGET="${BOARD_USER}@${BOARD_IP}"
+    BOARD_DISPLAY="${BOARD_IP} (discovered from ${BOARD_MAC})"
+fi
+
+step "Deployment configuration"
+printf '  board: %s\n' "${BOARD_DISPLAY}"
+printf '  mode : persistent boot service\n'
+if [[ "${SKIP_BUILD}" -eq 1 ]]; then
+    BUILD_MODE="existing artifact"
+elif [[ "${PROFILE}" -eq 1 ]]; then
+    BUILD_MODE="profiling"
+else
+    BUILD_MODE="production"
+fi
+printf '  build: %s\n' "${BUILD_MODE}"
+
 if [[ "${SKIP_BUILD}" -eq 0 ]]; then
     step "Refreshing VM build artifact"
-    "${SCRIPT_DIR}/build.sh"
+    if [[ "${PROFILE}" -eq 1 ]]; then
+        "${SCRIPT_DIR}/build.sh" -p
+    else
+        "${SCRIPT_DIR}/build.sh"
+    fi
 else
     step "Using latest local artifact"
 fi
@@ -114,19 +155,13 @@ if [[ ! -f "${LOCAL_BINARY}" ]]; then
     exit 2
 fi
 
-if [[ "${SET_CLOCK_FROM_HOST}" -eq 1 ]]; then
-    step "Setting the board clock from this PC (emergency fallback)"
-    ssh "${BOARD_SSH_OPTS[@]}" "${BOARD_SSH_TARGET}" "date -s @$(date -u +%s) >/dev/null && date -u"
-fi
-
-if [[ "${INSTALL_SERVICE}" -eq 1 ]]; then
-    step "Stopping the installed service before replacing the executable"
-    ssh "${BOARD_SSH_OPTS[@]}" "${BOARD_SSH_TARGET}" \
-        "if [ -x /etc/init.d/subtitle-overlay ]; then /etc/init.d/subtitle-overlay stop; fi"
-fi
+step "Stopping the installed service before replacing the executable"
+ssh "${BOARD_SSH_OPTS[@]}" "${BOARD_SSH_TARGET}" \
+    "if [ -x /etc/init.d/subtitle-overlay ]; then /etc/init.d/subtitle-overlay stop; fi"
 
 step "Copying ${LOCAL_BINARY} to ${BOARD_SSH_TARGET}:${BOARD_DEPLOY_DIR}/"
-scp -O "${BOARD_SSH_OPTS[@]}" "${LOCAL_BINARY}" "${BOARD_SSH_TARGET}:${BOARD_DEPLOY_DIR}/"
+scp -O "${BOARD_SSH_OPTS[@]}" "${LOCAL_BINARY}" \
+    "${BOARD_SSH_TARGET}:${BOARD_DEPLOY_DIR}/${APP_TARGET}"
 
 # Environment shared by every launch mode.
 ENV_ASSIGNMENTS=(
@@ -138,47 +173,23 @@ ENV_ASSIGNMENTS=(
     "SUBTITLE_STT_NEMOTRON_RESIDUE_TOKENS_AT_END=$(shell_quote "${SUBTITLE_STT_NEMOTRON_RESIDUE_TOKENS_AT_END}")"
     "SUBTITLE_STT_NEMOTRON_TARGET_LANG=$(shell_quote "${SUBTITLE_STT_NEMOTRON_TARGET_LANG}")"
 )
-ENV_LINE="${ENV_ASSIGNMENTS[*]}"
 
-if [[ "${INSTALL_SERVICE}" -eq 1 ]]; then
-    step "Installing/updating the boot service on ${BOARD_HOST}"
-    scp -O "${BOARD_SSH_OPTS[@]}" "${SCRIPT_DIR}/board/subtitle-overlay.init" \
-        "${BOARD_SSH_TARGET}:/etc/init.d/subtitle-overlay"
-    # The endpoint lives in /etc/default so the service can be repointed
-    # without touching the init script or rebuilding the image.
-    {
-        printf '# Written by scripts/run.sh -s\n'
-        for assignment in "${ENV_ASSIGNMENTS[@]}"; do
-            printf 'export %s\n' "${assignment}"
-        done
-    } | ssh "${BOARD_SSH_OPTS[@]}" "${BOARD_SSH_TARGET}" "cat > /etc/default/subtitle-overlay"
-    ssh "${BOARD_SSH_OPTS[@]}" "${BOARD_SSH_TARGET}" \
-        "chmod +x $(shell_quote "${BOARD_DEPLOY_DIR}/${APP_TARGET}") /etc/init.d/subtitle-overlay \
-         && ln -sf ../init.d/subtitle-overlay /etc/rc5.d/S95subtitle-overlay \
-         && /etc/init.d/subtitle-overlay start \
-         && /etc/init.d/subtitle-overlay status"
+step "Installing/updating the boot service on ${BOARD_DISPLAY}"
+scp -O "${BOARD_SSH_OPTS[@]}" "${SCRIPT_DIR}/board/subtitle-overlay.init" \
+    "${BOARD_SSH_TARGET}:/etc/init.d/subtitle-overlay"
+# The endpoint lives in /etc/default so the service can be repointed without
+# touching the init script or rebuilding the image.
+{
+    printf '# Written by scripts/run.sh\n'
+    for assignment in "${ENV_ASSIGNMENTS[@]}"; do
+        printf 'export %s\n' "${assignment}"
+    done
+} | ssh "${BOARD_SSH_OPTS[@]}" "${BOARD_SSH_TARGET}" "cat > /etc/default/subtitle-overlay"
+ssh "${BOARD_SSH_OPTS[@]}" "${BOARD_SSH_TARGET}" \
+    "chmod +x $(shell_quote "${BOARD_DEPLOY_DIR}/${APP_TARGET}") /etc/init.d/subtitle-overlay \
+     && ln -sf ../init.d/subtitle-overlay /etc/rc5.d/S95subtitle-overlay \
+     && /etc/init.d/subtitle-overlay start \
+     && /etc/init.d/subtitle-overlay status"
 
-    printf '\nService installed and running. Follow the log with:\n  ssh %s '\''tail -f %s/run-latest.log'\''\n' \
-        "${BOARD_HOST}" "${BOARD_LOG_DIR}"
-    exit 0
-fi
-
-if [[ "${DETACH}" -eq 1 ]]; then
-    step "Starting ${APP_TARGET} detached on ${BOARD_HOST}"
-    # setsid + nohup so the process outlives this SSH session; the PC can then
-    # be powered off without taking the subtitles down with it.
-    ssh "${BOARD_SSH_OPTS[@]}" "${BOARD_SSH_TARGET}" \
-        "cd $(shell_quote "${BOARD_DEPLOY_DIR}") \
-         && chmod +x $(shell_quote "${APP_TARGET}") \
-         && mkdir -p $(shell_quote "${BOARD_LOG_DIR}") \
-         && LOGFILE=$(shell_quote "${BOARD_LOG_DIR}")/run-\$(date -u +%Y%m%dT%H%M%SZ).log \
-         && ln -sf \"\${LOGFILE}\" $(shell_quote "${BOARD_LOG_DIR}")/run-latest.log \
-         && ${ENV_LINE} setsid nohup ./$(shell_quote "${APP_TARGET}") > \"\${LOGFILE}\" 2>&1 & \
-         sleep 1; echo started"
-    printf '\nFollow the log with:\n  ssh %s '"'"'tail -f %s/run-latest.log'"'"'\n' \
-        "${BOARD_HOST}" "${BOARD_LOG_DIR}"
-else
-    step "Running ${APP_TARGET} on ${BOARD_HOST} (foreground; Ctrl-C stops it)"
-    ssh "${BOARD_SSH_OPTS[@]}" -t "${BOARD_SSH_TARGET}" \
-        "cd $(shell_quote "${BOARD_DEPLOY_DIR}") && chmod +x $(shell_quote "${APP_TARGET}") && ${ENV_LINE} ./$(shell_quote "${APP_TARGET}")"
-fi
+printf '\nService installed and running. Follow the log with:\n'
+printf '  ssh %s %s\n' "${BOARD_SSH_TARGET}" "$(shell_quote "tail -f ${BOARD_LOG_DIR}/run-latest.log")"

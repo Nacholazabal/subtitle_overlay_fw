@@ -293,6 +293,7 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
     subtitle_evt->is_final = e->is_final;
     snprintf(subtitle_evt->text, sizeof(subtitle_evt->text), "%s", e->text);
 
+#if CONFIG_TRACE_ENABLED
     // TRACE: Transcript parsed and ready to forward
     if (g_trace != NULL)
     {
@@ -300,6 +301,7 @@ static int on_transcript(stt_ao_t* const me, subtitle_text_evt_t const* const e)
                       "\"seq\":%lu,\"final\":%u,\"text\":\"%.40s\"",
                       (unsigned long)e->seq, (unsigned)e->is_final, e->text);
     }
+#endif
 
     // DEBUG: runs per transcript; the metrics line already reports volume.
     LOG_DEBUG("stt: forwarding %s transcript seq=%lu",

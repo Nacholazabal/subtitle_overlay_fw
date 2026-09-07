@@ -9,7 +9,7 @@ ejecutado con NVIDIA NeMo en Colab.
 | Acción | Entrada |
 | --- | --- |
 | Levantar el servidor en Colab | `notebooks/nemotron_server.ipynb` |
-| Instalar/actualizar el servicio autónomo de la placa | `./scripts/run.sh -s` |
+| Instalar/actualizar el servicio autónomo de la placa | `./scripts/run.sh` |
 | Probar los tres audios cortos | `./server/audio-test.sh` |
 | Ejecutar el replay físico del corpus | `./server/physical-eval.sh` |
 | Analizar una captura | `./server/analyze.sh` |
@@ -17,8 +17,9 @@ ejecutado con NVIDIA NeMo en Colab.
 
 El uso normal es ejecutar toda la notebook del servidor y esperar
 `HEALTH: ready`. Si el servicio ya está instalado, la placa se conecta sola;
-no se lanza ningún bridge desde WSL. `./scripts/run.sh -s` se usa sólo al
-instalar o actualizar el ejecutable de la placa. El banco histórico
+no se lanza ningún bridge desde WSL. `./scripts/run.sh` se usa sólo al instalar
+o actualizar el ejecutable y el servicio persistente de la placa. El banco
+histórico
 `./server/audio-test.sh` conserva el bridge de evaluación y requiere un firmware
 compatible con sus puertos TCP; no forma parte del camino autónomo.
 

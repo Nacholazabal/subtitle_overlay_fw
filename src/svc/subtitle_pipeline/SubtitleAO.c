@@ -283,6 +283,7 @@ static int render_current_state(subtitle_ao_t* const me)
 {
     char render_text[SUBTITLE_AO_RENDER_MAX];
     int status;
+#if CONFIG_TRACE_ENABLED
     uint64_t render_start = 0;
 
     // TRACE: Begin subtitle render
@@ -290,6 +291,7 @@ static int render_current_state(subtitle_ao_t* const me)
     {
         render_start = TRACE_BEGIN(g_trace, "subtitle_render", NULL);
     }
+#endif
 
     if ((me->previous_visible == 0U) && (me->current_valid == 0U))
     {
@@ -319,18 +321,22 @@ static int render_current_state(subtitle_ao_t* const me)
     {
         status = subtitle_pipeline_enable(&me->pipeline, 1U);
 
+#if CONFIG_TRACE_ENABLED
         // TRACE: Subtitle now visible on HDMI output (T_final)
         if (g_trace != NULL)
         {
             TRACE_INSTANT(g_trace, "subtitle_display", "\"text\":\"%.40s\"", render_text);
         }
+#endif
     }
 
+#if CONFIG_TRACE_ENABLED
     // TRACE: End subtitle render
     if ((g_trace != NULL) && (render_start != 0))
     {
         TRACE_END(g_trace, "subtitle_render", render_start, NULL);
     }
+#endif
 
     return status;
 }

@@ -26,11 +26,14 @@ def load_chrome_trace_events(path):
         print(f"  Skip: {path} not found", file=sys.stderr)
         return events
 
-    with open(path, encoding="utf-8") as f:
+    repaired_utf8 = 0
+    with open(path, encoding="utf-8", errors="replace") as f:
         for lineno, line in enumerate(f, 1):
             line = line.strip()
             if not line:
                 continue
+            if "\ufffd" in line:
+                repaired_utf8 += 1
             try:
                 event = json.loads(line)
                 events.append(event)
@@ -38,6 +41,12 @@ def load_chrome_trace_events(path):
                 print(f"  Warning: {path}:{lineno}: {exc}", file=sys.stderr)
 
     print(f"  Loaded {len(events)} events from {path}")
+    if repaired_utf8:
+        print(
+            f"  Warning: repaired truncated UTF-8 in {repaired_utf8} "
+            f"line(s) from {path}",
+            file=sys.stderr,
+        )
     return events
 
 

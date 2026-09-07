@@ -22,6 +22,18 @@ REMOTE_PROJECT_DIR="${VM_PROJECT_ROOT}/${REMOTE_PROJECT_NAME}"
 REMOTE_BINARY="${REMOTE_PROJECT_DIR}/build/app/${APP_TARGET}"
 LOCAL_BINARY="${LOCAL_BINARY:-${LOCAL_ARTIFACT_DIR}/${APP_TARGET}}"
 
+PROFILE=0
+
+usage() {
+    cat <<EOF
+Usage: ${0##*/} [-p]
+
+Options:
+  -p    Build with firmware tracing enabled for Perfetto profiling.
+  -h    Show this help.
+EOF
+}
+
 step() {
     printf '\n==> %s\n' "$1"
 }
@@ -29,6 +41,41 @@ step() {
 ssh_vm() {
     ssh "${VM_HOST}" "$@"
 }
+
+while getopts ":ph" opt; do
+    case "${opt}" in
+        p) PROFILE=1 ;;
+        h) usage; exit 0 ;;
+        :)
+            printf 'Option -%s requires an argument\n' "${OPTARG}" >&2
+            usage >&2
+            exit 2
+            ;;
+        \?)
+            printf 'Unknown option: -%s\n' "${OPTARG}" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+shift $((OPTIND - 1))
+
+if [[ $# -ne 0 ]]; then
+    printf 'Unexpected argument: %s\n' "$1" >&2
+    usage >&2
+    exit 2
+fi
+
+if [[ "${PROFILE}" -eq 1 ]]; then
+    TRACE_FLAG=1
+    BUILD_MODE="profiling (firmware trace enabled)"
+else
+    TRACE_FLAG=0
+    BUILD_MODE="production"
+fi
+
+step "Build mode: ${BUILD_MODE}"
 
 step "Preparing local artifact folder"
 mkdir -p "${LOCAL_ARTIFACT_DIR}"
@@ -50,7 +97,6 @@ tar \
     -cf - . | ssh_vm "tar -xf - -C '${REMOTE_PROJECT_DIR}'"
 
 step "Building ${APP_TARGET} inside the VM"
-TRACE_FLAG="${TRACE:-0}"
 ssh_vm "cat > /tmp/subtitle_overlay_fw_build.sh <<EOF
 #!/usr/bin/env bash
 set -euo pipefail

@@ -27,9 +27,10 @@ iface eth0 inet dhcp
 ```
 
 DHCP entrega a la placa una IP, gateway y DNS. La IP concreta no interviene en
-la conexión a Colab porque ésta es saliente. Para SSH se localiza la concesión
-en el router mediante la MAC `00:0a:35:00:1e:53`. Es recomendable crear una
-reserva DHCP para esa MAC y actualizar `HostName` del alias SSH `hdmi-overlay`.
+la conexión a Colab porque ésta es saliente. Para desplegar, `scripts/run.sh`
+localiza automáticamente la dirección actual mediante la MAC Ethernet
+`00:0a:35:00:1e:53`; no es necesario modificar el alias SSH cuando cambia la
+concesión. Una reserva DHCP sigue siendo opcional.
 
 No se necesita port forwarding: la placa inicia tráfico saliente WSS por 443.
 
@@ -47,26 +48,28 @@ también incluye `/etc/ssl/certs/ca-certificates.crt`.
 `subtitle_overlay_fw` es una aplicación Linux. El flujo habitual sigue siendo:
 
 1. `./scripts/build.sh` la compila para ARM en la VM.
-2. `scripts/run.sh` la copia por SCP a `/home/root/subtitle_overlay_fw`.
-3. SSH la ejecuta o instala `/etc/init.d/subtitle-overlay`.
+2. `scripts/run.sh` descubre la IP de la placa y copia el ejecutable por SCP a
+   `/home/root/subtitle_overlay_fw`.
+3. Instala o actualiza `/etc/init.d/subtitle-overlay` y reinicia el servicio.
 
 La diferencia es solamente el recorrido de red: PC → router → placa. No hace
 falta retirar la SD para actualizar este ejecutable.
 
 Para instalar por primera vez o actualizar una instalación existente se usa el
-mismo comando idempotente:
+mismo comando idempotente. El servicio persistente es siempre el único modo:
 
 ```bash
-./scripts/run.sh -s
+./scripts/run.sh
 ```
 
-- `-s` detiene ordenadamente la instancia anterior, actualiza el ejecutable,
-  instala `/etc/init.d/subtitle-overlay` y `/etc/default/subtitle-overlay`, y
-  vuelve a iniciar el servicio con su PID y log controlados.
-- La hora se obtiene de NTP. `-T` queda sólo como recuperación manual si una
-  imagen vieja o una falla de red impiden sincronizarla.
-- `-d` sólo se usa para una ejecución temporal sin servicio; con `-s` no es
-  necesario porque el servicio ya queda desacoplado de SSH.
+- Sin flags se buildea, detiene ordenadamente la instancia anterior, actualiza
+  el ejecutable y su configuración, y vuelve a iniciar el servicio.
+- `-p` realiza ese mismo flujo con tracing de firmware habilitado.
+- `-x` omite el build y despliega el último artefacto local.
+- La hora se obtiene de NTP desde la imagen de producción; el script de deploy
+  no modifica manualmente el reloj de la placa.
+- Si la detección automática no está disponible, `BOARD_IP=x.x.x.x` permite
+  indicar la dirección explícitamente para esa ejecución.
 
 ### Imagen PetaLinux
 
@@ -126,13 +129,13 @@ Nunca asumir el nombre del dispositivo sin revisar `lsblk`.
 
 1. Apagar la placa e insertar la SD con el modo de boot en SD.
 2. Conectar la placa a un puerto LAN del router.
-3. Encenderla y localizar su IP por MAC en las concesiones DHCP o por consola
-   serial con `ip -4 addr show eth0`.
+3. Encenderla; `scripts/run.sh` localizará su IP por la MAC Ethernet.
 4. Verificar `ip route`, `/etc/resolv.conf`, `date -u` y que `ntpd` esté activo.
-5. Probar `ssh root@IP_ASIGNADA` y actualizar el alias `hdmi-overlay`.
+5. Si se desea, verificar por consola serial la dirección con
+   `ip -4 addr show eth0`.
 6. Ejecutar el notebook `server/notebooks/nemotron_server.ipynb` hasta que
    `/health` y el túnel ngrok estén listos.
-7. Instalar el ejecutable y servicio con `./scripts/run.sh -s`.
+7. Instalar el ejecutable y servicio con `./scripts/run.sh`.
 8. Reiniciar la placa y comprobar que inicia, sincroniza la hora y conecta a
    Colab sin ejecutar `server/run.sh` ni otro bridge en la PC.
 

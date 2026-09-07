@@ -179,30 +179,26 @@ Estos puntos dan visibilidad del resto del sistema sin ser abrumadores.
 
 ## Workflow completo
 
-### 1. **Build con tracing habilitado**
+### 1. **Build y deploy con tracing habilitado**
 
 ```bash
-# Build especial con profiling (desde WSL)
-TRACE=1 ./scripts/build.sh
+# Build especial, deploy e instalación del servicio (desde WSL)
+./scripts/run.sh -p
 
-# O directamente en la VM:
-ssh petalinux-vm
-cd /home/tesislinux/tesis/hdmi-overlay
-make TRACE=1 app
+# Para verificar solamente la compilación, sin tocar la placa:
+./scripts/build.sh -p
+
 ```
 
-### 2. **Deploy y capturar traces**
+### 2. **Capturar traces**
 
 #### En el firmware:
 ```bash
-# Deploy (desde WSL o VM)
-scp build/vm-artifacts/subtitle_overlay_fw hdmi-overlay:/root/
+# run.sh ya dejó el servicio instalado y corriendo. La IP se descubre por MAC.
+BOARD_IP="$(python3 scripts/board/find_board_ip.py)"
 
-# Correr en la board
-ssh hdmi-overlay '/root/subtitle_overlay_fw'
-
-# Después de ~30 segundos, Ctrl+C y copiar trace
-scp hdmi-overlay:/tmp/fw_trace.jsonl logs/
+# Después de capturar el intervalo deseado, copiar el trace.
+scp -O "root@${BOARD_IP}:/tmp/fw_trace.jsonl" logs/
 ```
 
 #### En el server:
@@ -282,16 +278,18 @@ Una vez en Perfetto, podés:
 
 El tracing está **apagado por defecto** (cero overhead).
 
-Para habilitarlo, build con `TRACE=1`:
+Para habilitarlo, usar la flag `-p`:
 ```bash
-# Opción 1: via scripts/build.sh
-TRACE=1 ./scripts/build.sh
+# Build sin desplegar
+./scripts/build.sh -p
 
-# Opción 2: directamente en la VM
-make TRACE=1 app
+# Build, deploy y servicio persistente
+./scripts/run.sh -p
+
 ```
 
-Sin `TRACE=1`, todas las macros `TRACE_*` se convierten en no-ops.
+Sin `-p`, todas las macros `TRACE_*` se convierten en no-ops y el firmware no
+crea `/tmp/fw_trace.jsonl`.
 
 ---
 

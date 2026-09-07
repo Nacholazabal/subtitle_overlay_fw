@@ -191,12 +191,14 @@ int main(void)
     (void)log_subscribe(app_log_output, LOG_LEVEL_INFO);
     LOG_INFO("app: starting subtitle overlay firmware");
 
-    // Initialize unified tracing (outputs to /tmp/fw_trace.jsonl)
+#if CONFIG_TRACE_ENABLED
+    // Profiling builds emit firmware events to /tmp/fw_trace.jsonl.
     g_trace = trace_init(NULL);
     if (!g_trace)
     {
-        LOG_WARN("app: tracing disabled (failed to init)");
+        LOG_WARNING("app: tracing disabled (failed to init)");
     }
+#endif
 
     QF_init();
     app_install_signal_handlers();
@@ -205,8 +207,9 @@ int main(void)
 
     int const ret = QF_run();
 
-    // Cleanup
+#if CONFIG_TRACE_ENABLED
     trace_close(g_trace);
+#endif
     return ret;
 }
 
