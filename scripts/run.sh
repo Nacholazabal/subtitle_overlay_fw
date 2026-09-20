@@ -193,3 +193,8 @@ ssh "${BOARD_SSH_OPTS[@]}" "${BOARD_SSH_TARGET}" \
 
 printf '\nService installed and running. Follow the log with:\n'
 printf '  ssh %s %s\n' "${BOARD_SSH_TARGET}" "$(shell_quote "tail -f ${BOARD_LOG_DIR}/run-latest.log")"
+if [[ "${PROFILE}" -eq 1 ]]; then
+    printf '\nProfiling firmware is recording to /tmp/fw_trace.jsonl.\n'
+    printf 'Next: Runtime -> Run all in server/notebooks/nemotron_profiling.ipynb\n'
+    printf 'When finished: ./scripts/profile-report.sh\n'
+fi

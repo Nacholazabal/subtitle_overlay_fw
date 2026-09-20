@@ -32,64 +32,56 @@ pueda tumbar el pipeline que está midiendo.
 
 ## Cómo capturar
 
-### 1. Firmware
+La operación normal no requiere configurar variables ni compartir identificadores
+entre la placa y Colab.
+
+### 1. Iniciar firmware y servidor
 
 ```bash
-# Build de profiling (el normal NO instrumenta nada)
-./scripts/build.sh -p
-
-# Deploy y corrida normal
-scp build/vm-artifacts/subtitle_overlay_fw hdmi-overlay:/home/root/
-ssh hdmi-overlay '/home/root/subtitle_overlay_fw'
-
-# Traer el trace
-scp hdmi-overlay:/tmp/fw_trace.jsonl logs/
+./scripts/run.sh -p
 ```
 
-Variables opcionales en la placa:
+Después, abrir `server/notebooks/nemotron_profiling.ipynb` en Colab, elegir GPU,
+ejecutar `Runtime -> Run all` y dejar activa la última celda mientras se usa el
+sistema. La placa puede arrancar primero: reintenta la conexión hasta que ngrok y
+el servidor queden listos.
 
-| Variable | Efecto |
-| --- | --- |
-| `SUBTITLE_TRACE_PATH` | Destino del archivo (default `/tmp/fw_trace.jsonl`) |
-| `SUBTITLE_TRACE_MAX_MB` | Tope de tamaño en MB (default 16) |
-| `SUBTITLE_TRACE_RUN_ID` | Identificador de corrida, para casar con el servidor |
+`run.sh -p` compila, despliega y reinicia el servicio con la instrumentación del
+firmware. El notebook habilita internamente el tracer de servidor antes de crear
+la misma app FastAPI usada en producción. No existe un backend especial para
+profiling.
 
-El `build_id` (salida de `git describe`) lo estampa `scripts/build.sh`
-automáticamente en la metadata del trace.
+### 2. Terminar y recolectar
 
-### 2. Servidor
+Interrumpir **una sola vez** la última celda del notebook. Su bloque de cierre:
+
+- detiene Uvicorn y ejecuta el shutdown de FastAPI;
+- cierra el tracer y conserva una copia en
+  `MyDrive/Tesis-subtitles/profiling/`;
+- inicia la descarga de `server_trace-<fecha>.jsonl` al navegador.
+
+Una vez terminada la descarga, ejecutar sin argumentos:
 
 ```bash
-SUBTITLE_TRACE=1 SUBTITLE_TRACE_RUN_ID=20260907-1200 python3 -m server.runtime.app ...
+./scripts/profile-report.sh
 ```
 
-| Variable | Efecto |
-| --- | --- |
-| `SUBTITLE_TRACE` | `1` habilita el tracing (sin esto no se escribe nada) |
-| `SUBTITLE_TRACE_PATH` | Destino explícito (p. ej. una ruta en Drive) |
-| `SUBTITLE_TRACE_RUN_ID` | Debe coincidir con el de la placa |
-| `SUBTITLE_TRACE_MAX_MB` | Tope de tamaño en MB (default 64) |
+El wrapper reutiliza `scripts/board/find_board_ip.py` y
+`scripts/merge_traces.py`: descubre la placa, detiene brevemente el servicio para
+vaciar el trace, copia `/tmp/fw_trace.jsonl`, reinicia el servicio y selecciona
+el `server_trace-*.jsonl` más nuevo de Downloads. Como alternativa de rescate,
+también busca archivos copiados a `logs/profiling/inbox/`.
 
-El tracer pertenece a la aplicación FastAPI: se crea una vez por corrida y se
-cierra en el shutdown. Las sesiones lo toman prestado, así que no lo abren ni lo
-truncan.
+Cada recolección queda aislada bajo `logs/profiling/<fecha>/`:
 
-**Un archivo por corrida del servidor.** El archivo se abre truncando, no en
-append: dos `trace_start` en un mismo archivo significan dos bases de reloj
-distintas, y el merge tomaría la primera, corriendo todos los timestamps de la
-segunda corrida. Si pasás un `SUBTITLE_TRACE_PATH` fijo y reiniciás el servidor,
-sobreescribís la captura anterior — igual que hace el firmware.
-
-### 3. Mergear y visualizar
-
-```bash
-python3 scripts/merge_traces.py \
-  --fw logs/fw_trace.jsonl \
-  --server logs/profiling/server_trace-20260907-1200.jsonl \
-  --output logs/unified_trace.json
+```text
+fw_trace.jsonl
+server_trace.jsonl
+summary.txt
+unified_trace.json
 ```
 
-Abrir `logs/unified_trace.json` en <https://ui.perfetto.dev>.
+Abrir `unified_trace.json` en <https://ui.perfetto.dev>.
 
 El merge deja **una sola línea de tiempo**: los eventos del servidor quedan
 ubicados sobre el reloj de la placa, con una flecha por chunk uniendo
@@ -119,6 +111,9 @@ toda la corrida es la cota más ajustada del offset**. Usarlo implica que:
 Si no hay ninguna muestra compartida, cae al par de anchors de tiempo real de
 ambos tracers, que es precisión NTP. El script informa cuál de los dos métodos
 usó, y lo deja en la metadata del archivo (`clock_alignment`).
+
+El `run_id` de cada archivo queda como metadata descriptiva, pero no tiene que
+coincidir: la alineación real usa los timestamps de audio compartidos.
 
 > La latencia **end-to-end no depende de nada de esto**: empieza en
 > `audio_chunk_ready` y termina en `overlay_commit`, y los dos son eventos de la

@@ -9,6 +9,8 @@ ejecutado con NVIDIA NeMo en Colab.
 | Acción | Entrada |
 | --- | --- |
 | Levantar el servidor en Colab | `notebooks/nemotron_server.ipynb` |
+| Capturar profiling placa + servidor | `notebooks/nemotron_profiling.ipynb` |
+| Recolectar y generar Perfetto | `./scripts/profile-report.sh` |
 | Instalar/actualizar el servicio autónomo de la placa | `./scripts/run.sh` |
 | Probar los tres audios cortos | `./server/audio-test.sh` |
 | Ejecutar el replay físico del corpus | `./server/physical-eval.sh` |
@@ -22,6 +24,11 @@ o actualizar el ejecutable y el servicio persistente de la placa. El banco
 histórico
 `./server/audio-test.sh` conserva el bridge de evaluación y requiere un firmware
 compatible con sus puertos TCP; no forma parte del camino autónomo.
+
+Para profiling, ejecutar `./scripts/run.sh -p`, hacer `Runtime -> Run all` en
+`nemotron_profiling.ipynb` y usar el sistema. Al interrumpir la última celda, el
+notebook descarga el trace del servidor; `./scripts/profile-report.sh` encuentra
+esa descarga y genera el trace unificado sin argumentos adicionales.
 
 ## Estructura
 
