@@ -19,6 +19,7 @@ def rows():
     for clip_id, reference in (("001", "Son dos manzanas."), ("002", "Buenos días")):
         yield {
             "id": clip_id,
+            "path": f"audio/test/{clip_id}.wav",
             "audio": {"array": np.zeros(16000, dtype="float32"), "sampling_rate": 16000},
             "raw_transcription": reference,
             "speaker_id": 7,
@@ -82,7 +83,7 @@ class FleursEvaluationTests(unittest.TestCase):
         self.assertEqual("complete", evaluator.run_all()["status"])
         summary = json.loads((self.root / "results/summary.json").read_text())
         self.assertEqual(2, summary["identity"]["expected_clips"])
-        self.assertEqual(["001", "002"], summary["identity"]["clip_ids"])
+        self.assertEqual(["001:001.wav", "002:002.wav"], summary["identity"]["clip_ids"])
         self.assertIn("numeric_es", summary["phases"]["offline"]["wer"])
         self.assertGreater(summary["phases"]["offline"]["wer"]["legacy"]["rate"], 0)
         self.assertEqual(0.0, summary["phases"]["offline"]["wer"]["numeric_es"]["rate"])
@@ -105,6 +106,38 @@ class FleursEvaluationTests(unittest.TestCase):
         self.evaluator()
         with self.assertRaises(RuntimeError):
             self.evaluator(fingerprint="different-hf-commit")
+
+    def test_same_sentence_id_with_distinct_recordings_is_not_duplicate(self):
+        def repeated_sentence_rows():
+            for filename in ("first.wav", "second.wav"):
+                yield {
+                    "id": 1816,
+                    "path": f"audio/test/{filename}",
+                    "audio": {"array": np.zeros(16000, dtype="float32"), "sampling_rate": 16000},
+                    "raw_transcription": "La misma frase.",
+                }
+
+        model = FakeModel()
+        evaluator = FleursEvaluator(
+            model, repeated_sentence_rows, self.root / "repeated",
+            project_commit="test-commit", dataset_fingerprint="hf-commit-abc",
+            offline_transcriber=lambda shared, audio, config: {"text": "La misma frase."},
+        )
+        self.assertEqual(["1816:first.wav", "1816:second.wav"], evaluator.identity["clip_ids"])
+        self.assertEqual("complete", evaluator.run_offline()["status"])
+        self.assertEqual(2, len(evaluator.store.latest("offline")))
+
+    def test_duplicate_recording_still_fails(self):
+        def duplicate_rows():
+            row = next(rows())
+            yield row
+            yield row
+
+        with self.assertRaisesRegex(ValueError, "duplicate FLEURS recording"):
+            FleursEvaluator(
+                FakeModel(), duplicate_rows, self.root / "duplicate",
+                project_commit="test-commit", dataset_fingerprint="hf-commit-abc",
+            )
 
     def test_audio_validation_rejects_wrong_rate_and_stereo(self):
         with self.assertRaisesRegex(ValueError, "16000 Hz"):

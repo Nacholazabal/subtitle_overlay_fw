@@ -96,10 +96,17 @@ def _reference(row: dict) -> str:
 
 
 def _row_id(row: dict) -> str:
-    value = row.get("id")
-    if value is None:
-        raise ValueError("FLEURS row has no stable id")
-    return str(value)
+    sentence_id = row.get("id")
+    if sentence_id is None:
+        raise ValueError("FLEURS row has no sentence id")
+    # FLEURS repeats a sentence id for different people reading that sentence.
+    # Its recording filename, not the sentence id alone, identifies a clip.
+    path = row.get("path")
+    if not path and isinstance(row.get("audio"), dict):
+        path = row["audio"].get("path")
+    if not isinstance(path, str) or not path:
+        raise ValueError(f"FLEURS sentence {sentence_id} has no recording path")
+    return f"{sentence_id}:{Path(path).name}"
 
 
 def _audio_sha(audio: np.ndarray) -> str:
@@ -124,7 +131,7 @@ class FleursEvaluator:
     """Resumable FLEURS run over one shared model and its production sessions.
 
     ``rows_factory`` must return a fresh iterator over the same immutable test
-    split each time. Dataset fingerprints and reference IDs are locked before
+    split each time. Dataset fingerprints and recording IDs are locked before
     inference, preventing partial output from being mixed across sources.
     """
 
@@ -154,7 +161,7 @@ class FleursEvaluator:
         for row in self.rows_factory():
             clip_id, reference = _row_id(row), _reference(row)
             if clip_id in seen:
-                raise ValueError(f"duplicate FLEURS id: {clip_id}")
+                raise ValueError(f"duplicate FLEURS recording: {clip_id}")
             seen.add(clip_id)
             ids.append(clip_id)
             row_digest.update(clip_id.encode("utf-8") + b"\0")
@@ -225,6 +232,8 @@ class FleursEvaluator:
                         "evaluation_fingerprint": self.store.fingerprint,
                         "phase": phase,
                         "clip_id": clip_id,
+                        "sentence_id": row["id"],
+                        "recording_path": row.get("path"),
                         "speaker_id": row.get("speaker_id"),
                         "audio_sha256_float32_16khz": _audio_sha(audio),
                         "reference_kind": REFERENCE_KIND,
