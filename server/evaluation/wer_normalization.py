@@ -14,6 +14,9 @@ from dataclasses import dataclass
 from server.evaluation.dataset_manifest import normalize_spanish_text
 
 
+WER_PROFILES = ("legacy", "numeric_es")
+
+
 @dataclass(frozen=True)
 class SequenceError:
     """Sequence-error result compatible with the evaluation harness result."""

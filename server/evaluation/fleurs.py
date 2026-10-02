@@ -27,7 +27,7 @@ from server.evaluation.dataset import (
     consolidate_streaming_text,
     fixed_nemotron_config,
 )
-from server.evaluation.wer_normalization import normalized_error_rate
+from server.evaluation.wer_normalization import WER_PROFILES, normalized_error_rate
 from server.runtime.nemotron import (
     TARGET_RATE,
     NemotronConfig,
@@ -41,7 +41,6 @@ DATASET_CONFIG = "es_419"
 DATASET_SPLIT = "test"
 REFERENCE_KIND = "crowd_sourced_fleurs_raw_transcription"
 CHECKPOINT_EVERY = 25
-WER_PROFILES = ("legacy", "numeric_es")
 
 
 def _format_duration(seconds: float | None) -> str:
