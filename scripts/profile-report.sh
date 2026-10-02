@@ -122,6 +122,7 @@ RUN_DIR="${REPO_ROOT}/logs/profiling/$(date -u +%Y%m%d-%H%M%S)"
 FW_TRACE="${RUN_DIR}/fw_trace.jsonl"
 LOCAL_SERVER_TRACE="${RUN_DIR}/server_trace.jsonl"
 PERFETTO_TRACE="${RUN_DIR}/unified_trace.json"
+PRESENTATION_TRACE="${RUN_DIR}/presentation_trace.json"
 SUMMARY="${RUN_DIR}/summary.txt"
 mkdir -p "${RUN_DIR}"
 
@@ -166,7 +167,13 @@ python3 "${SCRIPT_DIR}/merge_traces.py" \
     --server "${LOCAL_SERVER_TRACE}" \
     --output "${PERFETTO_TRACE}" 2>&1 | tee "${SUMMARY}"
 
+printf 'Generating clean presentation trace ...\n'
+python3 "${SCRIPT_DIR}/simplify_trace.py" \
+    "${PERFETTO_TRACE}" \
+    "${PRESENTATION_TRACE}"
+
 printf '\nProfiling report ready:\n'
-printf '  Perfetto: %s\n' "${PERFETTO_TRACE}"
-printf '  Summary : %s\n' "${SUMMARY}"
+printf '  Full Perfetto : %s\n' "${PERFETTO_TRACE}"
+printf '  Clean figure  : %s\n' "${PRESENTATION_TRACE}"
+printf '  Summary       : %s\n' "${SUMMARY}"
 printf 'Open the Perfetto file at https://ui.perfetto.dev\n'

@@ -21,7 +21,11 @@ src/utils/trace/trace.c                server/runtime/unified_trace.py
                        ↓
               scripts/merge_traces.py
                        ↓
-              logs/unified_trace.json  →  https://ui.perfetto.dev
+              logs/unified_trace.json
+                       ↓
+              scripts/simplify_trace.py
+                       ↓
+           logs/presentation_trace.json → https://ui.perfetto.dev
 ```
 
 Ambos lados escriben **una línea JSON por evento**, con las mismas garantías:
@@ -79,13 +83,49 @@ fw_trace.jsonl
 server_trace.jsonl
 summary.txt
 unified_trace.json
+presentation_trace.json
 ```
 
-Abrir `unified_trace.json` en <https://ui.perfetto.dev>.
+Abrir `presentation_trace.json` en <https://ui.perfetto.dev> para inspección
+visual o figuras de la tesis. Abrir `unified_trace.json` únicamente cuando se
+necesiten contadores, estados de conexión, argumentos de diagnóstico o flujos
+por chunk.
 
 El merge deja **una sola línea de tiempo**: los eventos del servidor quedan
 ubicados sobre el reloj de la placa, con una flecha por chunk uniendo
 `audio_ws_send` (placa) con `session_push_pcm` (servidor).
+
+### Vista limpia para presentación
+
+`scripts/simplify_trace.py` no altera ni reemplaza el trace completo. Genera una
+segunda vista que detecta el intervalo desde `session_ready` hasta la pérdida de
+conexión y desplaza su inicio a cero. El archivo contiene solamente metadata de
+nombres y barras de duración completas (`ph: X`): no lleva banderas, eventos
+instantáneos, contadores ni flechas.
+
+Las filas conservadas son:
+
+1. sesión STT estable;
+2. captura ALSA;
+3. envío WebSocket/TLS;
+4. render del subtítulo;
+5. ingreso y buffering de PCM;
+6. inferencia streaming Nemotron;
+7. entrega del transcript desde el servidor a la placa;
+8. latencia desde el audio cubierto hasta el primer commit del overlay.
+
+Las dos últimas son barras derivadas por correlación. Para la latencia completa
+se usa `end_ms`, el chunk que alcanza esa posición de audio y exclusivamente el
+primer `overlay_commit` de cada secuencia. Todos los timestamps y duraciones
+siguen siendo los valores reales de la captura; sólo cambia la presentación.
+
+También puede ejecutarse manualmente:
+
+```bash
+python3 scripts/simplify_trace.py \
+  logs/profiling/<corrida>/unified_trace.json \
+  logs/profiling/<corrida>/presentation_trace.json
+```
 
 ### Cómo se alinean los relojes
 
@@ -310,6 +350,7 @@ misma interfaz, así que los call sites se escriben sin condicionales.
 make test                                        # incluye test/utils/trace/test_trace.c
 python3 -m unittest server.tests.test_unified_trace
 python3 -m unittest server.tests.test_merge_traces
+python3 -m unittest server.tests.test_simplify_trace
 ```
 
 Cubren: formato y metadata, escape y UTF-8, slices completas, tope de tamaño,

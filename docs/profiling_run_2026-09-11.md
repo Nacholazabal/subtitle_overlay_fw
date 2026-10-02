@@ -32,8 +32,14 @@ logs/profiling/20260911-030524/
 ├── fw_trace.jsonl
 ├── server_trace.jsonl
 ├── summary.txt
-└── unified_trace.json
+├── unified_trace.json
+└── presentation_trace.json
 ```
+
+`unified_trace.json` conserva toda la evidencia de diagnóstico. La vista
+`presentation_trace.json` deriva del mismo archivo, recorta la ventana conectada
+y deja solamente barras de duración con nombres descriptivos para inspección y
+figuras de la tesis.
 
 Datos de procedencia relevantes:
 
