@@ -44,6 +44,20 @@ CHECKPOINT_EVERY = 25
 WER_PROFILES = ("legacy", "numeric_es")
 
 
+def _format_duration(seconds: float | None) -> str:
+    """Format an elapsed/remaining duration for compact notebook progress."""
+    if seconds is None or not np.isfinite(seconds):
+        return "unknown"
+    rounded = max(0, int(round(seconds)))
+    hours, remainder = divmod(rounded, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours:d}h {minutes:02d}m"
+    if minutes:
+        return f"{minutes:d}m {secs:02d}s"
+    return f"{secs:d}s"
+
+
 def _audio_array(row: dict) -> np.ndarray:
     audio = row["audio"]
     if isinstance(audio, dict):
@@ -196,9 +210,18 @@ class FleursEvaluator:
     def _run_phase(self, phase: str) -> dict:
         path = self.store.results_path(phase)
         latest = self.store.latest(phase)
-        print(f"{phase}: {sum(r.get('status') == 'ok' for r in latest.values())}/{self.identity['expected_clips']} complete; resuming by stable clip id")
+        total = self.identity["expected_clips"]
+        completed_at_start = sum(
+            row.get("status") == "ok" for row in latest.values()
+        )
+        print(
+            f"{phase}: {completed_at_start}/{total} complete; "
+            "resuming by stable clip id",
+            flush=True,
+        )
         processed = 0
         errors_this_run = 0
+        phase_started = time.monotonic()
         with path.open("a", encoding="utf-8") as handle:
             for row in self.rows_factory():
                 clip_id = _row_id(row)
@@ -271,15 +294,53 @@ class FleursEvaluator:
                 if processed % self.checkpoint_every == 0:
                     handle.flush()
                     os.fsync(handle.fileno())
-                    self.store.write_progress(phase, {"status": "running", "completed_clips": sum(r.get("status") == "ok" for r in latest.values()), "total_clips": self.identity["expected_clips"]})
+                    completed = sum(
+                        row.get("status") == "ok" for row in latest.values()
+                    )
+                    elapsed = time.monotonic() - phase_started
+                    clips_per_minute = processed * 60.0 / elapsed if elapsed else 0.0
+                    remaining_attempts = max(
+                        total - completed_at_start - processed, 0
+                    )
+                    eta_sec = (
+                        remaining_attempts * elapsed / processed
+                        if processed
+                        else None
+                    )
+                    self.store.write_progress(
+                        phase,
+                        {
+                            "status": "running",
+                            "completed_clips": completed,
+                            "total_clips": total,
+                            "processed_this_run": processed,
+                            "errors_this_run": errors_this_run,
+                            "elapsed_sec": round(elapsed, 3),
+                            "clips_per_minute": round(clips_per_minute, 3),
+                            "eta_sec": round(eta_sec, 3) if eta_sec is not None else None,
+                        },
+                    )
+                    print(
+                        f"{phase}: {completed}/{total} complete; "
+                        f"{errors_this_run} errors; "
+                        f"{clips_per_minute:.1f} clips/min; "
+                        f"ETA {_format_duration(eta_sec)}",
+                        flush=True,
+                    )
             handle.flush()
             os.fsync(handle.fileno())
         latest = self.store.latest(phase)
         ok = [r for r in latest.values() if r.get("status") == "ok"]
         status = "complete" if len(ok) == self.identity["expected_clips"] else "incomplete"
-        progress = {"status": status, "completed_clips": len(ok), "total_clips": self.identity["expected_clips"], "errors_latest": sum(r.get("status") == "error" for r in latest.values()), "processed_this_run": processed, "errors_this_run": errors_this_run}
+        elapsed = time.monotonic() - phase_started
+        progress = {"status": status, "completed_clips": len(ok), "total_clips": self.identity["expected_clips"], "errors_latest": sum(r.get("status") == "error" for r in latest.values()), "processed_this_run": processed, "errors_this_run": errors_this_run, "elapsed_sec": round(elapsed, 3)}
         self.store.write_progress(phase, progress)
         self.write_reports()
+        print(
+            f"{phase}: {status}; {len(ok)}/{total} complete; "
+            f"{errors_this_run} errors this run; elapsed {_format_duration(elapsed)}",
+            flush=True,
+        )
         return progress
 
     def run_offline(self) -> dict:

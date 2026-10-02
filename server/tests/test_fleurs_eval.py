@@ -1,6 +1,7 @@
 import io
 import json
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -101,6 +102,23 @@ class FleursEvaluationTests(unittest.TestCase):
         resumed = self.evaluator(model)
         self.assertEqual(0, resumed.run_offline()["processed_this_run"])
         self.assertEqual(2, model.calls)
+
+    def test_prints_checkpoint_progress_and_phase_completion(self):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            progress = self.evaluator().run_offline()
+
+        self.assertEqual("complete", progress["status"])
+        log = output.getvalue()
+        self.assertIn("offline: 0/2 complete; resuming by stable clip id", log)
+        self.assertIn("offline: 1/2 complete; 0 errors;", log)
+        self.assertIn("clips/min; ETA", log)
+        self.assertIn("offline: complete; 2/2 complete;", log)
+        saved = json.loads(
+            (self.root / "results/offline_progress.json").read_text()
+        )
+        self.assertEqual(2, saved["completed_clips"])
+        self.assertIn("elapsed_sec", saved)
 
     def test_dataset_identity_change_cannot_mix_results(self):
         self.evaluator()
