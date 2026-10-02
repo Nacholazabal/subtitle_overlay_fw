@@ -42,6 +42,10 @@ from server.evaluation.dataset_manifest import (
     manifest_fingerprint,
     normalize_spanish_text,
 )
+from server.evaluation.wer_normalization import (
+    WER_PROFILES,
+    normalized_error_rate,
+)
 from server.runtime.nemotron import (
     MODEL_ID,
     NEMO_COMMIT,
@@ -52,8 +56,8 @@ from server.runtime.nemotron import (
 )
 
 
-SCHEMA_VERSION = 1
-EVALUATION_ID = "mediaspeech-es-v1.1__nemotron-560-600-2__v1"
+SCHEMA_VERSION = 2
+EVALUATION_ID = "mediaspeech-es-v1.1__nemotron-560-600-2__v2"
 REFERENCE_KIND = "human_mediaspeech_double_annotated"
 CHECKPOINT_EVERY = 25
 
@@ -288,6 +292,7 @@ def build_evaluation_identity(
         "config": config.as_effective_config(),
         "reference_kind": REFERENCE_KIND,
         "streaming_mode": "accelerated_production_session_no_sleep",
+        "wer_profiles": list(WER_PROFILES),
     }
     return {**locked, "fingerprint": _json_fingerprint(locked)}
 
@@ -405,6 +410,7 @@ class NemotronDatasetEvaluator:
                 "hypothesis_normalized": normalize_spanish_text(text),
                 "segments": result.get("segments") or [],
                 "wer_vs_human": error_rate(clip.reference_raw, text, unit="word").as_dict(),
+                "wer_profiles_vs_human": _wer_profiles(clip.reference_raw, text),
                 "cer_vs_human": error_rate(clip.reference_raw, text, unit="character").as_dict(),
                 "inference_sec": round(inference_sec, 6),
                 "inference_rtf": round(inference_sec / duration, 8) if duration else None,
@@ -441,6 +447,21 @@ class NemotronDatasetEvaluator:
             reason = event.get("final_reason")
             if event.get("is_final") and isinstance(reason, str):
                 final_reasons[reason] = final_reasons.get(reason, 0) + 1
+        human_wer_profiles = _wer_profiles(clip.reference_raw, text)
+        offline_human_wer_profiles = _wer_profiles(
+            clip.reference_raw, offline["hypothesis_raw"]
+        )
+        offline_comparison_profiles = _wer_profiles(
+            offline["hypothesis_raw"], text
+        )
+        wer_delta_profiles = {
+            profile: round(
+                human_wer_profiles[profile]["rate"]
+                - offline_human_wer_profiles[profile]["rate"],
+                8,
+            )
+            for profile in WER_PROFILES
+        }
         record.update(
             {
                 "status": "ok",
@@ -449,10 +470,12 @@ class NemotronDatasetEvaluator:
                 "hypothesis_normalized": normalize_spanish_text(text),
                 "offline_hypothesis_raw": offline["hypothesis_raw"],
                 "wer_vs_human": error_rate(clip.reference_raw, text, unit="word").as_dict(),
+                "wer_profiles_vs_human": human_wer_profiles,
                 "cer_vs_human": error_rate(clip.reference_raw, text, unit="character").as_dict(),
                 "wer_vs_offline": error_rate(
                     offline["hypothesis_raw"], text, unit="word"
                 ).as_dict(),
+                "wer_profiles_vs_offline": offline_comparison_profiles,
                 "cer_vs_offline": error_rate(
                     offline["hypothesis_raw"], text, unit="character"
                 ).as_dict(),
@@ -461,6 +484,7 @@ class NemotronDatasetEvaluator:
                     - float(offline["wer_vs_human"]["rate"]),
                     8,
                 ),
+                "human_wer_delta_by_profile_vs_offline": wer_delta_profiles,
                 "events": events,
                 "event_count": len(events),
                 "final_reasons": final_reasons,
@@ -623,6 +647,33 @@ def _micro_error(rows: Sequence[dict], key: str) -> dict:
     }
 
 
+def _wer_profiles(reference: str, hypothesis: str) -> dict[str, dict]:
+    """Compute named word-error profiles while retaining legacy fields."""
+    return {
+        profile: normalized_error_rate(
+            reference, hypothesis, unit="word", profile=profile
+        ).as_dict()
+        for profile in WER_PROFILES
+    }
+
+
+def _micro_wer_profile(rows: Sequence[dict], field: str, profile: str) -> dict:
+    edits = sum(int(row[field][profile]["edits"]) for row in rows)
+    references = sum(
+        int(row[field][profile]["reference_units"]) for row in rows
+    )
+    hypotheses = sum(
+        int(row[field][profile]["hypothesis_units"]) for row in rows
+    )
+    rate = edits / references if references else (0.0 if hypotheses == 0 else 1.0)
+    return {
+        "edits": edits,
+        "reference_units": references,
+        "hypothesis_units": hypotheses,
+        "rate": round(rate, 8),
+    }
+
+
 def _wer_strata(rows: Sequence[dict], value_key: str, boundaries: Sequence[float]) -> list[dict]:
     """Micro/macro human WER in fixed, predeclared numeric strata."""
     edges = [float("-inf"), *[float(value) for value in boundaries], float("inf")]
@@ -663,6 +714,10 @@ def _phase_summary(records: Sequence[dict], expected: int) -> dict:
         "expected_clips": expected,
         "failed_clips": len(errors),
         "micro_wer_vs_human": _micro_error(ok, "wer_vs_human") if ok else None,
+        "micro_wer_profiles_vs_human": {
+            profile: _micro_wer_profile(ok, "wer_profiles_vs_human", profile)
+            for profile in WER_PROFILES
+        } if ok else None,
         "micro_cer_vs_human": _micro_error(ok, "cer_vs_human") if ok else None,
         "macro_wer_vs_human": distribution(row["wer_vs_human"]["rate"] for row in ok),
         "macro_cer_vs_human": distribution(row["cer_vs_human"]["rate"] for row in ok),
@@ -712,6 +767,12 @@ def build_summary(
         streaming.update(
             {
                 "micro_wer_vs_offline": _micro_error(streaming_ok, "wer_vs_offline"),
+                "micro_wer_profiles_vs_offline": {
+                    profile: _micro_wer_profile(
+                        streaming_ok, "wer_profiles_vs_offline", profile
+                    )
+                    for profile in WER_PROFILES
+                },
                 "micro_cer_vs_offline": _micro_error(streaming_ok, "cer_vs_offline"),
                 "macro_wer_vs_offline": distribution(
                     row["wer_vs_offline"]["rate"] for row in streaming_ok
@@ -719,6 +780,13 @@ def build_summary(
                 "human_wer_delta_vs_offline": distribution(
                     row["human_wer_delta_vs_offline"] for row in streaming_ok
                 ),
+                "human_wer_delta_by_profile_vs_offline": {
+                    profile: distribution(
+                        row["human_wer_delta_by_profile_vs_offline"][profile]
+                        for row in streaming_ok
+                    )
+                    for profile in WER_PROFILES
+                },
                 "first_subtitle_audio_sec": distribution(
                     row["first_subtitle_audio_sec"]
                     for row in streaming_ok
@@ -810,16 +878,19 @@ def render_report(summary: dict) -> str:
         "",
         "## Resultados",
         "",
-        "| Fase | Estado | Clips | WER micro humano | CER micro humano | RTF p50 | RTF p90 |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
+        "| Fase | Estado | Clips | WER legacy | WER numeric_es | CER micro humano | RTF p50 | RTF p90 |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for name, phase in (("Offline", offline), ("Streaming acelerado", streaming)):
         wer = phase.get("micro_wer_vs_human") or {}
+        profile_wers = phase.get("micro_wer_profiles_vs_human") or {}
         cer = phase.get("micro_cer_vs_human") or {}
         rtf = phase.get("inference_rtf") or {}
         lines.append(
             f"| {name} | {phase['status']} | {phase['completed_clips']}/{phase['expected_clips']} "
-            f"| {_percent(wer.get('rate'))} | {_percent(cer.get('rate'))} "
+            f"| {_percent(wer.get('rate'))} "
+            f"| {_percent((profile_wers.get('numeric_es') or {}).get('rate'))} "
+            f"| {_percent(cer.get('rate'))} "
             f"| {rtf.get('p50', 'n/a')} | {rtf.get('p90', 'n/a')} |"
         )
     lines.extend(
@@ -829,6 +900,8 @@ def render_report(summary: dict) -> str:
             "",
             f"- WER micro streaming contra offline: "
             f"{_percent((streaming.get('micro_wer_vs_offline') or {}).get('rate'))}",
+            f"- WER numeric_es streaming contra offline: "
+            f"{_percent(((streaming.get('micro_wer_profiles_vs_offline') or {}).get('numeric_es') or {}).get('rate'))}",
             f"- Delta macro WER humano streaming-offline (media): "
             f"{_percent((streaming.get('human_wer_delta_vs_offline') or {}).get('mean'))}",
             f"- Eventos: {streaming.get('events_total', 0)}; model EOU: "
@@ -841,6 +914,10 @@ def render_report(summary: dict) -> str:
             "La fase offline mide la capacidad del modelo sobre el archivo completo. La fase "
             "streaming usa la misma `NemotronSession` cache-aware de producción, pero alimenta "
             "los frames sin dormir en tiempo real.",
+            "",
+            "`legacy` conserva exactamente el normalizador histórico del proyecto. "
+            "`numeric_es` canonicaliza formas cardinales españolas comunes; es un perfil "
+            "explícito de comparación y no se atribuye a la normalización privada de NVIDIA.",
             "",
             "> Esta corrida **no** mide todavía latencia física placa→HDMI. El tiempo de primera "
             "aparición se expresa en el reloj del audio del modelo y el RTF mide cómputo. El replay "

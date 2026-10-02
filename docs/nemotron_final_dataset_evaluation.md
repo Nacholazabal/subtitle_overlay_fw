@@ -1,16 +1,21 @@
-# Evaluación final Nemotron con MediaSpeech ES
+# Evaluación Nemotron con MediaSpeech ES
 
 Esta ruta mide el modelo seleccionado sobre un corpus humano externo sin tocar
 los scripts de prueba corta ni los sweeps que se usaron para elegir parámetros.
-Es una evaluación fija: no debe usarse para volver a ajustar Nemotron y luego
-presentar el mismo corpus como test no visto.
+La v1 ya ejecutada se conserva como artefacto histórico. La v2 reporta el WER
+histórico (`legacy`) y el perfil numérico español (`numeric_es`) en una carpeta
+separada; no debe usarse para volver a ajustar Nemotron y luego presentar el
+mismo corpus como test no visto.
+
+La corrida FLEURS completada el 2 de octubre de 2026 está resumida en
+[`docs/nemotron_fleurs_evaluation.md`](nemotron_fleurs_evaluation.md).
 
 ## Qué ejecuta ahora
 
 La notebook `server/notebooks/nemotron_dataset_eval.ipynb` hace, en orden:
 
 1. **Offline completo:** transcribe los 2.507 FLAC con el checkpoint completo y
-   compara cada salida contra su TXT humano.
+   compara cada salida contra su TXT humano bajo ambos perfiles WER.
 2. **Streaming acelerado:** abre una sesión cache-aware de producción por FLAC,
    alimenta sus frames sin pausas artificiales y compara el resultado contra el
    humano y contra la salida offline del paso anterior.
@@ -59,6 +64,9 @@ MyDrive/
           ES.tgz
 ```
 
+También se acepta el archivo en
+`MyDrive/Tesis-subtitles/stt_evaluations/mediaspeech_es/ES.tgz`.
+
 El archivo correcto tiene:
 
 ```text
@@ -72,7 +80,7 @@ resultados persistentes.
 
 ## Ejecución
 
-1. Pushear esta implementación a `dev/direct-connect`.
+1. Pushear esta implementación a `feat/perf-profiling`.
 2. Abrir `server/notebooks/nemotron_dataset_eval.ipynb` en Colab.
 3. Seleccionar un runtime con GPU.
 4. Ejecutar `Runtime -> Run all`.
@@ -97,7 +105,7 @@ La carpeta fija es:
 
 ```text
 MyDrive/TESIS/stt_evaluations/mediaspeech_es/
-  mediaspeech-es-v1.1__nemotron-560-600-2__v1/
+  mediaspeech-es-v1.1__nemotron-560-600-2__v2/
 ```
 
 Contiene:
@@ -107,8 +115,8 @@ Contiene:
 | `evaluation.json` | identidad inmutable y fingerprint |
 | `model_provenance.json` | GPU, torch, NeMo, modelo y revisión resuelta |
 | `manifest.jsonl` | hashes y referencias humanas por clip |
-| `offline_results.jsonl` | texto, WER/CER y RTF offline por clip |
-| `streaming_results.jsonl` | texto, eventos, finales y RTF streaming por clip |
+| `offline_results.jsonl` | texto, WER `legacy`/`numeric_es`, CER y RTF offline por clip |
+| `streaming_results.jsonl` | texto, ambos WER, comparación contra offline, eventos y RTF por clip |
 | `offline_progress.json` | checkpoint de fase 1 |
 | `streaming_progress.json` | checkpoint de fase 2 |
 | `summary.json` | métricas agregadas machine-readable |
@@ -116,8 +124,11 @@ Contiene:
 | `errors.jsonl` | historial de fallos, incluso si un resume posterior los recuperó |
 
 WER/CER se calculan contra las transcripciones humanas de MediaSpeech, no contra
-una pseudorreferencia. El reporte conserva además streaming contra offline para
-cuantificar la degradación incremental.
+una pseudorreferencia. `legacy` conserva exactamente el normalizador anterior;
+`numeric_es` canonicaliza expresiones cardinales españolas comunes. El segundo
+perfil ayuda a medir discrepancias como «veinticinco» frente a «25», pero no se
+presenta como la normalización privada de NVIDIA. El reporte conserva streaming
+contra offline para cuantificar la degradación incremental en ambos perfiles.
 
 ## Qué significa —y qué no— la fase acelerada
 
